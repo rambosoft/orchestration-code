@@ -330,9 +330,13 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       let archived: Awaited<ReturnType<typeof archiveOpenSpecChange>>;
       try { archived = await archiveOpenSpecChange(archiveInput); }
       catch (archiveError) {
-        // Gates passed; an unticked checklist is usually bookkeeping (e.g. manual-only items). Reconcile once, then archive again.
-        if (isCancellation(archiveError) || !patched("openspec-checklist-reconcile") || !/checklist.*is not complete|incomplete/i.test(failureDetails(archiveError, 4000))) throw archiveError;
-        const reconciled = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecChecklistReconcilePrompt({ changeId: openSpecChangeId, error: failureDetails(archiveError, 2000) }) });
+        // Gates passed; archive failures are bookkeeping in the OpenSpec artifacts. Repair once, then archive again.
+        const detail = failureDetails(archiveError, 6000);
+        const checklist = /checklist.*is not complete|incomplete/i.test(detail);
+        const specUpdate = /archive_spec_update_failed|delta|MODIFIED|REMOVED|RENAMED|not found/i.test(detail);
+        if (isCancellation(archiveError) || !patched("openspec-checklist-reconcile") || (!checklist && !specUpdate)) throw archiveError;
+        const prompt = checklist ? openSpecChecklistReconcilePrompt({ changeId: openSpecChangeId, error: failureDetails(archiveError, 2000) }) : openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: openSpecChangeId, diagnostics: detail });
+        const reconciled = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt });
         if (!reconciled.ok) throw archiveError;
         archived = await archiveOpenSpecChange(archiveInput);
       }

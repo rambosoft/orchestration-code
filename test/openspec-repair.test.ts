@@ -9,7 +9,7 @@ import { ApplicationFailure } from "@temporalio/activity";
 import type { StageInput, StageOutput } from "../src/contracts.js";
 import { projectWorkflow } from "../src/workflows.js";
 
-describe.each(["validation", "checklist"] as const)("OpenSpec %s repair", (scenario) => {
+describe.each(["validation", "checklist", "spec-update"] as const)("OpenSpec %s repair", (scenario) => {
   it("re-runs the proposal stage once with diagnostics instead of failing the run", async () => {
     const environment = await TestWorkflowEnvironment.createLocal();
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "orch-openspec-repair-"));
@@ -25,7 +25,7 @@ describe.each(["validation", "checklist"] as const)("OpenSpec %s repair", (scena
       prepareProjectDependencies: async () => ({ installed: true, summary: "fixture dependencies ready" }),
       prepareOpenSpec: async () => ({ changeId: "task-percent-run1", version: "1.14.3", artifactRef: path.join(projectRoot, "prepared.json") }),
       validateOpenSpec: async () => { validateCalls++; if (scenario === "validation" && validateCalls === 1) throw ApplicationFailure.nonRetryable("OpenSpec command failed (exit 1): Requirement is under ## Requirements, which is not a delta section"); return { context: "### Requirement: percentage uses the existing operand semantics\nThe button shall preserve operand behavior.\n\n#### Scenario: Apply percent\n- **THEN** the current operand is divided by 100", artifactRef: path.join(projectRoot, "spec-context.md"), version: "1.14.3" }; },
-      archiveOpenSpecChange: async ({ changeId }: { changeId: string }) => { archiveCalls.push(changeId); if (scenario === "checklist" && archiveCalls.length === 1) throw ApplicationFailure.nonRetryable(`OpenSpec task checklist for '${changeId}' is not complete`); return { archivedPath: `openspec/changes/archive/2026-10-21-${changeId}`, artifactRef: path.join(projectRoot, "archive.json") }; },
+      archiveOpenSpecChange: async ({ changeId }: { changeId: string }) => { archiveCalls.push(changeId); if (scenario === "checklist" && archiveCalls.length === 1) throw ApplicationFailure.nonRetryable(`OpenSpec task checklist for '${changeId}' is not complete`); if (scenario === "spec-update" && archiveCalls.length === 1) throw ApplicationFailure.nonRetryable(`archive_spec_update_failed: dino MODIFIED failed for header "### Requirement: X" - not found`); return { archivedPath: `openspec/changes/archive/2026-10-21-${changeId}`, artifactRef: path.join(projectRoot, "archive.json") }; },
       executeStage: async (input: StageInput): Promise<StageOutput> => {
         stageInputs.push(input);
         prompts.set(input.stage, input.prompt);
@@ -49,7 +49,8 @@ describe.each(["validation", "checklist"] as const)("OpenSpec %s repair", (scena
         const openspecStages = stageInputs.filter(stage => stage.stage === "openspec");
         expect(openspecStages).toHaveLength(2);
         if (scenario === "validation") { expect(validateCalls).toBe(2); expect(openspecStages[1]!.prompt).toContain("failed strict validation"); expect(openspecStages[1]!.prompt).toContain("not a delta section"); }
-        else { expect(archiveCalls).toHaveLength(2); expect(openspecStages[1]!.prompt).toContain("tasks.md checklist is not fully checked"); expect(openspecStages[1]!.prompt).toContain("Unverified manually:"); }
+        else if (scenario === "checklist") { expect(archiveCalls).toHaveLength(2); expect(openspecStages[1]!.prompt).toContain("tasks.md checklist is not fully checked"); expect(openspecStages[1]!.prompt).toContain("Unverified manually:"); }
+        else { expect(archiveCalls).toHaveLength(2); expect(openspecStages[1]!.prompt).toContain("failed strict validation"); expect(openspecStages[1]!.prompt).toContain("belongs under ADDED"); expect(openspecStages[1]!.prompt).toContain("MODIFIED failed for header"); }
       });
     } finally { await environment.teardown(); await rm(projectRoot, { recursive: true, force: true }); }
   }, 120_000);
