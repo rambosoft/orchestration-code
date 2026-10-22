@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "measured": "2026-10-22",
+  "scenario": "dino-runner: 3 stacked tasks via bridge API (Paperclip hop bypassed), docker bridge+Temporal, host worker, Codex for openspec/plan/brief/review/verify, Claude for implement",
+  "result": "all 3 tasks completed; draft PRs rambosoft/dino-runner#1,#2,#3 (stacked)",
+  "fresh_clone_check": {"npm_ci": "ok", "tests": "21 passed", "build": "ok", "browser_smoke": "game over + restart + persisted best score observed once"},
+  "attempts_to_green": {"DINO-1": 5, "DINO-2": 4, "DINO-3": 2},
+  "defects_found_and_fixed": [
+    "agent archived its own OpenSpec change; date-prefixed archive name not recognised (archive failed)",
+    "Codex wrote spec with '## Requirements' instead of delta section; strict validation killed the run (now one repair pass, non-retryable validation errors)",
+    "agent left tasks.md checklist unticked (browser-only items) -> archive blocked (now one reconcile pass)",
+    "delta spec used MODIFIED for a new requirement, error only at archive (now repair pass)",
+    "brief cap 800 < plan cap 900 with verbatim protected criteria -> unfixable overflow (brief cap 1200)",
+    "OpenSpec digest cap 1400 too small for a 9-requirement spec (cap 2200, planning 2800)",
+    "spawn node.exe ENOENT when nvm symlink re-created mid-run (node real path resolved at startup)",
+    "claude provider: --max-turns removed, allowedTools added for npm/node, spend cap"
+  ],
+  "caveats": ["Paperclip adapter hop and blocker re-check not exercised", "cost/tokens not aggregated", "stack parentPublications passed by hand", "a browser-only checklist items remain 'Unverified manually' notes"]
+}

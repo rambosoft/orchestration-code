@@ -15,3 +15,4 @@ One line per completed item: id, commit, evidence.
 - B-011: replay test over fresh + committed history fixture (test/replay.test.ts, 97 tests). Mutation check: dropping a stage -> Nondeterminism error (detected); reordering same-type activities is NOT detected (Temporal compares command type only). Regenerate fixture with UPDATE_REPLAY_FIXTURE=1 after intentional patched() changes.
 - B-007: stage result reuse keyed by sha256(stage,provider,model,effort,prompt) within a run (test/stage-reuse.test.ts, 99 tests). Only ok results reused; worktree-state drift not hashed.
 - B-013: SIMPLICITY_POLICY (adapted Ponytail principles) in implement/repair prompts and a low-severity complexity note in review (test/simplicity.test.ts, 102 tests). Effect on output quality unverified (no real provider).
+- E2E (dino-runner, 3 stacked tasks, codex + claude implement): all green after 8 pipeline fixes (see knowledge/metrics/runs/2026-10-22-e2e-dino-runner.json). 111 tests.

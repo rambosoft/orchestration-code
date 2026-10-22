@@ -11,8 +11,8 @@ capabilities:
   - {id: human-approval-signal, status: claimed, evidence: "docs/validation-results.md (live Temporal scenario)"}
   - {id: cancel-running-provider-process, status: broken, evidence: "no heartbeat; FM-003"}
   - {id: crash-restart-recovery, status: claimed, evidence: "validation doc marks force-restart unverified"}
-  - {id: real-provider-runs, status: claimed, evidence: "BLOCKED per docs/validation-results.md:53"}
-  - {id: real-github-pr, status: claimed, evidence: "only mocked gh / local bare remote"}
+  - {id: real-provider-runs, status: verified, evidence: "e2e dino-runner 2026-10-22: codex + claude ran all stages; PRs #1-#3"}
+  - {id: real-github-pr, status: verified, evidence: "draft PRs rambosoft/dino-runner#1-#3"}
   - {id: stacked-prs-sync, status: claimed, evidence: "syncMergedStack mocked tests; uses force-with-lease"}
   - {id: budgets-cost-limits, status: broken, evidence: "none exist"}
   - {id: multi-stack-profiles, status: broken, evidence: "node/npm only"}
