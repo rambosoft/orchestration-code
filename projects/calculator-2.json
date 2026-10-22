@@ -1,0 +1,93 @@
+{
+  "id": "ac002660-592a-4dc6-a2f2-18c581fe57c7",
+  "name": "Calculator",
+  "root": "C:/workspace/calculator",
+  "rootEnv": "CALCULATOR_PROJECT_ROOT",
+  "containerRoot": "/workspace/calculator",
+  "repository": {
+    "remote": "origin",
+    "targetBranch": "main",
+    "requiredSourcePaths": [
+      "README.md"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "providers": {
+    "default": "openrouter"
+  },
+  "providerRouting": {
+    "plan": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3.1-flash:free"
+    },
+    "research": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3.1-flash:free"
+    },
+    "review": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3.1-flash:free"
+    },
+    "verify": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3.1-flash:free"
+    },
+    "implement": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 720000
+  },
+  "qualityCommandsByProfile": {
+    "implementation": [
+      {
+        "executable": "npm",
+        "args": [
+          "test"
+        ]
+      },
+      {
+        "executable": "npm",
+        "args": [
+          "run",
+          "test:e2e"
+        ]
+      }
+    ],
+    "bugfix": [
+      {
+        "executable": "npm",
+        "args": [
+          "test"
+        ]
+      }
+    ],
+    "refactor": [
+      {
+        "executable": "npm",
+        "args": [
+          "test"
+        ]
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "config": {
+        "stages": [
+          "implement"
+        ]
+      },
+      "version": "0.1.0",
+      "required": false,
+      "id": "rtk",
+      "enabled": true
+    }
+  ],
+  "policy": {
+    "maxReviewRounds": 2,
+    "maxParallelism": 1,
+    "requireApprovalBeforeMerge": false
+  }
+}

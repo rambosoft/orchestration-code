@@ -1,0 +1,62 @@
+{
+  "id": "2c13da23-3526-4354-9cd8-73a0a95d3679",
+  "name": "Mobile RTS Landing Page Pilot",
+  "root": "mobile-rts-landing",
+  "containerRoot": "/workspace/projects/mobile-rts-landing",
+  "repository": {
+    "targetBranch": "main",
+    "remote": "origin",
+    "requiredSourcePaths": [
+      "package.json",
+      "index.html",
+      "src/main.jsx"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "openSpec": {
+    "enabled": false
+  },
+  "providers": {
+    "default": "codex"
+  },
+  "providerRouting": {
+    "review": {
+      "provider": "codex"
+    },
+    "implement": {
+      "provider": "codex"
+    },
+    "plan": {
+      "provider": "codex"
+    },
+    "research": {
+      "provider": "codex"
+    },
+    "verify": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 720000
+  },
+  "qualityCommands": [
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "uiUx": {
+    "enabled": true,
+    "exclude": [],
+    "include": [],
+    "autoSelect": true
+  },
+  "policy": {
+    "maxReviewRounds": 2,
+    "requireApprovalBeforeMerge": false,
+    "maxParallelism": 1
+  }
+}

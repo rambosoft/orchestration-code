@@ -1,0 +1,41 @@
+{
+  "name": "paperclip-temporal-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node dist/src/cli.js",
+    "worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-worker.ps1",
+    "worker:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-worker-task.ps1",
+    "worker:node": "node dist/src/worker.js",
+    "demo": "node dist/src/demo.js",
+    "demo:validate": "node dist/src/validate-demo.js",
+    "stack:up": "docker compose up -d --build",
+    "stack:down": "docker compose down",
+    "reset:demo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-demo.ps1",
+    "runs": "tsx src/cli.ts runs",
+    "setup": "npm ci"
+  },
+  "dependencies": {
+    "@fission-ai/openspec": "1.14.3",
+    "@openai/codex": "0.163.0",
+    "@temporalio/client": "1.24.0",
+    "@temporalio/worker": "1.24.0",
+    "@temporalio/workflow": "1.24.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "1.24.0",
+    "@types/node": "22.15.30",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

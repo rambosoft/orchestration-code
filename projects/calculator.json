@@ -1,0 +1,24 @@
+{
+  "id": "e75036d8-d487-41c3-81c2-f1cb3493ae3d",
+  "name": "Calculator",
+  "root": "C:/workspace/calculator",
+  "rootEnv": "CALCULATOR_PROJECT_ROOT",
+  "containerRoot": "/workspace/calculator",
+  "repository": { "remote": "origin", "targetBranch": "master", "requiredSourcePaths": ["index.html", "src/app.js", "styles.css"] },
+  "defaultProfile": "implementation",
+  "providers": { "default": "fake" },
+  "providerRouting": {
+    "plan": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "research": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "review": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "verify": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "implement": { "provider": "codex" }
+  },
+  "qualityCommandsByProfile": {
+    "implementation": [{ "executable": "npm", "args": ["test"] }],
+    "bugfix": [{ "executable": "npm", "args": ["test"] }],
+    "refactor": [{ "executable": "npm", "args": ["test"] }]
+  },
+  "plugins": [],
+  "policy": { "maxReviewRounds": 2, "maxParallelism": 1, "requireApprovalBeforeMerge": false }
+}

@@ -1,0 +1,84 @@
+services:
+  temporal:
+    image: temporalio/temporal:1.9.1
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/var/lib/temporal/temporal.db"]
+    ports:
+      - "127.0.0.1:7233:7233"
+      - "127.0.0.1:8233:8233"
+    volumes:
+      - ./data/temporal:/var/lib/temporal
+    restart: unless-stopped
+  orchestrator:
+    build: .
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: orchestration
+      ORCHESTRATOR_API_TOKEN: ${ORCHESTRATOR_API_TOKEN:?Run setup.ps1 first}
+      ORCHESTRATOR_PROJECT_FILE: /app/project.example.json
+      ORCHESTRATOR_PROJECTS_DIR: /app/projects
+      ORCHESTRATOR_UIUX_CONFIG: ${ORCHESTRATOR_UIUX_CONFIG:-/app/uiux.global.json}
+      DEMO_PROJECT_ROOT: ${DEMO_PROJECT_ROOT:?Run setup.ps1 first}
+      CALCULATOR_PROJECT_ROOT: ${CALCULATOR_PROJECT_ROOT:?Set calculator workspace in .env}
+      ORCHESTRATOR_PROJECTS_ROOT: ${ORCHESTRATOR_PROJECTS_ROOT:?Set orchestrator project workspace root in .env}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: http.https://github.com/.extraheader
+      GIT_CONFIG_VALUE_0: ${ORCHESTRATOR_GIT_AUTH_HEADER:?Run setup.ps1 to configure GitHub read access}
+      ORCHESTRATOR_DATA_DIR: /data
+      ORCHESTRATOR_HOST_DATA_DIR: ${ORCHESTRATOR_HOST_DATA_DIR:?Run setup.ps1 first}
+    ports:
+      - "127.0.0.1:3101:3101"
+    volumes:
+      - ./data/orchestrator:/data
+      - ./uiux.global.json:/app/uiux.global.json:ro
+      # Keep project manifests authoritative from the workspace instead of
+      # silently running the stale copy baked into the image at build time.
+      - ./projects:/app/projects:ro
+      # The bridge uses these mounts for Git status/fetch; the agent stages and
+      # commits only inside Windows worktrees, not in these source checkouts.
+      - type: bind
+        source: ${DEMO_PROJECT_ROOT:?Run setup.ps1 first}
+        target: /workspace/demo-project
+      - type: bind
+        source: ${CALCULATOR_PROJECT_ROOT:?Set calculator workspace in .env}
+        target: /workspace/calculator
+      - type: bind
+        source: ${ORCHESTRATOR_PROJECTS_ROOT:?Set orchestrator project workspace root in .env}
+        target: /workspace/projects
+    depends_on:
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+  paperclip:
+    build:
+      context: ./.runtime/paperclip
+      dockerfile: Dockerfile
+    # The persisted Paperclip volume is already owned by node (1000:1000).
+    # Running as that UID avoids the entrypoint's full-volume ownership scan.
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:3100:3100"
+    environment:
+      HOST: 0.0.0.0
+      PAPERCLIP_HOME: /paperclip
+      PAPERCLIP_DEPLOYMENT_MODE: authenticated
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: private
+      PAPERCLIP_PUBLIC_URL: http://localhost:3100
+      PAPERCLIP_ALLOWED_HOSTNAMES: paperclip
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Run setup.ps1 first}
+      ORCHESTRATOR_API_TOKEN: ${ORCHESTRATOR_API_TOKEN:?Run setup.ps1 first}
+      PAPERCLIP_API_TOKEN: ${PAPERCLIP_API_TOKEN:-}
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+    volumes:
+      - ./data/paperclip:/paperclip
+      - ./paperclip-adapter:/opt/paperclip-adapter:ro
+      - type: bind
+        source: ${CALCULATOR_PROJECT_ROOT:?Set calculator workspace in .env}
+        target: /workspace/calculator
+        read_only: true
+      - type: bind
+        source: ${ORCHESTRATOR_PROJECTS_ROOT:?Set orchestrator project workspace root in .env}
+        target: /workspace/projects
+        read_only: true
+    restart: unless-stopped

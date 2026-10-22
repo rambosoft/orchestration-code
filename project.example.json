@@ -1,0 +1,26 @@
+{
+  "id": "demo-typescript",
+  "name": "Demo TypeScript Project",
+  "root": "./demo/project",
+  "rootEnv": "DEMO_PROJECT_ROOT",
+  "containerRoot": "/workspace/demo-project",
+  "defaultProfile": "implementation",
+  "openSpec": { "enabled": true },
+  "providers": { "default": "fake" },
+  "providerRouting": {
+    "plan": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "research": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "review": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "verify": { "provider": "openrouter", "model": "minimax/minimax-m3.1-flash:free" },
+    "implement": { "provider": "codex" }
+  },
+  "qualityCommandsByProfile": {
+    "implementation": [{ "executable": "node", "args": ["--test", "test/feature-acceptance.test.js"] }],
+    "bugfix": [{ "executable": "node", "args": ["--test", "test/bug-repro.test.js"] }],
+    "refactor": [{ "executable": "node", "args": ["--test", "test/math.test.js"] }]
+  },
+  "plugins": [
+    { "id": "rtk", "version": "0.1.0", "enabled": false, "required": false, "config": { "stages": ["implement"] } }
+  ],
+  "policy": { "maxReviewRounds": 2, "maxParallelism": 2, "requireApprovalBeforeMerge": true }
+}
