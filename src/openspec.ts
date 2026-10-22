@@ -7,6 +7,7 @@ import { makeOpenSpecChangeId } from "./openspec-policy.js";
 export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, resolveOpenSpecEnabled, shouldRunOpenSpec } from "./openspec-policy.js";
 
 export const OPEN_SPEC_VERSION = "1.14.3";
+import { childEnv } from "./env.js";
 const require = createRequire(import.meta.url);
 const packageEntry = require.resolve("@fission-ai/openspec");
 export const openSpecCliPath = path.resolve(path.dirname(packageEntry), "..", "bin", "openspec.js");
@@ -19,7 +20,7 @@ export const runOpenSpecCommand: OpenSpecCommandRunner = (args, cwd) => new Prom
     cwd,
     shell: false,
     windowsHide: true,
-    env: { ...process.env, CI: "1", OPEN_SPEC_INTERACTIVE: "0", OPENSPEC_TELEMETRY: "0", DO_NOT_TRACK: "1" },
+    env: { ...childEnv(), CI: "1", OPEN_SPEC_INTERACTIVE: "0", OPENSPEC_TELEMETRY: "0", DO_NOT_TRACK: "1" },
   });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];

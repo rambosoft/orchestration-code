@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { ReviewAssessmentSchema, type ReviewAssessment, type StageInput, type StageOutput } from "./contracts.js";
 import { resolveRtkStatus } from "./rtk.js";
+import { childEnv } from "./env.js";
 
 export interface AgentProvider { readonly id: string; run(input: StageInput): Promise<StageOutput> }
 function redact(text: string): string {
@@ -97,10 +98,10 @@ export function parseCodexTelemetry(output: string): { summary?: string; telemet
   return { ...(summary ? { summary } : {}), telemetry: { eventCounts, itemCounts, turnCount, ...(usage !== undefined ? { usage } : {}) } };
 }
 
+const PROVIDER_CREDENTIALS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"];
+/** CLI agents keep their own provider credentials; orchestrator, Paperclip, GitHub and OpenRouter secrets are removed. */
 export function cliProviderEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const filtered = { ...environment };
-  delete filtered.OPENROUTER_API_KEY;
-  return filtered;
+  return childEnv(environment, PROVIDER_CREDENTIALS);
 }
 
 export class CliProvider implements AgentProvider {

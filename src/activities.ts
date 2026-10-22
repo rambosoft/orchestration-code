@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { Context } from "@temporalio/activity";
+import { childEnv } from "./env.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
@@ -66,7 +67,7 @@ function runCheck(executable: string, args: string[], cwd: string, maxOutputChar
     const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
     const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? process.execPath : executable;
     const commandArgs = command === process.execPath && executable === "npm" ? [npmCli, ...args] : args;
-    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true }); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
+    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
     child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
     child.on("error", reject); child.on("close", code => resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }));
