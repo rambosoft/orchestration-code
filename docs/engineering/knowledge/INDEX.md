@@ -21,3 +21,5 @@
 | ../EXTENDING.md | how to extend and resume |
 | ../runbooks/stuck-or-failed-run.md | operating and recovery steps |
 | ../FINAL_REPORT.md | mission report |
+| ../runbooks/operate-and-e2e.md | operating, restart and e2e procedures |
+| ../../examples/dino-runner.tasks.json | example task chain for the e2e driver |

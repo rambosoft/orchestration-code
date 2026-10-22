@@ -2,7 +2,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { PublishResult, RunResult } from "./contracts.js";
 
 export type E2eTask = { taskId: string; title?: string; prompt: string; startAttempt?: number };
-export type E2eSpec = { projectId: string; tasks: E2eTask[] };
+export type Parent = { issueId: string; branch: string; headSha: string; prUrl: string };
+/** `parent` starts the chain on an already published branch instead of the target branch. */
+export type E2eSpec = { projectId: string; parent?: Parent; tasks: E2eTask[] };
 export type StageSummary = { stage: string; provider: string; ok: boolean; seconds: number; inputTokens?: number; outputTokens?: number };
 export type TaskOutcome = { taskId: string; attempt: number; workflowId: string; status: "completed" | "failed" | "rejected" | "error"; message: string; stopReason?: string; publish?: PublishResult; stages: StageSummary[]; totalSeconds: number };
 
@@ -46,7 +48,7 @@ export async function runChain(spec: E2eSpec, http: Http, options: { maxAttempts
   const log = options.log ?? (() => undefined);
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const outcomes: TaskOutcome[] = [];
-  let parent: { issueId: string; branch: string; headSha: string; prUrl: string } | undefined;
+  let parent: Parent | undefined = spec.parent;
   for (const task of spec.tasks) {
     let outcome: TaskOutcome | undefined;
     for (let attempt = task.startAttempt ?? 1; attempt < (task.startAttempt ?? 1) + (options.maxAttempts ?? 1); attempt++) {

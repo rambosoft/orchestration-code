@@ -5,3 +5,10 @@
 - **Env** (`.env.example`): TEMPORAL_*, ORCHESTRATOR_DATA_DIR/HOST_DATA_DIR/PROJECTS_ROOT/MAX_ACTIVITY_CONCURRENCY/QUEUE_WAIT_ALERT_MS/API_TOKEN, OPENROUTER_API_KEY, PAPERCLIP_*. Not validated at startup (worker reads with `??` defaults; bridge only checks API token).
 - **Precedence** for a run: task payload (profile, openSpec flag, approval, test-injection flags) > project manifest > profile defaults (`profiles.ts`) > code defaults. Project root: `rootEnv` env var > `DEMO_PROJECT_ROOT` (default project) > `ORCHESTRATOR_PROJECTS_ROOT`+`root` (must stay inside).
 - Gaps: no global config layer; no startup validation of env; test-injection flags (`injectReviewFailure`, ...) accepted from the public API payload (FM-009).
+
+## Additions from the e2e hardening pass (2026-10-22)
+- Provider model precedence for CLI providers: manifest `providerRouting.<stage>.model`, then `CODEX_MODEL` (codex only), then the pinned default (`DEFAULT_CODEX_MODEL`). Claude uses the route model only.
+- `providerRouting.openspec` is honoured for the OpenSpec proposal, repair and reconcile stages; without it they use Codex.
+- Env: `CLAUDE_MAX_BUDGET_USD` (default 10 per Claude stage), `ORCHESTRATOR_WORKFLOW_TIMEOUT_MS` (default 48h), `ORCHESTRATOR_ALLOW_TEST_FLAGS=1` (bridge accepts test-injection flags), `ORCHESTRATOR_BRIDGE_URL` (doctor and e2e driver, default http://127.0.0.1:3101).
+- Worker startup now fails fast on an invalid `ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY` or `TEMPORAL_ADDRESS` (`src/env-validation.ts`).
+- Handoff budgets (`HANDOFF_BUDGETS` in `src/handoffs.ts`): planningContext 2800, openSpecDigest 2200, plan 900, brief 1200 (hard ceiling 1800), reviewChecklist 900; invariants are unit-tested.

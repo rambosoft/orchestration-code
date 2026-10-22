@@ -18,3 +18,11 @@
 | D-14 | Refactor projectWorkflow monolith | defer | risk without replay tests; do after B-011 | |
 
 D-15: workflow edits that change command sequence use patched(); see B-006 (approval-timeout). Pattern for future workflow changes.
+| D-16 | LLM artifact failures | adopt: validate, one bounded repair with the validator's diagnostics, validate again (OpenSpec proposal, archive spec errors, checklist) | e2e FM-017/018/021 | test/openspec-repair.test.ts |
+| D-17 | Early cross-artifact checks | adopt: validate deltas against main specs before implement | FM-018 | test/openspec-delta.test.ts |
+| D-18 | Stage budgets | adopt derived caps, invariant tests, brief hard ceiling 1.5x; reject unlimited budgets | FM-019 | test/handoffs.test.ts |
+| D-19 | Node path | adopt realpath at startup; reject per-spawn re-resolution | FM-022 | test/node-path.test.ts |
+| D-20 | e2e harness | adopt `npm run e2e` chain driver over the bridge API (stacking, attempts, usage summary); the Paperclip hop is tested separately (B-024) | e2e run | test/e2e-driver.test.ts |
+| D-21 | Model selection for CLI providers | adopt precedence: manifest route model, then CODEX_MODEL, then pinned default | hard-coded gpt-6-luna | test/untrusted-notice.test.ts |
+| D-22 | Claude CLI flags | adopt --max-budget-usd and an --allowedTools allow-list; reject --max-turns (absent from this CLI's help) | claude --help | test/untrusted-notice.test.ts |
+| D-23 | Preflight | adopt `doctor` (providers, worker, bridge, build staleness, environment) | FM-023/024 | test/doctor.test.ts |

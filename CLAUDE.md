@@ -7,9 +7,12 @@ Paperclip task board -> HTTP bridge (`src/server.ts`) -> Temporal workflow (`src
 - Install: `npm ci` (uses `legacy-peer-deps`)
 - Typecheck: `npm run typecheck` (~6s)
 - Build: `npm run build` (tsc to `dist/`)
-- Test all: `npx vitest run` (~100 tests, ~60s, uses Temporal time-skipping env, no server needed)
+- Test all: `npx vitest run` (~150 tests, ~90s, uses Temporal time-skipping env, no server needed)
+- Control-character guard: `npm run check:chars` (also in CI)
+- Preflight: `npm run doctor` (needs `ORCHESTRATOR_API_TOKEN` in the shell); worktree housekeeping: `npm run cleanup -- --dry-run`
+- End-to-end chain through the bridge: `node dist/src/e2e.js examples/dino-runner.tasks.json` (see `docs/engineering/runbooks/operate-and-e2e.md`)
 - Test one: `npx vitest run test/core.test.ts -t "name"`
-- No linter is configured. CI (`.github/workflows/ci.yml`) runs typecheck + tests; its first run was not yet observed.
+- No linter is configured. CI (`.github/workflows/ci.yml`, Linux) runs check:chars, typecheck and tests and is green; the bridge runs in a Linux container and the worker on Windows, so paths must work on both.
 - Full stack (`npm run stack:up`, worker, demo) needs Docker, Paperclip and secrets; not needed for unit work.
 
 ## Map
@@ -47,7 +50,10 @@ Plan -> implement -> verify -> report. Backlog is `docs/engineering/BACKLOG.md`;
 ## Gotchas
 - Bridge `src/server.ts` reads `ORCHESTRATOR_API_TOKEN` at import time and throws without it.
 - Quality commands are limited to node/npm/pnpm/yarn (`contracts.ts`).
-- Real provider runs are unverified (no authenticated provider); the fake provider covers pipeline tests only.
+- Real Codex and Claude runs are verified end to end (dino-runner, `docs/engineering/knowledge/metrics/runs/`); unit tests use the fake provider.
+- After any code change: `npm run build`, restart the host worker (it runs `dist/`) and, for bridge-side changes, `docker compose up -d --build orchestrator`. A stale worker silently runs old code; `npm run doctor` warns.
+- LLM-authored artifacts (OpenSpec specs, briefs) fail often on format: validate, give one bounded repair pass with the validator diagnostics, then fail. Stage budgets in `HANDOFF_BUDGETS` have tested invariants; do not lower a downstream cap below its upstream content.
+- Scripted edits (python/sed) can silently match nothing or mangle backslashes: assert or test every one, and prefer the Edit tool for regexes.
 - `.env` exists locally and holds secrets; never print or commit it.
 - Known open risks: see `docs/engineering/knowledge/failure-modes.yaml`.
 

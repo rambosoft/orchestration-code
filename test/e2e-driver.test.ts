@@ -31,6 +31,12 @@ describe("e2e driver", () => {
     expect(bridge.started[0]!.parentPublications).toEqual([]);
     expect(bridge.started[1]!.parentPublications).toEqual([{ issueId: "T-1", branch: "codex/b1", headSha: "1".repeat(40), prUrl: "https://github.com/x/y/pull/1" }]);
   });
+  it("can start the chain on an already published parent branch", async () => {
+    const bridge = fakeBridge(["completed"]);
+    const parent = { issueId: "OLD", branch: "codex/old", headSha: "f".repeat(40), prUrl: "https://github.com/x/y/pull/9" };
+    await runChain({ projectId: "p", parent, tasks: [{ taskId: "T-1", prompt: "one" }] }, bridge.http, opts);
+    expect(bridge.started[0]!.parentPublications).toEqual([parent]);
+  });
   it("stops the chain at the first failure and reports the stop reason", async () => {
     const outcomes = await runChain(spec, fakeBridge(["failed"]).http, opts);
     expect(outcomes).toHaveLength(1);

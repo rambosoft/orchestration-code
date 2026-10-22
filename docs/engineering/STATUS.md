@@ -1,10 +1,10 @@
 # STATUS (rewritten each update)
 
-- Phase: E done; e2e on a real project (dino-runner) green after fixes. Paperclip-hop e2e still open (user choice pending).
-- Remaining todo: B-010 worktree cleanup, B-014 env validation, B-018 secret scan in CI, LICENSE (owner). Deferred with triggers: B-016, B-017, B-020..B-023.
-- Remote: origin https://github.com/rambosoft/orchestration-code. `main` = baseline 99c5f00 only. `mission/hardening` pushed regularly.
-- CI: workflow `.github/workflows/ci.yml` is on the remote but GitHub shows 0 workflow runs/registered workflows (checked via API after several pushes); unverified. Owner should check the repo's Actions tab.
-- Layout: nested git repo at C:\workspace\test-orch; parent repo ignores it via .git/info/exclude.
-- Phase F (reference projects, failure injection against live stack) NOT done: needs authenticated real providers and the Docker stack; fake-provider output would be fabricated evidence.
-- Open questions: LICENSE choice; whether to open a PR (not done, not requested).
-- Resume: read BACKLOG.md, take the first `todo` by tier/score.
+- Phase: hardening complete through the e2e pass. Real project e2e (dino-runner, 3 stacked tasks, Codex plus Claude implement) green; CI green on the branch.
+- Done: B-001..B-013, B-019, plus B-010 (cleanup), B-014 (env validation), B-017 (doctor). B-012 CI is verified green (commit 163b60f onward).
+- Open (todo): B-015 LICENSE (owner), B-016 budgets, B-018 CI secret scan, B-024 Paperclip-hop e2e (needs user decision), B-025..B-031 (see BACKLOG). Deferred with triggers: B-020 (superseded by B-029), B-021, B-022, B-023.
+- Remote: origin https://github.com/rambosoft/orchestration-code. main = baseline only. mission/hardening pushed regularly. No PR opened.
+- Test project: rambosoft/dino-runner (private), draft PRs #1-#3 stacked.
+- Running stack at the end of this pass: docker bridge rebuilt earlier; the host worker was found not polling by doctor and must be restarted before the next run (see runbooks/operate-and-e2e.md).
+- Known gaps: Paperclip adapter hop untested live; no token/cost budgets; no worker supervision; review is weak at completeness; Claude implement can run npm/node (FM-026).
+- Resume: read BACKLOG.md, run doctor, take the first todo by tier and score. Lessons are in research/lessons.md, failure modes FM-017..FM-027.
