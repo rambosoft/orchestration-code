@@ -19,6 +19,10 @@ describe("childEnv", () => {
     const out = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.env.PAPERCLIP_API_TOKEN))"], { env: childEnv({ ...process.env, PAPERCLIP_API_TOKEN: "leak" }) });
     expect(out.stdout.toString()).toBe("undefined");
   });
+  it("also removes cloud and private-key style variables, but keeps Claude CLI auth for the claude provider", () => {
+    const env = cliProviderEnvironment({ AWS_ACCESS_KEY_ID: "x", DATABASE_URL: "x", SSH_PASSPHRASE: "x", CLAUDE_CODE_OAUTH_TOKEN: "ok", PATH: "/bin" });
+    expect(env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "ok", PATH: "/bin" });
+  });
   it("cli providers keep only their own credentials", () => {
     const env = cliProviderEnvironment({ ...secrets, PATH: "/bin" });
     expect(env.OPENAI_API_KEY).toBe("g");

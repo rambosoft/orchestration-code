@@ -1,15 +1,10 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import type { RepositoryContext, PublishResult } from "./contracts.js";
 import { findPublishViolations } from "./publish-guard.js";
 
-export type CommandRunner = (command: string, args: string[], cwd: string) => Promise<string>;
-export const runCommand: CommandRunner = (command, args, cwd) => new Promise((resolve, reject) => {
-  const child = spawn(command, args, { cwd, shell: false, windowsHide: true }); const out: Buffer[] = []; const err: Buffer[] = [];
-  child.stdout.on("data", (b: Buffer) => out.push(b)); child.stderr.on("data", (b: Buffer) => err.push(b));
-  child.on("error", reject); child.on("close", code => code === 0 ? resolve(Buffer.concat(out).toString("utf8").trim()) : reject(new Error(Buffer.concat(err).toString("utf8").trim() || `${command} exited ${code}`)));
-});
+import { runCommand, type CommandRunner } from "./command.js";
+export { runCommand, type CommandRunner };
 const git = (args: string[], cwd: string, runner = runCommand) => runner("git", args, cwd);
 
 /** Fail closed before dispatch: never snapshot a dirty tree or invent a base. */
@@ -76,12 +71,11 @@ export async function collectWorktree(input: { runId: string; projectRoot: strin
 export async function publishWorktree(input: { repository: RepositoryContext; worktree: string; taskId: string; prompt: string }, runner = runCommand): Promise<PublishResult> {
   const { repository: repo, worktree } = input;
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
-  if (status) {
-    await git(["add", "--all"], worktree, runner);
-    const violations = await findPublishViolations(worktree, runner);
-    if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
-    await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
-  }
+  if (status) await git(["add", "--all"], worktree, runner);
+  // Inspect everything that would be published, including commits the agent made itself.
+  const violations = await findPublishViolations(worktree, repo.baseSha, runner);
+  if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
+  if (status) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
   const headSha = await git(["rev-parse", "HEAD"], worktree, runner);
   if (headSha === repo.baseSha) throw new Error("publish gate failed: no changes were committed");
   await git(["push", "--set-upstream", repo.remote, repo.branch], worktree, runner);
