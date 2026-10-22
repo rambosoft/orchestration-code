@@ -13,3 +13,5 @@
 **Add a config option:** zod schema in `src/contracts.ts`, document in `knowledge/config-schema.md`.
 
 **Where things live:** metrics `knowledge/metrics/`, failure modes `knowledge/failure-modes.yaml`, decisions `research/decisions.md`. No eval harness exists yet (B-020). Simplicity policy text: `src/simplicity.ts`.
+
+**Optional stage example (analysis):** see `docs/adr/0005-optional-analysis-stage.md`. A new optional stage needs: a name in `StageNameSchema`, a route key in `providerRouting`, a pure module with schema, prompt, validate and render functions (`src/analysis.ts` is the template), a `patched("<stage-name>")` guarded block in `projectWorkflow`, a Fake provider answer for tests, a workflow test proving where its output flows, and budgets with invariants in `HANDOFF_BUDGETS`.

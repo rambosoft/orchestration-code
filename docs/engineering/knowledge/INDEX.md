@@ -23,3 +23,4 @@
 | ../FINAL_REPORT.md | mission report |
 | ../runbooks/operate-and-e2e.md | operating, restart and e2e procedures |
 | ../../examples/dino-runner.tasks.json | example task chain for the e2e driver |
+| ../../docs/adr/0005-optional-analysis-stage.md | ADR for the optional analysis stage |

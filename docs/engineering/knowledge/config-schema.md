@@ -12,3 +12,8 @@
 - Env: `CLAUDE_MAX_BUDGET_USD` (default 10 per Claude stage), `ORCHESTRATOR_WORKFLOW_TIMEOUT_MS` (default 48h), `ORCHESTRATOR_ALLOW_TEST_FLAGS=1` (bridge accepts test-injection flags), `ORCHESTRATOR_BRIDGE_URL` (doctor and e2e driver, default http://127.0.0.1:3101).
 - Worker startup now fails fast on an invalid `ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY` or `TEMPORAL_ADDRESS` (`src/env-validation.ts`).
 - Handoff budgets (`HANDOFF_BUDGETS` in `src/handoffs.ts`): planningContext 2800, openSpecDigest 2200, plan 900, brief 1200 (hard ceiling 1800), reviewChecklist 900; invariants are unit-tested.
+
+## Analysis stage and manifest aliases (2026-10-23)
+- Manifest `analysis`: `{ enabled: boolean (default false), docsDir: relative path (default docs/analysis) }`. A task line `Analysis: on|off` overrides `enabled` (parsed by `parseTaskDirectives`, together with `OpenSpec: on|off`). Route: `providerRouting.analyze`.
+- Manifest `aliases`: readable alternative ids; the id is normally the Paperclip project UUID. `GET /health` lists ids and aliases; the bridge resolves either.
+- New handoff budgets: `analysis` 1400 tokens, `planningContext` 3600, `brief` 1700 (hard ceiling 2550).
