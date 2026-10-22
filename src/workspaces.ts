@@ -7,12 +7,30 @@ import { runCommand, type CommandRunner } from "./command.js";
 export { runCommand, type CommandRunner };
 const git = (args: string[], cwd: string, runner = runCommand) => runner("git", args, cwd);
 
+/**
+ * Porcelain entries that really make the tree dirty. A Windows checkout (core.autocrlf=true) viewed from the Linux bridge container
+ * shows every text file as modified because only the line endings differ; those entries are ignored. Untracked files, deletions,
+ * additions, renames and quoted paths always count as dirty.
+ */
+export async function dirtyEntries(root: string, runner = runCommand): Promise<string[]> {
+  const status = await git(["status", "--porcelain", "--untracked-files=all"], root, runner);
+  const dirty: string[] = [];
+  for (const line of status.split(/\r?\n/).filter(item => item.trim())) {
+    const match = /^\s*([MADRCU?!]{1,2})\s+(.+)$/.exec(line);
+    const file = match?.[2];
+    if (!match || match[1] !== "M" && match[1] !== "MM" || !file || file.startsWith("\"") || file.includes(" -> ")) { dirty.push(line.trim()); continue; }
+    const sameIgnoringEol = await git(["diff", "--ignore-cr-at-eol", "--quiet", "HEAD", "--", file], root, runner).then(() => true, () => false);
+    if (!sameIgnoringEol) dirty.push(line.trim());
+  }
+  return dirty;
+}
+
 /** Fail closed before dispatch: never snapshot a dirty tree or invent a base. */
 export async function admitRepository(input: { projectRoot: string; remote: string; targetBranch: string }, runner = runCommand): Promise<{ baseSha: string; remoteUrl: string }> {
   const root = path.resolve(input.projectRoot);
   await git(["rev-parse", "--show-toplevel"], root, runner);
-  const status = await git(["status", "--porcelain", "--untracked-files=all"], root, runner);
-  if (status) throw new Error(`project working tree is not clean (tracked or untracked changes): ${status.slice(0, 1000)}`);
+  const dirty = await dirtyEntries(root, runner);
+  if (dirty.length) throw new Error(`project working tree is not clean (tracked or untracked changes): ${dirty.join("\n").slice(0, 1000)}`);
   const remoteUrl = await git(["remote", "get-url", input.remote], root, runner);
   if (!/(github\.com[:/])/i.test(remoteUrl)) throw new Error(`remote '${input.remote}' is not a GitHub remote`);
   await git(["fetch", "--no-tags", input.remote, input.targetBranch], root, runner);

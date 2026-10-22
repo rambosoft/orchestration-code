@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { admitRepository, prepareWorktree, publishWorktree, runCommand, syncMergedStack, taskBranch } from "../src/workspaces.js";
+import { admitRepository, dirtyEntries, prepareWorktree, publishWorktree, runCommand, syncMergedStack, taskBranch } from "../src/workspaces.js";
 
 const roots: string[] = [];
 async function fixture() {
@@ -112,5 +112,34 @@ describe("Git workspace admission and publication", () => {
       if (args[0] === "rebase") throw new Error("CONFLICT");
       return "";
     })).rejects.toThrow("CONFLICT");
+  });
+});
+
+describe("admission with Windows line endings (regression: bridge container vs Windows checkout)", () => {
+  const gitOnlyRunner = async (command: string, args: string[], cwd: string) => {
+    if (command === "git" && args[0] === "remote") return "https://github.com/example/project.git";
+    if (command === "git" && args[0] === "fetch") return "";
+    if (command === "git" && args[0] === "rev-parse" && args[1] === "FETCH_HEAD^{commit}") return runCommand("git", ["rev-parse", "HEAD"], cwd);
+    return runCommand(command, args, cwd);
+  };
+  it("treats CRLF working files over an LF index as clean, but still rejects real edits", async () => {
+    const { root } = await fixture();
+    await runCommand("git", ["config", "core.autocrlf", "false"], root);
+    await writeFile(path.join(root, "src", "app.js"), "export const value = 1;\r\n");
+    expect(await runCommand("git", ["status", "--porcelain"], root)).toContain("src/app.js");
+    await expect(admitRepository({ projectRoot: root, remote: "origin", targetBranch: "main" }, gitOnlyRunner)).resolves.toMatchObject({ baseSha: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    await writeFile(path.join(root, "src", "app.js"), "export const value = 2;\r\n");
+    await expect(admitRepository({ projectRoot: root, remote: "origin", targetBranch: "main" }, gitOnlyRunner)).rejects.toThrow("working tree is not clean");
+  }, 30_000);
+});
+
+describe("dirtyEntries", () => {
+  it("still counts deletions and untracked files as dirty", async () => {
+    const { root } = await fixture();
+    expect(await dirtyEntries(root)).toEqual([]);
+    await rm(path.join(root, "src", "app.js"));
+    expect((await dirtyEntries(root)).join()).toContain("src/app.js");
+    await writeFile(path.join(root, "new.js"), "x");
+    expect((await dirtyEntries(root)).join()).toContain("new.js");
   });
 });
