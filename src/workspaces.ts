@@ -2,6 +2,7 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { RepositoryContext, PublishResult } from "./contracts.js";
+import { findPublishViolations } from "./publish-guard.js";
 
 export type CommandRunner = (command: string, args: string[], cwd: string) => Promise<string>;
 export const runCommand: CommandRunner = (command, args, cwd) => new Promise((resolve, reject) => {
@@ -77,6 +78,8 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
   if (status) {
     await git(["add", "--all"], worktree, runner);
+    const violations = await findPublishViolations(worktree, runner);
+    if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
     await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
   }
   const headSha = await git(["rev-parse", "HEAD"], worktree, runner);
