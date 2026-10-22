@@ -1,0 +1,7 @@
+# Config schema and precedence (verified 2026-10-22, src/contracts.ts, src/server.ts, src/project-roots.ts)
+
+- **Project manifest** (`ProjectManifestSchema`, zod): id, root/rootEnv/containerRoot, defaultProfile, providers.default, providerRouting[stage]{provider,model,reasoningEffort}, providerTimeouts (<=900000ms), openSpec.enabled, uiUx, qualityCommands / qualityCommandsByProfile (executable enum node|npm|pnpm|yarn), repository{remote,targetBranch,integratedBaseBranch,requiredSourcePaths}, plugins[], policy{maxReviewRounds(1-2),maxRepairAttempts,maxParallelism,requireApprovalBeforeMerge}. No `schema_version` field.
+- Loaded by bridge: `ORCHESTRATOR_PROJECT_FILE` (default `project.example.json`) + every `*.json` in `projects/`; duplicate ids fail.
+- **Env** (`.env.example`): TEMPORAL_*, ORCHESTRATOR_DATA_DIR/HOST_DATA_DIR/PROJECTS_ROOT/MAX_ACTIVITY_CONCURRENCY/QUEUE_WAIT_ALERT_MS/API_TOKEN, OPENROUTER_API_KEY, PAPERCLIP_*. Not validated at startup (worker reads with `??` defaults; bridge only checks API token).
+- **Precedence** for a run: task payload (profile, openSpec flag, approval, test-injection flags) > project manifest > profile defaults (`profiles.ts`) > code defaults. Project root: `rootEnv` env var > `DEMO_PROJECT_ROOT` (default project) > `ORCHESTRATOR_PROJECTS_ROOT`+`root` (must stay inside).
+- Gaps: no global config layer; no startup validation of env; test-injection flags (`injectReviewFailure`, ...) accepted from the public API payload (FM-009).

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "measured": "2026-10-22",
+  "commit": "99c5f00",
+  "env": {"node": "22.22.2", "os": "Windows 11", "temporal": "time-skipping test env (no live server)"},
+  "typecheck": {"command": "npm run typecheck", "pass": true, "seconds": 5.8},
+  "tests": {"command": "npx vitest run", "files": 7, "passed": 70, "failed": 0, "seconds": 36.2, "flaky_observed": 0},
+  "lint": {"available": false},
+  "coverage": {"measured": false},
+  "recovery_probes": {"worker_kill": "unverified", "lost_response": "publish retry covered by unit test", "cancel_running_provider": "not deliverable (FM-003)"},
+  "cost_tokens_latency": "not measured: no authenticated real provider available (docs/validation-results.md:53)"
+}

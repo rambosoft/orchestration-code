@@ -1,0 +1,18 @@
+schema_version: 1
+last_verified: 2026-10-22
+legend: "verified = exercised by an automated test in this mission; claimed = documented but not re-run; broken = known not working"
+capabilities:
+  - {id: workflow-stage-pipeline, status: verified, evidence: "test/core.test.ts, workflows-openspec.test.ts (fake provider, Temporal time-skipping env)"}
+  - {id: bounded-review-repair, status: verified, evidence: "core.test.ts"}
+  - {id: clean-git-admission, status: verified, evidence: "workspaces.test.ts"}
+  - {id: draft-pr-idempotent-publish, status: verified, evidence: "workspaces.test.ts with mocked gh and local bare remote"}
+  - {id: openspec-propose-validate-archive, status: verified, evidence: "openspec.test.ts, workflows-openspec.test.ts"}
+  - {id: handoff-budget-compression, status: verified, evidence: "handoffs.test.ts"}
+  - {id: human-approval-signal, status: claimed, evidence: "docs/validation-results.md (live Temporal scenario)"}
+  - {id: cancel-running-provider-process, status: broken, evidence: "no heartbeat; FM-003"}
+  - {id: crash-restart-recovery, status: claimed, evidence: "validation doc marks force-restart unverified"}
+  - {id: real-provider-runs, status: claimed, evidence: "BLOCKED per docs/validation-results.md:53"}
+  - {id: real-github-pr, status: claimed, evidence: "only mocked gh / local bare remote"}
+  - {id: stacked-prs-sync, status: claimed, evidence: "syncMergedStack mocked tests; uses force-with-lease"}
+  - {id: budgets-cost-limits, status: broken, evidence: "none exist"}
+  - {id: multi-stack-profiles, status: broken, evidence: "node/npm only"}

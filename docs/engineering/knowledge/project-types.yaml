@@ -1,0 +1,11 @@
+schema_version: 1
+last_verified: 2026-10-22
+note: "Today profiles (src/profiles.ts) describe workflow SHAPE only (implementation|bugfix|refactor|research). Toolchain is per-project via manifest qualityCommands, restricted to node|npm|pnpm|yarn."
+supported:
+  - {id: node-ts-npm, evidence: "demo project + calculator manifests; npm ci in worktree", status: verified-with-fake-provider}
+planned:
+  - {id: python, needs: "executable allow-list incl. python/pytest/ruff; dependency prep (pip/uv)", backlog: B-021}
+  - {id: go|rust|java|dotnet, needs: "executable allow-list + dependency prep + source-extension list", backlog: B-021}
+  - {id: web-app, needs: "UI/UX skill catalog (exists), browser gate optional", backlog: B-021}
+  - {id: iac, needs: "no code execution gates; plan/validate only", backlog: deferred}
+gaps: ["prepareProjectDependencies only handles npm", "source-presence regex covers many languages but quality executables do not", "manifest has no 'stack profile' concept"]
