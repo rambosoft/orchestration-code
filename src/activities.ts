@@ -1,4 +1,5 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { StageOutputSchema, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
@@ -164,6 +165,17 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
     stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output);
   }
+  // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
+  const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
+  const stageFile = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
+  const previous = await readFile(stageFile, "utf8").then(text => JSON.parse(text) as { inputHash?: string }, () => undefined);
+  if (previous?.inputHash === inputHash) {
+    const reusable = StageOutputSchema.safeParse(previous);
+    if (reusable.success && reusable.data.ok) {
+      await emitActivityEvent({ event: "activity.reused", ...activityContext, provider: reusable.data.provider });
+      return { ...reusable.data, stage: input.stage, metadata: { ...reusable.data.metadata, reused: true }, artifactRefs: reusable.data.artifactRefs.includes(stageFile) ? reusable.data.artifactRefs : [...reusable.data.artifactRefs, stageFile] };
+    }
+  }
   const providerStarted = Date.now();
   let result: StageOutput;
   try {
@@ -186,7 +198,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
   const file = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
-  await writeFile(file, JSON.stringify({ ...out, stage: input.stage, runId: input.runId, taskId: input.taskId }, null, 2), { flag: "w" });
+  await writeFile(file, JSON.stringify({ ...out, stage: input.stage, runId: input.runId, taskId: input.taskId, inputHash }, null, 2), { flag: "w" });
   await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
   return { ...out, stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, file] };
 }
