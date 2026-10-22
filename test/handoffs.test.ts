@@ -13,7 +13,7 @@ describe("compressed handoff schemas and budgets", () => {
   it("uses conservative token estimates and rejects oversized phase output", () => {
     expect(estimateTokens("12345678")).toBe(3);
     expect(() => parseStructured("x".repeat(4000), PlanSchema, "Plan", HANDOFF_BUDGETS.plan)).toThrow("exceeds its 900-token budget");
-    expect(() => planningPrompt("task", "x".repeat(10_000))).toThrow("Planning context exceeds its 2400-token budget");
+    expect(() => planningPrompt("task", "x".repeat(10_000))).toThrow("Planning context exceeds its 2800-token budget");
   });
 
   it("keeps planner acceptance checks grouped and non-duplicative", () => {
@@ -36,7 +36,7 @@ describe("compressed handoff schemas and budgets", () => {
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, requirements: optimized.requirements.slice(1) }), spec)).toThrow("failed coverage validation");
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, hard_constraints: optimized.hard_constraints.slice(1) }), spec)).toThrow("failed coverage validation");
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, hard_constraints: [...optimized.hard_constraints, "Invented constraint"] }), spec)).toThrow("extraConstraints");
-    expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, relevant_design_decisions: ["x".repeat(5_000)] }), spec)).toThrow("exceeds its 1400-token budget");
+    expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, relevant_design_decisions: ["x".repeat(8_000)] }), spec)).toThrow("exceeds its 2200-token budget");
     expect(() => planningPrompt("Redesign the game landing page", JSON.stringify(optimized))).not.toThrow();
   });
 
@@ -127,5 +127,16 @@ describe("brief budget vs verbose plan", () => {
     const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: ["Implement the rules", "Wire the view", "Add tests"], verification_steps: ["Run tests"], acceptance_checks: [] }, verbosePlan, "ctx");
     expect(estimateTokens(formatBrief(brief))).toBeGreaterThan(800);
     expect(() => validateBrief(formatBrief(brief), verbosePlan, "ctx")).not.toThrow();
+  });
+});
+
+describe("OpenSpec digest budget", () => {
+  it("accepts a digest of ~1800 tokens that still fits the planning context (regression: dino-runner task 3)", () => {
+    const reqs = Array.from({ length: 9 }, (_, i) => ({ id: `Requirement: R${i}`, intent: "x".repeat(200), scenarios: [{ id: `Scenario: S${i}a`, expected: "y".repeat(190) }, { id: `Scenario: S${i}b`, expected: "z".repeat(190) }] }));
+    const context = reqs.map(r => `### ${r.id}\n${r.scenarios.map(sc => `#### ${sc.id}`).join("\n")}`).join("\n");
+    const raw = JSON.stringify({ task_goal: "Polish the runner", requirements: reqs, hard_constraints: [], relevant_design_decisions: [] });
+    expect(estimateTokens(raw)).toBeGreaterThan(1400);
+    expect(() => validateOpenSpecDigest(raw, context)).not.toThrow();
+    expect(() => planningPrompt("Polish the runner", raw)).not.toThrow();
   });
 });

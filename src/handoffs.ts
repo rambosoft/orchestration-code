@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+// The OpenSpec digest must cover every requirement and scenario, so it is capped below the planning context
+// (digest + task text + instructions must fit) rather than at an arbitrary small size.
 // The brief must carry the plan's protected hard constraints and acceptance criteria verbatim, so its cap
 // has to exceed the plan cap by the brief's own overhead (goal, steps, avoid list); otherwise a verbose but
 // valid plan can never produce a valid brief, however often it is compressed.
-export const HANDOFF_BUDGETS = { planningContext: 2400, plan: 900, brief: 1200, reviewChecklist: 900 } as const;
+export const HANDOFF_BUDGETS = { planningContext: 2800, openSpecDigest: 2200, plan: 900, brief: 1200, reviewChecklist: 900 } as const;
 
 // Provider-independent conservative estimate. Three characters per token
 // leaves headroom for punctuation-heavy, multilingual, and structured text.
@@ -111,7 +113,7 @@ export function repairOpenSpecDigestPrompt(context: string, invalidOutput: strin
 }
 
 export function validateOpenSpecDigest(raw: string, context: string, actualTokens?: number): OpenSpecDigest {
-  const digest = parseStructured(raw, OpenSpecDigestSchema, "OpenSpec optimization", 1_400, actualTokens);
+  const digest = parseStructured(raw, OpenSpecDigestSchema, "OpenSpec optimization", HANDOFF_BUDGETS.openSpecDigest, actualTokens);
   const source = openSpecCoverage(context);
   const gotReq = digest.requirements.map(r => r.id), gotScenarios = digest.requirements.flatMap(r => r.scenarios.map(s => s.id));
   const missing = [...source.requirements.filter(id => !gotReq.includes(id)), ...source.scenarios.filter(id => !gotScenarios.includes(id)), ...source.hardConstraints.filter(c => !digest.hard_constraints.includes(c))];
