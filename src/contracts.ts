@@ -26,6 +26,8 @@ export type ReviewAssessment = z.infer<typeof ReviewAssessmentSchema>;
 
 export const ProjectManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/),
+  /** Readable alternative ids (the id itself is usually the Paperclip project UUID). */
+  aliases: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/)).default([]),
   name: z.string().min(1),
   root: z.string().min(1),
   rootEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),

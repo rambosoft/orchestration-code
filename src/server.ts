@@ -10,23 +10,24 @@ import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
+import { indexManifests } from "./manifest-index.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
 const projectFile = process.env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json";
 const defaultProject = ProjectManifestSchema.parse(JSON.parse(await readFile(projectFile, "utf8")));
-const projects = new Map([[defaultProject.id, defaultProject]]);
+const manifests = [defaultProject];
 const projectDirectory = process.env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects");
 try {
   for (const entry of await readdir(projectDirectory, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(path.join(projectDirectory, entry.name), "utf8")));
-    if (projects.has(manifest.id)) throw new Error(`duplicate project manifest ID '${manifest.id}'`);
-    projects.set(manifest.id, manifest);
+    manifests.push(manifest);
   }
 } catch (error) {
   if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
+const projects = indexManifests(manifests);
 const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
