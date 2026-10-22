@@ -15,7 +15,7 @@ Score = (Impact x Severity + RiskReduction) / Effort(S=1,M=2,L=4). Tier first, s
 | B-007 | Reuse stage artifact on retry | reliability | P1 | 8 | FM-006 | skip provider if `<stage>-<attempt>.json` exists with same input hash | test: second run reuses | M | B-005 | done | see git log | tests |
 | B-008 | Correct runId on duplicate start | reliability | P1 | 8 | FM-008 | on AlreadyStarted, describe workflow and return its runId | test with temporal test env | S | - | done | see git log | tests |
 | B-011 | Replay determinism test | testing | P1 | 6.5 | FM-013 | export history from a test run, replay with `Worker.runReplayHistory` | test passes; fails when workflow edited incompatibly (manual check noted) | M | - | done | see git log | tests |
-| B-013 | Simplicity policy (Ponytail adapt) | quality | P2 | 8 | research/ponytail.md | `SIMPLICITY_POLICY` constant in implement + review prompts | prompt unit tests | S | - | todo | | |
+| B-013 | Simplicity policy (Ponytail adapt) | quality | P2 | 8 | research/ponytail.md | `SIMPLICITY_POLICY` constant in implement + review prompts | prompt unit tests | S | - | done | see git log | tests |
 | B-014 | Startup env validation | ops | P2 | 7 | config-schema gap | zod env schema checked in worker/server start | unit test | S | - | todo | | |
 | B-010 | Worktree cleanup command | ops | P2 | 7 | FM-007 | `dev cleanup <runId>` runs `git worktree remove` for terminal runs | temp-repo test | S | - | todo | | |
 | B-015 | LICENSE, SECURITY.md, PR template, Dependabot | hygiene | P2 | 5 | no license | add SECURITY.md/PR template/Dependabot (npm); LICENSE needs owner choice | files exist | S | owner | todo | | LICENSE blocked on owner |
