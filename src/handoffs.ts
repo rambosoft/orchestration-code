@@ -96,10 +96,18 @@ export function canonicalizeBrief(brief: ExecutionBrief, plan: Plan, openSpecCon
   };
 }
 
+/**
+ * Descriptive model-written text (summaries, intents, expectations) is clamped to a sensible length instead of rejected: models routinely run a few
+ * characters over a limit, which used to fail whole runs. Identifiers and protected requirement texts are never clamped; the token budgets stay the hard control.
+ */
+export function clampedText(max: number) {
+  return z.preprocess(value => typeof value === "string" && value.trim().length > max ? `${value.trim().slice(0, max - 1).trimEnd()}…` : typeof value === "string" ? value.trim() : value, z.string().min(1));
+}
+
 export const OpenSpecDigestSchema = z.object({
-  task_goal: z.string().min(1).max(180),
-  requirements: z.array(z.object({ id: z.string().min(1), intent: z.string().min(1).max(220), scenarios: z.array(z.object({ id: z.string().min(1), expected: z.string().min(1).max(200) })).default([]) })).default([]),
-  hard_constraints: z.array(z.string()), relevant_design_decisions: z.array(z.string()).max(1),
+  task_goal: clampedText(300),
+  requirements: z.array(z.object({ id: z.string().min(1), intent: clampedText(400), scenarios: z.array(z.object({ id: z.string().min(1), expected: clampedText(300) })).default([]) })).default([]),
+  hard_constraints: z.array(z.string()), relevant_design_decisions: z.preprocess(value => Array.isArray(value) ? value.slice(0, 1) : value, z.array(z.string())),
 }).strict();
 export type OpenSpecDigest = z.infer<typeof OpenSpecDigestSchema>;
 

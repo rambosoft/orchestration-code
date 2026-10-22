@@ -128,3 +128,21 @@ describe("analysis stage in the workflow", () => {
     expect(analyzes[1]!.prompt).toContain("failed validation");
   }, 120_000);
 });
+
+describe("tolerance for models that run over a limit (regression: LOC-35 digest failed on a 230-character intent)", () => {
+  it("clamps over-long descriptive text and trims non-protected lists instead of rejecting the answer", () => {
+    const messy = { ...valid, problem: "p".repeat(900), risks: Array.from({ length: 9 }, (_, i) => `risk ${i}`), constraints: Array.from({ length: 9 }, (_, i) => `constraint ${i}`), candidates: [{ ...valid.candidates[0], summary: "s".repeat(500), strengths: ["a", "b", "c", "d", "e"] }, valid.candidates[1]] };
+    const parsed = validateAnalysis(JSON.stringify(messy));
+    expect(parsed.problem.length).toBeLessThanOrEqual(400);
+    expect(parsed.problem.endsWith("…")).toBe(true);
+    expect(parsed.risks).toHaveLength(5);
+    expect(parsed.constraints).toHaveLength(6);
+    expect(parsed.candidates[0]!.strengths).toHaveLength(3);
+  });
+  it("still enforces the structure that matters", () => {
+    expect(() => validateAnalysis(JSON.stringify({ ...valid, candidates: [valid.candidates[0]] }))).toThrow("candidates");
+    expect(() => validateAnalysis(JSON.stringify({ ...valid, evaluation_criteria: ["only one"] }))).toThrow("evaluation_criteria");
+    expect(() => validateAnalysis(JSON.stringify({ ...valid, chosen: { ...valid.chosen, name: "" } }))).toThrow("chosen");
+    expect(() => validateAnalysis(JSON.stringify({ ...valid, validation_properties: [] }))).toThrow("validation_properties");
+  });
+});

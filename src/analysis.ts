@@ -1,25 +1,27 @@
 import { z } from "zod";
-import { assertTokenBudget, HANDOFF_BUDGETS } from "./handoffs.js";
+import { assertTokenBudget, clampedText, HANDOFF_BUDGETS } from "./handoffs.js";
 import { parseJsonLoose } from "./json-extract.js";
 
-const text = (max: number) => z.string().trim().min(1).max(max);
+// Descriptive strings are clamped and non-protected lists trimmed rather than rejected (see clampedText); the token budget remains the hard limit.
+const text = (max: number) => clampedText(max);
+const list = <Item extends z.ZodTypeAny>(item: Item, max: number, min = 0) => z.preprocess(value => Array.isArray(value) ? value.slice(0, max) : value, z.array(item).min(min));
 
 /** Result of the optional analysis stage: which approaches were weighed, which one was chosen with concrete parameters, and what must be tested. */
 export const AnalysisSchema = z.object({
   problem: text(400),
-  constraints: z.array(text(200)).max(6),
-  candidates: z.array(z.object({ name: text(80), summary: text(240), strengths: z.array(text(140)).max(3), weaknesses: z.array(text(140)).max(3) }).strict()).min(2).max(5),
-  evaluation_criteria: z.array(text(140)).min(2).max(6),
+  constraints: list(text(200), 6),
+  candidates: list(z.object({ name: text(80), summary: text(240), strengths: list(text(140), 3), weaknesses: list(text(140), 3) }).strict(), 5, 2),
+  evaluation_criteria: list(text(140), 6, 2),
   chosen: z.object({
     name: text(80),
     rationale: text(500),
-    parameters: z.array(z.object({ name: text(60), value: text(80), rationale: text(200) }).strict()).max(10),
+    parameters: list(z.object({ name: text(60), value: text(80), rationale: text(200) }).strict(), 10),
   }).strict(),
   /** Properties tests must establish (invariants, worst-case bounds, monotonicity), written as testable statements. */
-  validation_properties: z.array(text(200)).min(1).max(4),
-  risks: z.array(text(200)).max(5),
+  validation_properties: z.array(text(200)).min(1).max(6),
+  risks: list(text(200), 5),
   /** Concise testable statements the implementation must satisfy; they travel as protected constraints through plan, brief and review. */
-  implementation_requirements: z.array(text(200)).min(1).max(5),
+  implementation_requirements: z.array(text(200)).min(1).max(8),
 }).strict();
 export type Analysis = z.infer<typeof AnalysisSchema>;
 

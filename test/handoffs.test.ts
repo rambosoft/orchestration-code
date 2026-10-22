@@ -167,3 +167,19 @@ describe("handoff budget invariants (guard against re-introducing structurally u
     expect(() => validateBrief(formatBrief({ ...brief, implementation_steps: ["x".repeat(6000)] }), big, "ctx", undefined, BRIEF_HARD_CEILING)).toThrow("exceeds its");
   });
 });
+
+describe("OpenSpec digest tolerates over-long descriptions (regression: LOC-35)", () => {
+  it("clamps an over-long intent and expectation instead of failing coverage-validated digests", () => {
+    const spec = "### openspec/changes/c/specs/x/spec.md\n\n## ADDED Requirements\n\n### Requirement: Curve\nIt SHALL ramp.\n\n#### Scenario: Ramp\n- **WHEN** time passes";
+    const digest = { task_goal: "g".repeat(500), requirements: [{ id: "Requirement: Curve", intent: "i".repeat(700), scenarios: [{ id: "Scenario: Ramp", expected: "e".repeat(600) }] }], hard_constraints: [], relevant_design_decisions: ["one", "two", "three"] };
+    const parsed = validateOpenSpecDigest(JSON.stringify(digest), spec);
+    expect(parsed.requirements[0]!.intent.length).toBeLessThanOrEqual(400);
+    expect(parsed.requirements[0]!.scenarios[0]!.expected.length).toBeLessThanOrEqual(300);
+    expect(parsed.task_goal.length).toBeLessThanOrEqual(300);
+    expect(parsed.relevant_design_decisions).toEqual(["one"]);
+  });
+  it("still fails when a requirement is missing", () => {
+    const spec = "### openspec/changes/c/specs/x/spec.md\n\n### Requirement: A\nx\n\n### Requirement: B\ny";
+    expect(() => validateOpenSpecDigest(JSON.stringify({ task_goal: "g", requirements: [{ id: "Requirement: A", intent: "i", scenarios: [] }], hard_constraints: [], relevant_design_decisions: [] }), spec)).toThrow("failed coverage validation");
+  });
+});
