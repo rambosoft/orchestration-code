@@ -158,8 +158,9 @@ export async function archiveOpenSpec(input: { changeId: string; projectRoot: st
   const root = path.resolve(input.projectRoot);
   const listResult = await runner(["list", "--archived", "--json"], root);
   const archivedList = parseJsonOutput<OpenSpecList>(listResult, "list --archived");
-  const alreadyArchived = archivedList.changes?.find(change => change.name === input.changeId);
-  let archivedPath = alreadyArchived?.path;
+  // OpenSpec stores archives as "<YYYY-MM-DD>-<changeId>"; the implementing agent may already have archived the change.
+  const alreadyArchived = archivedList.changes?.find(change => change.name === input.changeId || (change.name ?? "").replace(/^\d{4}-\d{2}-\d{2}-/, "") === input.changeId);
+  let archivedPath = alreadyArchived ? alreadyArchived.path ?? path.join("openspec", "changes", "archive", alreadyArchived.name ?? "") : undefined;
   if (!alreadyArchived) {
     const statusResult = await runner(["status", "--change", input.changeId, "--json"], root);
     const status = parseJsonOutput<OpenSpecStatus>(statusResult, "status");

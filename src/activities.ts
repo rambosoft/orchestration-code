@@ -33,7 +33,9 @@ export async function prepareOpenSpec(input: { taskId: string; runId: string; pr
 }
 
 export async function validateOpenSpec(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecContext> {
-  return validateOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
+  // Validation failures are deterministic for a given change; retrying cannot help, the workflow decides whether to repair.
+  try { return await validateOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
+  catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecValidationError"); }
 }
 
 export async function archiveOpenSpecChange(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {

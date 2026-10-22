@@ -90,3 +90,19 @@ describe("pinned OpenSpec CLI lifecycle", () => {
     expect(calls).toEqual([["--version"]]);
   });
 });
+
+describe("archive when the implementing agent already archived the change", () => {
+  it("recognises the date-prefixed archive entry and skips status/archive commands", async () => {
+    const calls: string[] = [];
+    const root = await mkdtemp(path.join(os.tmpdir(), "orch-archived-"));
+    try {
+      const result = await archiveOpenSpec({ changeId: "task-dino-1-abc", projectRoot: root, artifactsDir: path.join(root, "artifacts") }, async (args) => {
+        calls.push(args[0]!);
+        if (args[0] === "list") return { stdout: JSON.stringify({ changes: [{ name: "2026-10-22-task-dino-1-abc", status: "complete", archived: true }] }), stderr: "" };
+        return { stdout: "{}", stderr: "" };
+      });
+      expect(result.archivedPath).toContain("2026-10-22-task-dino-1-abc");
+      expect(calls).toEqual(["list", "validate"]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});

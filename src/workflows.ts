@@ -2,7 +2,7 @@ import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCa
 import type * as activities from "./activities.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
-import { openSpecProposalPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
+import { openSpecProposalPrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
 import { assertTokenBudget, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
@@ -18,14 +18,14 @@ export function stageRoute(input: RunInput, stage: StageName) {
   const fallback: ProviderRoute = { provider: input.provider ?? "fake" };
   return input.providerRouting?.[stage] ?? fallback;
 }
-export function failureDetails(error: unknown): string {
+export function failureDetails(error: unknown, maxLength = 1800): string {
   const messages: string[] = [];
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
     if (current.message) messages.push(current.message);
     current = current.cause;
   }
-  return (messages.join(" <- ") || "unknown error").slice(0, 1800);
+  return (messages.join(" <- ") || "unknown error").slice(0, maxLength);
 }
 
 function stageCompletionTokens(output: StageOutput): number | undefined {
@@ -39,7 +39,7 @@ function stageCompletionTokens(output: StageOutput): number | undefined {
 }
 
 export function openSpecContextPrompt(taskPrompt: string, context: string): string {
-  return `${taskPrompt}\n\nVALIDATED OPENSPEC CONTEXT — follow these requirements and the implementation checklist exactly. Do not weaken or omit acceptance criteria. During implementation and repair, use the $openspec-apply-change workflow and mark checklist items complete only after their code and validation are complete.\n\n${context}`;
+  return `${taskPrompt}\n\nVALIDATED OPENSPEC CONTEXT — follow these requirements and the implementation checklist exactly. Do not weaken or omit acceptance criteria. During implementation and repair, use the $openspec-apply-change workflow and mark checklist items complete only after their code and validation are complete. Do not archive the change or sync specs yourself; the orchestrator archives it after the quality gates pass.\n\n${context}`;
 }
 
 export function plannedTaskPrompt(taskPrompt: string, planningSummary: string): string {
@@ -161,7 +161,16 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       artifactRefs.push(prepared.artifactRef);
       const output = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecProposalPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId }) });
       if (!output.ok) { stopReason = "openspec_proposal_failed"; return finish("failed", "OpenSpec proposal stage did not complete successfully."); }
-      const validated: OpenSpecContext = await validateOpenSpec({ changeId: prepared.changeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir });
+      const validateInput = { changeId: prepared.changeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir };
+      let validated: OpenSpecContext;
+      try { validated = await validateOpenSpec(validateInput); }
+      catch (validationError) {
+        // Models often get the delta format wrong; give the proposal stage one bounded repair pass with the validator's diagnostics.
+        if (isCancellation(validationError) || !patched("openspec-validation-repair")) throw validationError;
+        const repaired = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId, diagnostics: failureDetails(validationError, 6000) }) });
+        if (!repaired.ok) { stopReason = "openspec_repair_failed"; return finish("failed", "OpenSpec validation repair did not complete successfully."); }
+        validated = await validateOpenSpec(validateInput);
+      }
       artifactRefs.push(validated.artifactRef);
       openSpecContext = validated.context;
       openSpecInfo = { changeId: prepared.changeId, version: validated.version, contextArtifact: validated.artifactRef };
