@@ -16,3 +16,5 @@
 | D-12 | Eval harness with golden tasks | defer | needs real providers to be meaningful; fake provider gives only pipeline tests | B-020 |
 | D-13 | Reference projects built through orchestrator | defer | cannot run real providers; fake-provider "projects" would be fabricated evidence | B-020 |
 | D-14 | Refactor projectWorkflow monolith | defer | risk without replay tests; do after B-011 | |
+
+D-15: workflow edits that change command sequence use patched(); see B-006 (approval-timeout). Pattern for future workflow changes.

@@ -1,4 +1,4 @@
-import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation } from "@temporalio/workflow";
+import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
@@ -185,7 +185,11 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   }
   for (const stage of profile.stages) {
     currentStage = stage;
-    if (stage === "implement" && input.approval) { await condition(() => approved || rejected); if (rejected) return { runId: input.runId, status: "rejected", stages, artifactRefs, message: "human approval rejected" }; }
+    if (stage === "implement" && input.approval) {
+      // patched(): runs already waiting without a timer must replay the original unbounded wait.
+      if (patched("approval-timeout")) { if (!(await condition(() => approved || rejected, input.approvalTimeoutMs ?? 86_400_000))) { stopReason = "approval_timeout"; return finish("failed", "human approval timed out; no changes were published"); } }
+      else await condition(() => approved || rejected);
+      if (rejected) return { runId: input.runId, status: "rejected", stages, artifactRefs, message: "human approval rejected" }; }
     const effectiveStage: StageName = stage;
     let output: StageOutput;
     try {
