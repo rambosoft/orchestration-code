@@ -7,9 +7,9 @@ Paperclip task board -> HTTP bridge (`src/server.ts`) -> Temporal workflow (`src
 - Install: `npm ci` (uses `legacy-peer-deps`)
 - Typecheck: `npm run typecheck` (~6s)
 - Build: `npm run build` (tsc to `dist/`)
-- Test all: `npx vitest run` (70 tests, ~35s, uses Temporal time-skipping env, no server needed)
+- Test all: `npx vitest run` (~100 tests, ~60s, uses Temporal time-skipping env, no server needed)
 - Test one: `npx vitest run test/core.test.ts -t "name"`
-- No linter is configured. CI runs typecheck and tests (`.github/workflows/ci.yml` once B-012 lands).
+- No linter is configured. CI (`.github/workflows/ci.yml`) runs typecheck + tests; its first run was not yet observed.
 - Full stack (`npm run stack:up`, worker, demo) needs Docker, Paperclip and secrets; not needed for unit work.
 
 ## Map
@@ -50,3 +50,8 @@ Plan -> implement -> verify -> report. Backlog is `docs/engineering/BACKLOG.md`;
 - Real provider runs are unverified (no authenticated provider); the fake provider covers pipeline tests only.
 - `.env` exists locally and holds secrets; never print or commit it.
 - Known open risks: see `docs/engineering/knowledge/failure-modes.yaml`.
+
+## Added by the hardening mission
+- Child processes use `childEnv()` (`src/env.ts`): never pass service tokens to model-run code.
+- Publishing goes through `findPublishViolations` (`src/publish-guard.ts`); bridge test flags need `ORCHESTRATOR_ALLOW_TEST_FLAGS=1`.
+- Workflow edits that change the command sequence need `patched()` and a regenerated replay fixture (`UPDATE_REPLAY_FIXTURE=1 npx vitest run test/replay.test.ts`). See `docs/engineering/EXTENDING.md`.

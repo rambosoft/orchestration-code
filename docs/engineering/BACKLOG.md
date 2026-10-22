@@ -22,7 +22,7 @@ Score = (Impact x Severity + RiskReduction) / Effort(S=1,M=2,L=4). Tier first, s
 | B-016 | Run budgets (tokens/cost/time) | cost | P2 | 8 | FM-005 | per-run budget tracked from provider usage metadata | - | M | real usage data | deferred | | trigger: first authenticated real provider run |
 | B-017 | Doctor/diagnose command | recovery | P2 | 6 | stuck-run repair | `dev doctor`: list worktrees, running workflows, stale branches | - | M | B-010 | deferred | | trigger: first manual state repair needed |
 | B-018 | Secret scan in CI | security | P2 | 6 | no scanner | reuse B-002 scanner as `npm run scan` in CI | CI step green | S | B-002,B-012 | todo | | |
-| B-019 | EXTENDING.md + runbooks + README accuracy | docs | P2 | 5 | handover | write at end | files exist | S | all | todo | | |
+| B-019 | EXTENDING.md + runbooks + README accuracy | docs | P2 | 5 | handover | write at end | files exist | S | all | done | 17d0238 | EXTENDING.md, runbook; README not re-audited |
 | B-020 | Eval harness + reference projects | eval | P3 | - | D-12, D-13 | needs authenticated real providers | - | L | real provider | deferred | | trigger: authenticated codex/openrouter available; fake-provider runs would be fabricated evidence |
 | B-021 | Per-stack toolchain profiles | generality | P3 | - | FM-011, D-11 | profile files for python/go/etc. | - | L | B-020 | deferred | | trigger: second real project type |
 | B-022 | Container sandbox for untrusted code | security | P3 | - | D-07 | run quality cmds in container | - | L | | deferred | | trigger: untrusted repos or multi-tenant |

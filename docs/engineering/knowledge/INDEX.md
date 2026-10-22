@@ -18,3 +18,6 @@
 | ../BACKLOG.md | ordered work list |
 | ../STATUS.md | resume point |
 | ../CHANGELOG-MISSION.md | completed items |
+| ../EXTENDING.md | how to extend and resume |
+| ../runbooks/stuck-or-failed-run.md | operating and recovery steps |
+| ../FINAL_REPORT.md | mission report |
