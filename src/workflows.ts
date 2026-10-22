@@ -2,7 +2,7 @@ import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCa
 import type * as activities from "./activities.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
-import { openSpecProposalPrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
+import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
 import { assertTokenBudget, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
@@ -326,7 +326,16 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   if (openSpecChangeId) {
     currentStage = "openspec-archive";
     try {
-      const archived = await archiveOpenSpecChange({ changeId: openSpecChangeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir });
+      const archiveInput = { changeId: openSpecChangeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir };
+      let archived: Awaited<ReturnType<typeof archiveOpenSpecChange>>;
+      try { archived = await archiveOpenSpecChange(archiveInput); }
+      catch (archiveError) {
+        // Gates passed; an unticked checklist is usually bookkeeping (e.g. manual-only items). Reconcile once, then archive again.
+        if (isCancellation(archiveError) || !patched("openspec-checklist-reconcile") || !/checklist.*is not complete|incomplete/i.test(failureDetails(archiveError, 4000))) throw archiveError;
+        const reconciled = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecChecklistReconcilePrompt({ changeId: openSpecChangeId, error: failureDetails(archiveError, 2000) }) });
+        if (!reconciled.ok) throw archiveError;
+        archived = await archiveOpenSpecChange(archiveInput);
+      }
       artifactRefs.push(archived.artifactRef);
       if (openSpecInfo) openSpecInfo = { ...openSpecInfo, archivedPath: archived.archivedPath };
       completedStages.push("openspec-archive");

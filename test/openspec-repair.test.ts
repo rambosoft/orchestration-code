@@ -9,8 +9,8 @@ import { ApplicationFailure } from "@temporalio/activity";
 import type { StageInput, StageOutput } from "../src/contracts.js";
 import { projectWorkflow } from "../src/workflows.js";
 
-describe("OpenSpec validation repair", () => {
-  it("re-runs the proposal stage once with validator diagnostics instead of failing the run", async () => {
+describe.each(["validation", "checklist"] as const)("OpenSpec %s repair", (scenario) => {
+  it("re-runs the proposal stage once with diagnostics instead of failing the run", async () => {
     const environment = await TestWorkflowEnvironment.createLocal();
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "orch-openspec-repair-"));
     const worktree = path.join(projectRoot, "worktree");
@@ -24,8 +24,8 @@ describe("OpenSpec validation repair", () => {
       prepareWorktree: async () => worktree,
       prepareProjectDependencies: async () => ({ installed: true, summary: "fixture dependencies ready" }),
       prepareOpenSpec: async () => ({ changeId: "task-percent-run1", version: "1.14.3", artifactRef: path.join(projectRoot, "prepared.json") }),
-      validateOpenSpec: async () => { validateCalls++; if (validateCalls === 1) throw ApplicationFailure.nonRetryable("OpenSpec command failed (exit 1): Requirement is under ## Requirements, which is not a delta section"); return { context: "### Requirement: percentage uses the existing operand semantics\nThe button shall preserve operand behavior.\n\n#### Scenario: Apply percent\n- **THEN** the current operand is divided by 100", artifactRef: path.join(projectRoot, "spec-context.md"), version: "1.14.3" }; },
-      archiveOpenSpecChange: async ({ changeId }: { changeId: string }) => { archiveCalls.push(changeId); return { archivedPath: `openspec/changes/archive/2026-10-21-${changeId}`, artifactRef: path.join(projectRoot, "archive.json") }; },
+      validateOpenSpec: async () => { validateCalls++; if (scenario === "validation" && validateCalls === 1) throw ApplicationFailure.nonRetryable("OpenSpec command failed (exit 1): Requirement is under ## Requirements, which is not a delta section"); return { context: "### Requirement: percentage uses the existing operand semantics\nThe button shall preserve operand behavior.\n\n#### Scenario: Apply percent\n- **THEN** the current operand is divided by 100", artifactRef: path.join(projectRoot, "spec-context.md"), version: "1.14.3" }; },
+      archiveOpenSpecChange: async ({ changeId }: { changeId: string }) => { archiveCalls.push(changeId); if (scenario === "checklist" && archiveCalls.length === 1) throw ApplicationFailure.nonRetryable(`OpenSpec task checklist for '${changeId}' is not complete`); return { archivedPath: `openspec/changes/archive/2026-10-21-${changeId}`, artifactRef: path.join(projectRoot, "archive.json") }; },
       executeStage: async (input: StageInput): Promise<StageOutput> => {
         stageInputs.push(input);
         prompts.set(input.stage, input.prompt);
@@ -39,18 +39,17 @@ describe("OpenSpec validation repair", () => {
       collectWorktree: async () => path.join(projectRoot, "worktree.patch"),
       publishWorktree: async ({ repository }: { repository: { branch: string; baseSha: string; prBaseBranch: string } }) => ({ branch: repository.branch, baseSha: repository.baseSha, headSha: "b".repeat(40), prUrl: "https://github.com/example/project/pull/1", prBaseBranch: repository.prBaseBranch }),
     };
-    const taskQueue = `openspec-repair-${Date.now()}`;
+    const taskQueue = `openspec-repair-${scenario}-${Date.now()}`;
     const input = { runId: "repair-run", taskId: "R-1", taskRevision: "rev-1", projectId: "p", profile: "implementation", prompt: "Add a percentage button.", openSpec: true, provider: "fake" as const, providerRouting: { implement: { provider: "codex" as const } }, projectRoot, artifactsDir: path.join(projectRoot, "artifacts"), repository: { remote: "origin", targetBranch: "main", branch: "codex/r-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "t" }, approval: false, plugins: [], qualityCommands: [] };
     try {
       const worker = await Worker.create({ connection: environment.nativeConnection, namespace: environment.namespace, taskQueue, workflowsPath: fileURLToPath(new URL("../src/workflows.ts", import.meta.url)), activities });
       await worker.runUntil(async () => {
-        const result = await environment.client.workflow.execute(projectWorkflow, { taskQueue, workflowId: "openspec-repair", args: [input] });
+        const result = await environment.client.workflow.execute(projectWorkflow, { taskQueue, workflowId: `openspec-repair-${scenario}`, args: [input] });
         expect(result.status, result.message).toBe("completed");
-        expect(validateCalls).toBe(2);
         const openspecStages = stageInputs.filter(stage => stage.stage === "openspec");
         expect(openspecStages).toHaveLength(2);
-        expect(openspecStages[1]!.prompt).toContain("failed strict validation");
-        expect(openspecStages[1]!.prompt).toContain("not a delta section");
+        if (scenario === "validation") { expect(validateCalls).toBe(2); expect(openspecStages[1]!.prompt).toContain("failed strict validation"); expect(openspecStages[1]!.prompt).toContain("not a delta section"); }
+        else { expect(archiveCalls).toHaveLength(2); expect(openspecStages[1]!.prompt).toContain("tasks.md checklist is not fully checked"); expect(openspecStages[1]!.prompt).toContain("Unverified manually:"); }
       });
     } finally { await environment.teardown(); await rm(projectRoot, { recursive: true, force: true }); }
   }, 120_000);

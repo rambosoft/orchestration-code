@@ -39,7 +39,8 @@ export async function validateOpenSpec(input: { changeId: string; runId: string;
 }
 
 export async function archiveOpenSpecChange(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {
-  return archiveOpenSpec({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
+  try { return await archiveOpenSpec({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
+  catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecArchiveError"); }
 }
 
 export async function checkDependencies(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
