@@ -4,9 +4,9 @@ Score = (Impact x Severity + RiskReduction) / Effort(S=1,M=2,L=4). Tier first, s
 
 | ID | Title | Cat | Tier | Score | Problem + evidence | Smallest solution | Acceptance test | Eff | Deps | Status | Commit | Evidence |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| B-001 | Scope child-process env | security | P0 | 25 | FM-001: quality cmds, npm ci inherit service tokens | `childEnv()` allow-list helper used by runCheck/CLI/openspec spawns | test: spawned process cannot see ORCHESTRATOR_API_TOKEN/PAPERCLIP_API_TOKEN/OPENROUTER_API_KEY | S | - | todo | | |
+| B-001 | Scope child-process env | security | P0 | 25 | FM-001: quality cmds, npm ci inherit service tokens | `childEnv()` allow-list helper used by runCheck/CLI/openspec spawns | test: spawned process cannot see ORCHESTRATOR_API_TOKEN/PAPERCLIP_API_TOKEN/OPENROUTER_API_KEY | S | - | done | 4694e32 | test/env.test.ts |
 | B-002 | Pre-publish guard | security | P0 | 10 | FM-002: `git add --all` + push without checks | `assertPublishable()` before commit: reject .env/key files, secret patterns, files >5MB, node_modules | test with temp repo containing each case | M | - | todo | | |
-| B-003 | Harden bridge | security | P0 | 16 | FM-009: test flags, unbounded body, `!==` token compare | gate flags behind `ORCHESTRATOR_ALLOW_TEST_FLAGS`; 1MB body cap; timingSafeEqual | unit tests on extracted pure helpers | S | - | todo | | |
+| B-003 | Harden bridge | security | P0 | 16 | FM-009: test flags, unbounded body, `!==` token compare | gate flags behind `ORCHESTRATOR_ALLOW_TEST_FLAGS`; 1MB body cap; timingSafeEqual | unit tests on extracted pure helpers | S | - | done | see log | test/http-guard.test.ts |
 | B-012 | CI workflow | ci | P1 | 24 | FM-012 no CI | `.github/workflows/ci.yml`: npm ci, typecheck, test; pinned actions; `permissions: contents: read` | workflow green on pushed branch | S | - | todo | | |
 | B-009 | Untrusted-content preamble | security | P1 | 16 | FM-010 | constant prepended in `CliProvider` instruction and OpenRouter prompt | unit test asserts preamble in built args | S | - | todo | | |
 | B-006 | Execution timeouts | reliability | P1 | 16 | FM-005 | `workflowExecutionTimeout` in startRun (env-configurable, default 6h); approval wait timeout 24h via `condition(fn, ms)` | workflow test: approval timeout -> failed result | S | - | todo | | |

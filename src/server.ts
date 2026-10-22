@@ -9,6 +9,7 @@ import { admitRepository, resolveRemoteBranch, taskBranch } from "./workspaces.j
 import { parseOpenSpecTaskPrompt, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
+import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
@@ -29,14 +30,14 @@ try {
 const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
-  if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401); res.end(JSON.stringify({ error: "unauthorized" })); return; }
+  if (!tokenMatches(req.headers.authorization, token)) { res.writeHead(401); res.end(JSON.stringify({ error: "unauthorized" })); return; }
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/health") { res.end(JSON.stringify({ ok: true, project: defaultProject.id, projects: [...projects.keys()] })); return; }
     if (req.method === "GET" && url.pathname === "/v1/runs") { res.end(JSON.stringify(await listRuns())); return; }
     if (req.method === "POST" && url.pathname === "/v1/runs") {
-      const chunks: Buffer[] = []; for await (const c of req) chunks.push(Buffer.from(c));
-      const payload = startSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      const payload = startSchema.parse(await readJsonBody(req));
+      assertNoTestFlags(payload);
       const project = projects.get(payload.projectId ?? defaultProject.id);
       if (!project) throw new Error(`project '${payload.projectId}' is not configured in the orchestrator`);
       const parsedPrompt = parseOpenSpecTaskPrompt(payload.prompt);
