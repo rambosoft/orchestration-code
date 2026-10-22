@@ -13,7 +13,7 @@ Score = (Impact x Severity + RiskReduction) / Effort(S=1,M=2,L=4). Tier first, s
 | B-005 | Non-retryable errors | reliability | P1 | 15 | FM-004 | throw `ApplicationFailure.nonRetryable` for auth/config/invalid-result in executeStage | test: invalid result -> 1 attempt only | S | - | done | see git log | tests |
 | B-004 | Heartbeat + cancel kill | reliability | P1 | 10 | FM-003 | heartbeat timer in executeStage, heartbeatTimeout on proxy, kill provider child on Context cancel | test: cancellation kills a long fake child | M | - | done | see git log | tests |
 | B-007 | Reuse stage artifact on retry | reliability | P1 | 8 | FM-006 | skip provider if `<stage>-<attempt>.json` exists with same input hash | test: second run reuses | M | B-005 | todo | | |
-| B-008 | Correct runId on duplicate start | reliability | P1 | 8 | FM-008 | on AlreadyStarted, describe workflow and return its runId | test with temporal test env | S | - | todo | | |
+| B-008 | Correct runId on duplicate start | reliability | P1 | 8 | FM-008 | on AlreadyStarted, describe workflow and return its runId | test with temporal test env | S | - | done | see git log | tests |
 | B-011 | Replay determinism test | testing | P1 | 6.5 | FM-013 | export history from a test run, replay with `Worker.runReplayHistory` | test passes; fails when workflow edited incompatibly (manual check noted) | M | - | todo | | |
 | B-013 | Simplicity policy (Ponytail adapt) | quality | P2 | 8 | research/ponytail.md | `SIMPLICITY_POLICY` constant in implement + review prompts | prompt unit tests | S | - | todo | | |
 | B-014 | Startup env validation | ops | P2 | 7 | config-schema gap | zod env schema checked in worker/server start | unit test | S | - | todo | | |
