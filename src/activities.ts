@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
+import { activitySignal, killOnAbort } from "./process-control.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
@@ -60,17 +61,17 @@ export async function checkDependencies(input: { blockerIds: string[]; parentPub
   }
 }
 
-function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000): Promise<{ code: number | null; output: string; stderr: string }> {
+export function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000, signal: AbortSignal | undefined = activitySignal()): Promise<{ code: number | null; output: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // npm is exposed as npm.ps1/npm.cmd on Windows, neither of which spawn()
     // can execute reliably without a shell. Invoke the bundled JS CLI instead.
     const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
     const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? process.execPath : executable;
     const commandArgs = command === process.execPath && executable === "npm" ? [npmCli, ...args] : args;
-    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
+    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
     child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
-    child.on("error", reject); child.on("close", code => resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }));
+    child.on("error", error => { stopKill(); reject(error); }); child.on("close", code => { stopKill(); if (signal?.aborted) return reject(new Error("cancelled: process killed")); resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }); });
   });
 }
 
@@ -97,7 +98,15 @@ export async function prepareProjectDependencies(
   return { installed: true, summary: "Installed npm dependencies from package-lock.json with npm ci." };
 }
 
+/** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
 export async function executeStage(input: StageInput): Promise<StageOutput> {
+  let timer: NodeJS.Timeout | undefined;
+  try { const context = Context.current(); timer = setInterval(() => context.heartbeat(), HEARTBEAT_INTERVAL_MS); } catch { /* direct unit invocation */ }
+  try { return await executeStageInner(input); } finally { if (timer) clearInterval(timer); }
+}
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+async function executeStageInner(input: StageInput): Promise<StageOutput> {
   const info = (() => { try { return Context.current().info; } catch { return undefined; } })();
   const activityStartedAt = Date.now();
   const queueWaitMs = info ? Math.max(0, activityStartedAt - info.currentAttemptScheduledTimestampMs) : undefined;

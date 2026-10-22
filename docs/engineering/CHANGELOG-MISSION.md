@@ -9,3 +9,4 @@ One line per completed item: id, commit, evidence.
 - B-009: untrusted-content notice in CLI and OpenRouter prompts (test/untrusted-notice.test.ts, 84 tests). Effect on model behaviour unverified.
 - B-006: workflowExecutionTimeout (48h default, ORCHESTRATOR_WORKFLOW_TIMEOUT_MS) and 24h approval timeout via patched('approval-timeout') (test/timeouts.test.ts, 86 tests). Token/cost budgets remain B-016.
 - B-005: auth, config, plugin and invalid-result failures are non-retryable (test/non-retryable.test.ts, 90 tests).
+- B-004: executeStage heartbeats (10s); heartbeatTimeout 2m + WAIT_CANCELLATION_COMPLETED on stage proxy; child process trees killed on activity cancel (test/cancellation.test.ts, 92 tests). Live worker cancel not exercised; abort path verified at runCheck level, CliProvider path by code only.

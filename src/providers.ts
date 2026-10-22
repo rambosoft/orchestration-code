@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { ReviewAssessmentSchema, type ReviewAssessment, type StageInput, type StageOutput } from "./contracts.js";
 import { resolveRtkStatus } from "./rtk.js";
 import { childEnv } from "./env.js";
+import { activitySignal, killOnAbort, killProcessTree } from "./process-control.js";
 
 export interface AgentProvider { readonly id: string; run(input: StageInput): Promise<StageOutput> }
 function redact(text: string): string {
@@ -120,12 +121,14 @@ export class CliProvider implements AgentProvider {
     return new Promise((resolve, reject) => {
       const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
       const stdout: Buffer[] = []; const stderr: Buffer[] = []; let size = 0; let timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+      const signal = activitySignal(); const stopKill = killOnAbort(child, signal);
+      const timer = setTimeout(() => { timedOut = true; killProcessTree(child); }, timeoutMs);
       child.stdout.on("data", (b: Buffer) => { size += b.length; if (size < 1_000_000) stdout.push(b); });
       child.stderr.on("data", (b: Buffer) => { if (Buffer.concat(stderr).length < 64_000) stderr.push(b); });
-      child.on("error", (e) => { clearTimeout(timer); reject(e); });
+      child.on("error", (e) => { clearTimeout(timer); stopKill(); reject(e); });
       child.on("close", (code) => {
-        clearTimeout(timer); const out = Buffer.concat(stdout).toString("utf8").trim();
+        clearTimeout(timer); stopKill();
+        if (signal?.aborted) return reject(new Error(`${this.id} cancelled: process killed`)); const out = Buffer.concat(stdout).toString("utf8").trim();
         if (timedOut) return reject(new Error(`${this.id} timed out after ${timeoutMs}ms`));
         if (code !== 0) return reject(new Error(`${this.id} exited ${code}: ${redact(Buffer.concat(stderr).toString("utf8").slice(-3000))}`));
         let summary = out; const metadata: Record<string, unknown> = {};
