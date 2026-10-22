@@ -18,5 +18,6 @@ jobs:
       - run: git config --global user.name ci && git config --global user.email ci@example.test
       - run: npm ci
       - run: npm run check:chars
+      - run: npm run scan:secrets
       - run: npm run typecheck
       - run: npx vitest run

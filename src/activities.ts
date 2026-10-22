@@ -10,12 +10,12 @@ import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
-import { activitySignal, killOnAbort } from "./process-control.js";
+import { activitySignal, heartbeating, killOnAbort } from "./process-control.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
 import type { OpenSpecPrepared, OpenSpecContext } from "./contracts.js";
-export { prepareWorktree, collectWorktree, publishWorktree } from "./workspaces.js";
+import { prepareWorktree as prepareWorktreeImpl, collectWorktree as collectWorktreeImpl, publishWorktree as publishWorktreeImpl } from "./workspaces.js";
 
 async function emitActivityEvent(event: Record<string, unknown>, level: "info" | "error" = "info"): Promise<void> {
   const line = JSON.stringify(event);
@@ -29,22 +29,22 @@ async function emitActivityEvent(event: Record<string, unknown>, level: "info" |
   }
 }
 
-export async function prepareOpenSpec(input: { taskId: string; runId: string; prompt: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecPrepared> {
+async function prepareOpenSpecImpl(input: { taskId: string; runId: string; prompt: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecPrepared> {
   return prepareOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
 }
 
-export async function validateOpenSpec(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecContext> {
+async function validateOpenSpecImpl(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecContext> {
   // Validation failures are deterministic for a given change; retrying cannot help, the workflow decides whether to repair.
   try { return await validateOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
   catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecValidationError"); }
 }
 
-export async function archiveOpenSpecChange(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {
+async function archiveOpenSpecChangeImpl(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {
   try { return await archiveOpenSpec({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
   catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecArchiveError"); }
 }
 
-export async function checkDependencies(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
+async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
   if (!input.blockerIds.length) return;
   const token = process.env.PAPERCLIP_API_TOKEN;
   if (!token) throw new Error("PAPERCLIP_API_TOKEN is required on the Windows worker to recheck task blockers before branch creation");
@@ -85,7 +85,7 @@ export function reviewPromptWithDiff(prompt: string, diff: string): string {
 }
 
 /** Install locked npm dependencies in a fresh isolated worktree before agents or quality checks use them. */
-export async function prepareProjectDependencies(
+async function prepareProjectDependenciesImpl(
   projectRoot: string,
   run: typeof runCheck = runCheck,
 ): Promise<{ installed: boolean; summary: string }> {
@@ -216,4 +216,15 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
   await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
   return { ...out, stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, file] };
 }
-export async function timeoutProbe(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
+async function timeoutProbeImpl(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
+
+// Every activity heartbeats (see heartbeating): the workflow sets a heartbeatTimeout on all of them.
+export const prepareWorktree = heartbeating(prepareWorktreeImpl);
+export const collectWorktree = heartbeating(collectWorktreeImpl);
+export const publishWorktree = heartbeating(publishWorktreeImpl);
+export const prepareOpenSpec = heartbeating(prepareOpenSpecImpl);
+export const validateOpenSpec = heartbeating(validateOpenSpecImpl);
+export const archiveOpenSpecChange = heartbeating(archiveOpenSpecChangeImpl);
+export const checkDependencies = heartbeating(checkDependenciesImpl);
+export const prepareProjectDependencies = heartbeating(prepareProjectDependenciesImpl);
+export const timeoutProbe = heartbeating(timeoutProbeImpl);

@@ -7,6 +7,13 @@ import { NODE_EXECUTABLE } from "./node-path.js";
 import { activitySignal, killOnAbort, killProcessTree } from "./process-control.js";
 
 export interface AgentProvider { readonly id: string; run(input: StageInput): Promise<StageOutput> }
+/** Structured stages (plan, brief, digest, review) return JSON; cutting it silently turns a long answer into invalid JSON, so the cap is generous and a cut is always recorded. */
+export const MAX_SUMMARY_CHARS = 64_000;
+export function capSummary(text: string, metadata?: Record<string, unknown>): string {
+  if (text.length <= MAX_SUMMARY_CHARS) return text;
+  if (metadata) metadata.outputTruncated = { originalChars: text.length, keptChars: MAX_SUMMARY_CHARS };
+  return text.slice(0, MAX_SUMMARY_CHARS);
+}
 function redact(text: string): string {
   return text
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[REDACTED PRIVATE KEY]")
@@ -156,7 +163,7 @@ export class CliProvider implements AgentProvider {
         if (input.plugins.some(plugin => plugin.id === "rtk" && plugin.enabled) && input.stage === "implement" && this.id === "codex") {
           metadata.commandOutputFiltering = { tool: "rtk", ...rtk, bypass: "rtk bypass <command>" };
         }
-        resolve({ ok: true, summary: redact(summary).slice(0, 8000), findings: [], artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata });
+        resolve({ ok: true, summary: capSummary(redact(summary), metadata), findings: [], artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata });
       });
       if (this.id === "codex") child.stdin.end(instruction);
     });
@@ -219,7 +226,7 @@ export class OpenRouterProvider implements AgentProvider {
     const content = message?.content;
     const summary = typeof toolResult === "string" ? toolResult : typeof content === "string" ? content : Array.isArray(content) ? content.map(part => typeof part === "object" && part && "text" in part ? String(part.text) : "").join("\n") : "";
     if (!summary.trim()) throw new Error("OpenRouter returned no text content");
-    const safeSummary = redact(summary).replaceAll(this.apiKey, "[REDACTED]").slice(0, 8000);
+    const safeSummary = capSummary(redact(summary).replaceAll(this.apiKey, "[REDACTED]"));
     const review = input.stage === "review" ? parseReviewAssessment(safeSummary) : undefined;
     const repairFindings = review?.findings ?? [];
     const blocking = repairFindings.some(f => ["critical", "high"].includes(f.severity) && f.fixableInCode && !["environment", "approval"].includes(f.category));

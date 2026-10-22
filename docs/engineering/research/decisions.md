@@ -26,3 +26,5 @@ D-15: workflow edits that change command sequence use patched(); see B-006 (appr
 | D-21 | Model selection for CLI providers | adopt precedence: manifest route model, then CODEX_MODEL, then pinned default | hard-coded gpt-6-luna | test/untrusted-notice.test.ts |
 | D-22 | Claude CLI flags | adopt --max-budget-usd and an --allowedTools allow-list; reject --max-turns (absent from this CLI's help) | claude --help | test/untrusted-notice.test.ts |
 | D-23 | Preflight | adopt `doctor` (providers, worker, bridge, build staleness, environment) | FM-023/024 | test/doctor.test.ts |
+| D-24 | Admission dirtiness | adopt own rule (ignore CR-at-EOL-only differences) over git config tweaks; reject core.autocrlf overrides (git status stays stale-dirty) | FM-028 | test/workspaces.test.ts |
+| D-25 | Secret scanning | adopt repo-wide scan reusing publish-guard patterns in CI; reject a third-party scanner (no new dependency, one pattern source) | FM-029 | scripts/scan-secrets.ts |

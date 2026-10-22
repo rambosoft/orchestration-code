@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseJsonLoose } from "./json-extract.js";
 
 // The OpenSpec digest must cover every requirement and scenario, so it is capped below the planning context
 // (digest + task text + instructions must fit) rather than at an arbitrary small size.
@@ -45,7 +46,7 @@ export type ExecutionBrief = z.infer<typeof ExecutionBriefSchema>;
 export function parseStructured<T>(raw: string, schema: z.ZodType<T>, label: string, budget: number, actualTokens?: number): T {
   assertTokenBudget(label, raw, budget, actualTokens);
   let value: unknown;
-  try { value = JSON.parse(raw); }
+  try { value = parseJsonLoose(raw); }
   catch { throw new Error(`${label} is not valid JSON`); }
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new Error(`${label} does not match its required schema: ${parsed.error.issues.map(issue => issue.path.join(".") || issue.message).join(", ")}`);
@@ -99,6 +100,14 @@ export const OpenSpecDigestSchema = z.object({
   hard_constraints: z.array(z.string()), relevant_design_decisions: z.array(z.string()).max(1),
 }).strict();
 export type OpenSpecDigest = z.infer<typeof OpenSpecDigestSchema>;
+
+/**
+ * The validated OpenSpec context also carries the capability's whole main spec. Planning only needs the change itself (proposal, design, tasks,
+ * delta specs): coverage and the digest must scale with the change, not with everything the project has ever specified.
+ */
+export function changeOnlyContext(context: string): string {
+  return context.split(/\n\n(?=### openspec\/\S+\.md\r?\n)/).filter(part => !/^### openspec\/specs\//.test(part)).join("\n\n");
+}
 
 export function openSpecCoverage(context: string): { requirements: string[]; scenarios: string[]; hardConstraints: string[] } {
   const requirements = [...context.matchAll(/^### Requirement:\s*(.+)$/gm)].map(m => `Requirement: ${m[1]!.trim()}`);

@@ -5,11 +5,11 @@ import { profiles } from "./profiles.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
-import { assertTokenBudget, BRIEF_HARD_CEILING, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
+import { assertTokenBudget, BRIEF_HARD_CEILING, changeOnlyContext, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
-const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "2 minutes", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
 export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[] }>("progress");
@@ -177,7 +177,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         validated = await validateOpenSpec(validateInput);
       }
       artifactRefs.push(validated.artifactRef);
-      openSpecContext = validated.context;
+      openSpecContext = changeOnlyContext(validated.context);
       openSpecInfo = { changeId: prepared.changeId, version: validated.version, contextArtifact: validated.artifactRef };
       output.metadata = { ...output.metadata, openSpec: { changeId: prepared.changeId, version: validated.version, validated: true, contextArtifact: validated.artifactRef } };
       completedStages.push("openspec");

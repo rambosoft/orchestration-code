@@ -25,7 +25,9 @@
     "doctor": "node dist/src/cli.js doctor",
     "cleanup": "node dist/src/cli.js cleanup",
     "e2e": "node dist/src/e2e.js",
-    "check:chars": "node scripts/check-control-chars.mjs"
+    "check:chars": "node scripts/check-control-chars.mjs",
+    "scan:secrets": "tsx scripts/scan-secrets.ts",
+    "ci:linux": "sh scripts/ci-linux.sh"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.14.3",

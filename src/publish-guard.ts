@@ -3,14 +3,14 @@ import path from "node:path";
 import { runCommand, type CommandRunner } from "./command.js";
 
 const MAX_FILE_BYTES = 5_000_000;
-const SENSITIVE_PATH = [
+export const SENSITIVE_PATH = [
   /(^|\/)\.env(\.(?!example$|sample$|template$)[^/]*)?$/i,
   /\.(pem|key|p12|pfx|jks)$/i,
   /(^|\/)id_(rsa|dsa|ecdsa|ed25519)$/,
   /(^|\/)(\.envrc|\.netrc|\.npmrc|credentials\.json)$/i,
   /(^|\/)node_modules\//,
 ];
-const SECRET_CONTENT = [
+export const SECRET_CONTENT = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}/,
   /\bsk-[A-Za-z0-9_-]{20,}/,
