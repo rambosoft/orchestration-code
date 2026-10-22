@@ -6,7 +6,7 @@ import { getProvider } from "./providers.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { Context } from "@temporalio/activity";
+import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
@@ -106,7 +106,7 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
   await emitActivityEvent({ event: "activity.start", ...activityContext });
   if (queueWaitMs !== undefined && Number.isFinite(queueAlertMs) && queueWaitMs >= queueAlertMs) await emitActivityEvent({ event: "activity.queue_wait_alert", thresholdMs: queueAlertMs, ...activityContext }, "error");
   const errors = await pluginRegistry.check(input.plugins, { stage: input.stage, provider: input.provider });
-  if (errors.length) throw new Error(errors.join("; "));
+  if (errors.length) throw ApplicationFailure.nonRetryable(errors.join("; "), "PluginConfigError");
   // Keep artifacts from retries and later task revisions separate. Temporal
   // workflow history still records the same paths returned by each stage.
   const artifactsDir = path.join(input.artifactsDir, input.runId);
@@ -163,13 +163,15 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
     const message = error instanceof Error ? error.message : String(error);
     const failureFile = path.join(artifactsDir, `${input.stage}-${input.attempt}-activity-${activityAttempt}-failure.json`);
     const providerDurationMs = Date.now() - providerStarted;
-    const category = /timed out/i.test(message) ? "timeout" : /429|rate limit/i.test(message) ? "rate_limit" : /401|403|auth/i.test(message) ? "authentication" : "provider_error";
+    const category = /timed out/i.test(message) ? "timeout" : /429|rate limit/i.test(message) ? "rate_limit" : /401|403|auth/i.test(message) ? "authentication" : /not configured|missing its configured model|unsupported provider/i.test(message) ? "configuration" : "provider_error";
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
-    throw new Error(`${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`);
+    const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
+    // Retrying bad credentials or configuration only repeats the failure (and the cost).
+    throw category === "authentication" || category === "configuration" ? ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError") : new Error(detail);
   }
   const parsed = StageOutputSchema.safeParse(result);
-  if (!parsed.success) throw new Error(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`);
+  if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
   const providerOutput = parsed.data;
   const out: StageOutput = input.stage === "verify" && input.provider !== "fake"
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
