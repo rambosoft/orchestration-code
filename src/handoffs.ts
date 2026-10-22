@@ -6,7 +6,9 @@ import { parseJsonLoose } from "./json-extract.js";
 // The brief must carry the plan's protected hard constraints and acceptance criteria verbatim, so its cap
 // has to exceed the plan cap by the brief's own overhead (goal, steps, avoid list); otherwise a verbose but
 // valid plan can never produce a valid brief, however often it is compressed.
-export const HANDOFF_BUDGETS = { planningContext: 2800, openSpecDigest: 2200, plan: 900, brief: 1200, reviewChecklist: 900 } as const;
+// analysis: the optional analysis stage result. It adds up to ~700 tokens (decisions block) to the planning context and up to ~600 tokens of
+// protected constraints to the brief, hence the larger planningContext and brief caps.
+export const HANDOFF_BUDGETS = { planningContext: 3600, openSpecDigest: 2200, analysis: 1400, plan: 900, brief: 1700, reviewChecklist: 900 } as const;
 
 // Provider-independent conservative estimate. Three characters per token
 // leaves headroom for punctuation-heavy, multilingual, and structured text.
@@ -136,8 +138,8 @@ export function validateOpenSpecDigest(raw: string, context: string, actualToken
   return digest;
 }
 
-export function planningPrompt(task: string, optimizedOpenSpec: string, _uiUxContext = ""): string {
-  const source = ["Task:", task, optimizedOpenSpec ? `Semantically optimized, coverage-validated OpenSpec:\n${optimizedOpenSpec}` : ""].filter(Boolean).join("\n\n");
+export function planningPrompt(task: string, optimizedOpenSpec: string, _uiUxContext = "", analysisDecisions = ""): string {
+  const source = ["Task:", task, optimizedOpenSpec ? `Semantically optimized, coverage-validated OpenSpec:\n${optimizedOpenSpec}` : "", analysisDecisions].filter(Boolean).join("\n\n");
   assertTokenBudget("Planning context", source, HANDOFF_BUDGETS.planningContext);
   return `${source}\n\nChoose one implementation approach. Return only one JSON object matching this schema: {"task_goal":"string","approach":"string","important_decisions":["string"],"risks":["string"],"acceptance_criteria":["testable string"],"hard_constraints":["exact source constraint"]}. Keep the complete response within ${HANDOFF_BUDGETS.plan} tokens. Acceptance criteria must cover every explicit task and OpenSpec requirement, grouped into at most 5 concise, non-overlapping checks. Combine related requirements in a single testable sentence; do not create separate checks for requirement titles or visual details. Keep task_goal and approach to one concise sentence each, important_decisions to at most 4, and concrete risks to at most 2. Put only non-negotiable prohibitions, privacy rules, and factual guardrails in hard_constraints; place positive implementation and validation requirements in acceptance_criteria. Do not repeat a hard constraint as a separate acceptance criterion when one check can cover it. Copy all normative OpenSpec constraints (MUST/SHALL/NEVER/DO NOT/AVOID) verbatim into hard_constraints; do not invent constraints.`;
 }

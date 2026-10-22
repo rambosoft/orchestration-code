@@ -228,3 +228,15 @@ export const archiveOpenSpecChange = heartbeating(archiveOpenSpecChangeImpl);
 export const checkDependencies = heartbeating(checkDependenciesImpl);
 export const prepareProjectDependencies = heartbeating(prepareProjectDependenciesImpl);
 export const timeoutProbe = heartbeating(timeoutProbeImpl);
+
+/** Write the analysis document into the task worktree so it is part of the published change. */
+async function writeAnalysisDocumentImpl(input: { worktree: string; docsDir: string; taskId: string; markdown: string }): Promise<string> {
+  const root = path.resolve(input.worktree);
+  const dir = path.resolve(root, input.docsDir);
+  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error(`analysis docsDir '${input.docsDir}' must stay inside the task worktree`);
+  const file = path.join(dir, `${input.taskId.replace(/[^A-Za-z0-9._-]+/g, "-")}.md`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, input.markdown, "utf8");
+  return file;
+}
+export const writeAnalysisDocument = heartbeating(writeAnalysisDocumentImpl);

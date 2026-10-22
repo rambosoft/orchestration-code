@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import type { OpenSpecContext, OpenSpecPrepared } from "./contracts.js";
 import { makeOpenSpecChangeId } from "./openspec-policy.js";
-export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, resolveOpenSpecEnabled, shouldRunOpenSpec } from "./openspec-policy.js";
+export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, parseTaskDirectives, resolveOpenSpecEnabled, shouldRunOpenSpec } from "./openspec-policy.js";
 
 export const OPEN_SPEC_VERSION = "1.14.3";
 import { childEnv } from "./env.js";

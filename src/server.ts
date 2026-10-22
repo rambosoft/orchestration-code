@@ -6,7 +6,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { profiles } from "./profiles.js";
 import { admitRepository, resolveRemoteBranch, taskBranch } from "./workspaces.js";
-import { parseOpenSpecTaskPrompt, resolveOpenSpecEnabled } from "./openspec.js";
+import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
@@ -27,7 +27,7 @@ try {
 } catch (error) {
   if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
-const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
+const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   if (!tokenMatches(req.headers.authorization, token)) { res.writeHead(401); res.end(JSON.stringify({ error: "unauthorized" })); return; }
@@ -40,7 +40,7 @@ const server = createServer(async (req, res) => {
       assertNoTestFlags(payload);
       const project = projects.get(payload.projectId ?? defaultProject.id);
       if (!project) throw new Error(`project '${payload.projectId}' is not configured in the orchestrator`);
-      const parsedPrompt = parseOpenSpecTaskPrompt(payload.prompt);
+      const parsedPrompt = parseTaskDirectives(payload.prompt);
       if (parsedPrompt.error) throw new Error(parsedPrompt.error);
       if (payload.profile && payload.profile !== project.defaultProfile && !["implementation", "bugfix", "research", "refactor"].includes(payload.profile)) throw new Error("unknown profile");
       const profileId = payload.profile ?? project.defaultProfile;
@@ -76,7 +76,7 @@ const server = createServer(async (req, res) => {
         } else if (payload.blockers.length) throw new Error("resolved dependency metadata is missing; refusing to start a dependent task on an unrelated base");
         repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch, baseSha, prBaseBranch, taskTitle: payload.taskTitle ?? payload.taskId, requiredSourcePaths: project.repository.requiredSourcePaths };
       }
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.override), uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands: project.qualityCommandsByProfile[profileId] ?? project.qualityCommands });
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands: project.qualityCommandsByProfile[profileId] ?? project.qualityCommands });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
     const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject))?$/);

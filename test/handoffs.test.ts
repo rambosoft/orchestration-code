@@ -13,7 +13,7 @@ describe("compressed handoff schemas and budgets", () => {
   it("uses conservative token estimates and rejects oversized phase output", () => {
     expect(estimateTokens("12345678")).toBe(3);
     expect(() => parseStructured("x".repeat(4000), PlanSchema, "Plan", HANDOFF_BUDGETS.plan)).toThrow("exceeds its 900-token budget");
-    expect(() => planningPrompt("task", "x".repeat(10_000))).toThrow("Planning context exceeds its 2800-token budget");
+    expect(() => planningPrompt("task", "x".repeat(12_000))).toThrow("Planning context exceeds its 3600-token budget");
   });
 
   it("keeps planner acceptance checks grouped and non-duplicative", () => {
@@ -114,8 +114,10 @@ describe("compressed handoff schemas and budgets", () => {
   it("fails closed when a protected requirement is missing or checklist exceeds its budget", () => {
     const omitted = { task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: [], verification_steps: [], acceptance_checks: ["The button applies the existing percentage semantics."] };
     expect(() => validateBrief(JSON.stringify(omitted), plan, "The implementation MUST preserve keyboard behavior.")).toThrow("omitted protected requirements");
-    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(4500)] };
-    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 1200-token budget");
+    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], implementation_steps: ["x".repeat(6500)], acceptance_checks: [...plan.acceptance_criteria] };
+    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 1700-token budget");
+    const longChecklist = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(3000)] };
+    expect(() => validateBrief(JSON.stringify(longChecklist), plan, "")).toThrow("Review checklist exceeds its 900-token budget");
   });
 });
 
@@ -149,11 +151,14 @@ describe("handoff budget invariants (guard against re-introducing structurally u
     expect(HANDOFF_BUDGETS.planningContext).toBeGreaterThan(HANDOFF_BUDGETS.openSpecDigest);
     expect(HANDOFF_BUDGETS.planningContext - HANDOFF_BUDGETS.openSpecDigest).toBeGreaterThanOrEqual(400);
     expect(BRIEF_HARD_CEILING).toBeGreaterThan(HANDOFF_BUDGETS.brief);
+    // The optional analysis stage adds at most ~700 tokens to the planning context and ~600 tokens of protected constraints to the brief.
+    expect(HANDOFF_BUDGETS.planningContext).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.openSpecDigest + 700 + 300);
+    expect(HANDOFF_BUDGETS.brief).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.plan + 600 + 150);
   });
   it("accepts a brief between the soft cap and the hard ceiling only when asked to, and still rejects beyond the ceiling", () => {
     const criteria = Array.from({ length: 4 }, (_, i) => `Criterion ${i}: ${"deterministic behaviour for identical inputs with a clear outcome; ".repeat(8)}`);
     const big = PlanSchema.parse({ task_goal: "g", approach: "a", important_decisions: [], risks: [], acceptance_criteria: criteria, hard_constraints: [] });
-    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: Array.from({ length: 5 }, (_, i) => `Step ${i}: ${"implement the described behaviour in the pure rules module and wire it into the view. ".repeat(4)}`), verification_steps: ["v"], acceptance_checks: [] }, big, "ctx");
+    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: Array.from({ length: 5 }, (_, i) => `Step ${i}: ${"implement the described behaviour in the pure rules module and wire it into the view. ".repeat(10)}`), verification_steps: ["v"], acceptance_checks: [] }, big, "ctx");
     const tokens = estimateTokens(formatBrief(brief));
     expect(tokens).toBeGreaterThan(HANDOFF_BUDGETS.brief);
     expect(tokens).toBeLessThan(BRIEF_HARD_CEILING);

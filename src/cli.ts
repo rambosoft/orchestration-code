@@ -7,7 +7,7 @@ import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
-import { parseOpenSpecTaskPrompt, resolveOpenSpecEnabled } from "./openspec.js";
+import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 
 const [command, ...args] = process.argv.slice(2);
@@ -15,7 +15,7 @@ const data = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data");
 async function loadProject(file = "project.example.json") { return ProjectManifestSchema.parse(JSON.parse(await readFile(file, "utf8"))); }
 async function startProjectRun(projectFile: string, taskId: string, revision: string, prompt: string) {
   const project = await loadProject(projectFile);
-  const parsedPrompt = parseOpenSpecTaskPrompt(prompt);
+  const parsedPrompt = parseTaskDirectives(prompt);
   if (parsedPrompt.error) throw new Error(parsedPrompt.error);
   const projectRoot = path.resolve(project.rootEnv ? process.env[project.rootEnv] ?? project.root : project.root);
   const uiUx = await resolveProjectUiUx(project, projectRoot);
@@ -27,7 +27,7 @@ async function startProjectRun(projectFile: string, taskId: string, revision: st
     repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch: taskBranch(taskId, revision), baseSha: admitted.baseSha, prBaseBranch: project.repository.targetBranch, taskTitle: taskId };
   }
   return startRun({ taskId, taskRevision: revision, projectId: project.id, profile: project.defaultProfile, prompt: parsedPrompt.prompt,
-    openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.override), uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks,
+    openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.openSpec), analysis: parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks,
     projectRoot, repository, artifactsDir: path.join(data, "artifacts", taskId),
     provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, plugins: project.plugins,
     qualityCommands: project.qualityCommandsByProfile[project.defaultProfile] ?? project.qualityCommands,
