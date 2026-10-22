@@ -29,9 +29,9 @@ describe("manifest and profiles", () => {
     expect(resolveProjectId({ projectId: null }, undefined)).toBeUndefined();
   });
   it("resolves projects below one shared checkout root and rejects paths outside it", () => {
-    expect(resolveProjectHostRoot({ id: "ui-pilot", root: "mobile-rts-landing" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toBe(path.resolve("C:/projects/mobile-rts-landing"));
+    expect(resolveProjectHostRoot({ id: "ui-pilot", root: "mobile-rts-landing" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toBe(path.win32.resolve("C:/projects/mobile-rts-landing"));
     expect(() => resolveProjectHostRoot({ id: "unsafe", root: "../other" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toThrow("must stay inside ORCHESTRATOR_PROJECTS_ROOT");
-    expect(resolveProjectHostRoot({ id: "legacy", root: "unused", rootEnv: "LEGACY_ROOT" }, { LEGACY_ROOT: "C:/legacy/project" })).toBe(path.resolve("C:/legacy/project"));
+    expect(resolveProjectHostRoot({ id: "legacy", root: "unused", rootEnv: "LEGACY_ROOT" }, { LEGACY_ROOT: "C:/legacy/project" })).toBe(path.win32.resolve("C:/legacy/project"));
   });
   it("validates project manifests and rejects malformed identifiers", () => {
     expect(ProjectManifestSchema.safeParse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation" }).success).toBe(true);

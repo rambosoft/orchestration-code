@@ -9,6 +9,7 @@ export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, 
 export const OPEN_SPEC_VERSION = "1.14.3";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
+import { findDeltaProblems } from "./openspec-delta.js";
 const require = createRequire(import.meta.url);
 const packageEntry = require.resolve("@fission-ai/openspec");
 export const openSpecCliPath = path.resolve(path.dirname(packageEntry), "..", "bin", "openspec.js");
@@ -134,6 +135,10 @@ export async function validateOpenSpec(input: { changeId: string; projectRoot: s
     const issues = invalid.flatMap(item => item.issues ?? []).map(issue => issue.message).join("; ");
     throw new Error(`OpenSpec validation failed for '${input.changeId}'${issues ? `: ${issues}` : ""}`);
   }
+
+  // Catch delta/main-spec mismatches now: `openspec archive` would only report them after the whole implementation ran.
+  const mismatches = await findDeltaProblems(root, input.changeId, deltaFiles);
+  if (mismatches.length) throw new Error(`OpenSpec delta does not match the main specs for '${input.changeId}': ${mismatches.join("; ")}`);
 
   const proposal = await readFile(path.join(root, proposalPath), "utf8");
   const contextFiles = new Map<string, string>();

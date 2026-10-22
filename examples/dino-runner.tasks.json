@@ -1,0 +1,20 @@
+{
+  "projectId": "dino-runner",
+  "tasks": [
+    {
+      "taskId": "DINO-1",
+      "title": "Dino Runner: project setup and jumping dino",
+      "prompt": "Build the foundation of a simple Chrome-offline-style dinosaur endless runner web game. Use the latest stable React, TypeScript and Vite. Set up the project from scratch in this repository with npm scripts 'test' (vitest) and 'build' (typecheck + vite build). Implement a fixed-timestep game loop rendered on a canvas, a ground line, and a dino that jumps with gravity when Space, ArrowUp or a tap is pressed (no double jump while airborne). Keep the game rules in a pure, unit-tested module separate from React rendering. Keep it small and simple."
+    },
+    {
+      "taskId": "DINO-2",
+      "title": "Dino Runner: obstacles, collision and score",
+      "prompt": "Extend the dinosaur runner into a playable game. Scrolling cactus obstacles of a couple of sizes spawn at randomized, reachable intervals and move toward the dino at a constant speed. Detect collisions between the dino and obstacles with a simple hitbox; a collision ends the run and shows a clear Game Over state with the final score and a way to restart (Space, Enter, tap or a button). Score increases with distance survived and is shown on screen during play. Keep spawning, movement, collision and scoring in the existing pure, unit-tested rules module (inject the random source so tests are deterministic) and keep React/canvas code thin. Keep it small and simple."
+    },
+    {
+      "taskId": "DINO-3",
+      "title": "Dino Runner: best score, speed ramp, pause and responsive layout",
+      "prompt": "Polish the dinosaur runner. Persist the best score in localStorage (guard against storage being unavailable) and show it next to the current score, updating it when a run ends with a new best. Make the game gradually speed up as distance grows, capped at a maximum so obstacles stay reachable. Add pause and resume (P key, Escape or an on-screen button) that freezes the simulation and score. Make the canvas scale responsively to narrow screens, and make all controls work with keyboard and touch. Keep the speed curve and best-score logic in the pure, unit-tested rules module; keep React/canvas code thin. Keep it small and simple."
+    }
+  ]
+}

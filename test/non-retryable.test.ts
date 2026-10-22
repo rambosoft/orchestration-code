@@ -42,3 +42,17 @@ describe("non-retryable activity failures", () => {
     expect(error instanceof ApplicationFailure && error.nonRetryable).toBe(false);
   });
 });
+
+import { classifyProviderError } from "../src/activities.js";
+describe("provider error classification", () => {
+  it.each([
+    ["codex exited 1: HTTP 401 Unauthorized", "authentication"],
+    ["claude exited 1: Authentication failed, please log in", "authentication"],
+    ["OpenRouter rate limit error (429)", "rate_limit"],
+    ["codex timed out after 720000ms", "timeout"],
+    ["OPENROUTER_API_KEY is not configured for the Windows worker", "configuration"],
+    ["fatal: unable to access remote, listening on port 4030", "provider_error"],
+    ["commit authored by someone else conflicts", "provider_error"],
+    ["exited 429000 lines of output", "provider_error"],
+  ])("%s -> %s", (message, expected) => { expect(classifyProviderError(message)).toBe(expected); });
+});

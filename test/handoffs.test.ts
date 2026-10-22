@@ -140,3 +140,25 @@ describe("OpenSpec digest budget", () => {
     expect(() => planningPrompt("Polish the runner", raw)).not.toThrow();
   });
 });
+
+import { BRIEF_HARD_CEILING } from "../src/handoffs.js";
+describe("handoff budget invariants (guard against re-introducing structurally unfittable limits)", () => {
+  it("keeps every downstream cap large enough for the protected content of the stage before it", () => {
+    expect(HANDOFF_BUDGETS.brief).toBeGreaterThan(HANDOFF_BUDGETS.plan);
+    expect(HANDOFF_BUDGETS.reviewChecklist).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.plan);
+    expect(HANDOFF_BUDGETS.planningContext).toBeGreaterThan(HANDOFF_BUDGETS.openSpecDigest);
+    expect(HANDOFF_BUDGETS.planningContext - HANDOFF_BUDGETS.openSpecDigest).toBeGreaterThanOrEqual(400);
+    expect(BRIEF_HARD_CEILING).toBeGreaterThan(HANDOFF_BUDGETS.brief);
+  });
+  it("accepts a brief between the soft cap and the hard ceiling only when asked to, and still rejects beyond the ceiling", () => {
+    const criteria = Array.from({ length: 4 }, (_, i) => `Criterion ${i}: ${"deterministic behaviour for identical inputs with a clear outcome; ".repeat(8)}`);
+    const big = PlanSchema.parse({ task_goal: "g", approach: "a", important_decisions: [], risks: [], acceptance_criteria: criteria, hard_constraints: [] });
+    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: Array.from({ length: 5 }, (_, i) => `Step ${i}: ${"implement the described behaviour in the pure rules module and wire it into the view. ".repeat(4)}`), verification_steps: ["v"], acceptance_checks: [] }, big, "ctx");
+    const tokens = estimateTokens(formatBrief(brief));
+    expect(tokens).toBeGreaterThan(HANDOFF_BUDGETS.brief);
+    expect(tokens).toBeLessThan(BRIEF_HARD_CEILING);
+    expect(() => validateBrief(formatBrief(brief), big, "ctx")).toThrow("exceeds its");
+    expect(() => validateBrief(formatBrief(brief), big, "ctx", undefined, BRIEF_HARD_CEILING)).not.toThrow();
+    expect(() => validateBrief(formatBrief({ ...brief, implementation_steps: ["x".repeat(6000)] }), big, "ctx", undefined, BRIEF_HARD_CEILING)).toThrow("exceeds its");
+  });
+});

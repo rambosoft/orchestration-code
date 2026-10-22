@@ -13,6 +13,9 @@ export function estimateTokens(text: string): number {
   return Math.ceil(Array.from(text).length / 3);
 }
 
+/** A brief over its soft cap is still accepted (and flagged) up to this ceiling after compression has failed. */
+export const BRIEF_HARD_CEILING = Math.floor(HANDOFF_BUDGETS.brief * 1.5);
+
 export function assertTokenBudget(label: string, text: string, budget: number, actualTokens?: number): void {
   const estimated = actualTokens ?? estimateTokens(text);
   if (estimated > budget) throw new Error(`${label} exceeds its ${budget}-token budget (${actualTokens === undefined ? "estimated " : "measured "}${estimated}); shorten the source without dropping requirements`);
@@ -164,8 +167,8 @@ export function briefPrompt(_task: string, openSpecContext: string, plan: Plan):
   return `Build a concise implementation handoff from this source. Remove repetition, rationale, and rejected alternatives. Keep every requiredVerbatimItems entry exactly and completely in must_follow or acceptance_checks. Do not omit or weaken a hard constraint or acceptance criterion. Return only JSON matching: {"task_goal":"string","files_or_modules":["string"],"must_follow":["string"],"must_avoid":["string"],"implementation_steps":["string"],"verification_steps":["string"],"acceptance_checks":["string"]}. Keep the complete JSON within ${HANDOFF_BUDGETS.brief} tokens.\n\nSource:\n${source}`;
 }
 
-export function validateBrief(raw: string, plan: Plan, openSpecContext: string, actualTokens?: number): ExecutionBrief {
-  const brief = parseStructured(raw, ExecutionBriefSchema, "Execution brief", HANDOFF_BUDGETS.brief, actualTokens);
+export function validateBrief(raw: string, plan: Plan, openSpecContext: string, actualTokens?: number, budget: number = HANDOFF_BUDGETS.brief): ExecutionBrief {
+  const brief = parseStructured(raw, ExecutionBriefSchema, "Execution brief", budget, actualTokens);
   const combined = [...brief.must_follow, ...brief.acceptance_checks];
   const applyDirective = openSpecContext ? ["Use the $openspec-apply-change workflow and mark checklist items complete only after code and validation are complete."] : [];
   const missing = [...new Set([...plan.hard_constraints, ...plan.acceptance_criteria, ...applyDirective])].filter(item => !combined.includes(item));

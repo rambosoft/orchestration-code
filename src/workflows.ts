@@ -5,7 +5,7 @@ import { profiles } from "./profiles.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
-import { assertTokenBudget, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
+import { assertTokenBudget, BRIEF_HARD_CEILING, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "2 minutes", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
@@ -278,8 +278,14 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
               if (!(compressionValidationError instanceof Error) || !compressionValidationError.message.includes("exceeds its")) throw compressionValidationError;
             }
           }
-          if (!compressedOutput) throw compressionError ?? new Error("Execution brief could not fit its token budget");
-          output = compressedOutput;
+          if (compressedOutput) output = compressedOutput;
+          else {
+            // Soft cap missed after compression: a slightly oversized but complete brief beats failing the run. Beyond the hard ceiling it still fails.
+            try {
+              executionBrief = validateBrief(formatBrief(firstBrief), plan, openSpecContext, undefined, BRIEF_HARD_CEILING);
+              output = { ...output, metadata: { ...output.metadata, briefBudgetExceeded: { softCapTokens: HANDOFF_BUDGETS.brief, estimatedTokens: estimateTokens(formatBrief(firstBrief)) } } };
+            } catch { throw compressionError ?? new Error("Execution brief could not fit its token budget"); }
+          }
         }
       } catch (error) { stopReason = "brief_output_invalid"; return finish("failed", `execution brief rejected: ${failureDetails(error)}`); }
     }

@@ -21,7 +21,11 @@
     "stack:down": "docker compose down",
     "reset:demo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-demo.ps1",
     "runs": "tsx src/cli.ts runs",
-    "setup": "npm ci"
+    "setup": "npm ci",
+    "doctor": "node dist/src/cli.js doctor",
+    "cleanup": "node dist/src/cli.js cleanup",
+    "e2e": "node dist/src/e2e.js",
+    "check:chars": "node scripts/check-control-chars.mjs"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.14.3",

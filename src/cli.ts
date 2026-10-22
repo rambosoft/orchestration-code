@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { ProjectManifestSchema } from "./contracts.js";
 import { cancelRun, inspectRun, listRuns, signalApproval, startRun } from "./client.js";
 import { syncMergedStack } from "./workspaces.js";
+import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
+import { cleanupWorktrees } from "./cleanup.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseOpenSpecTaskPrompt, resolveOpenSpecEnabled } from "./openspec.js";
@@ -38,6 +40,19 @@ async function main() {
     const started = await startProjectRun(args[0] ?? "project.example.json", `local-${Date.now()}`, String(Date.now()), prompt);
     console.log(JSON.stringify(started)); return;
   }
+  if (command === "doctor") {
+    const checks = await runDoctor(defaultDoctorDeps());
+    console.log(formatDoctor(checks));
+    if (checks.some(check => !check.ok && check.severity === "error")) process.exitCode = 1;
+    return;
+  }
+  if (command === "cleanup") {
+    const daysIndex = args.indexOf("--days");
+    const result = await cleanupWorktrees({ dataDir: data, olderThanDays: daysIndex >= 0 ? Number(args[daysIndex + 1]) : 7, all: args.includes("--all"), dryRun: args.includes("--dry-run") });
+    console.log(JSON.stringify(result, null, 2));
+    if (result.errors.length) process.exitCode = 1;
+    return;
+  }
   if (command === "runs") return console.log(JSON.stringify(await listRuns(), null, 2));
   if (command === "inspect") return console.log(JSON.stringify(await inspectRun(args[0]!), null, 2));
   if (command === "cancel") return cancelRun(args[0]!);
@@ -56,6 +71,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | cleanup [--days N] [--all] [--dry-run] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

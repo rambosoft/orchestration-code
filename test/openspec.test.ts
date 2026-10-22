@@ -106,3 +106,13 @@ describe("archive when the implementing agent already archived the change", () =
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
+
+describe("proposal prompt guidance learned from e2e runs", () => {
+  it("keeps checkboxes machine-verifiable and warns about ADDED vs MODIFIED", () => {
+    const prompt = openSpecProposalPrompt({ taskPrompt: "t", changeId: "c" });
+    expect(prompt).toContain("verifiable unattended");
+    expect(prompt).toContain("Manual verification");
+    expect(prompt).toContain("## ADDED Requirements");
+    expect(prompt).toContain("MODIFIED only when that exact requirement already exists");
+  });
+});

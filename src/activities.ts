@@ -103,6 +103,16 @@ export async function prepareProjectDependencies(
   return { installed: true, summary: "Installed npm dependencies from package-lock.json with npm ci." };
 }
 
+export type ProviderErrorCategory = "timeout" | "rate_limit" | "authentication" | "configuration" | "provider_error";
+/** Authentication and configuration failures are permanent; everything else may be retried. Word boundaries keep "authored" or port 4030 from being misread as auth failures. */
+export function classifyProviderError(message: string): ProviderErrorCategory {
+  if (/timed out/i.test(message)) return "timeout";
+  if (/\b429\b|rate[ -]limit/i.test(message)) return "rate_limit";
+  if (/\b(?:401|403)\b|unauthori[sz]ed|\bauthentication\b/i.test(message)) return "authentication";
+  if (/not configured|missing its configured model|unsupported provider/i.test(message)) return "configuration";
+  return "provider_error";
+}
+
 /** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
 export async function executeStage(input: StageInput): Promise<StageOutput> {
   let timer: NodeJS.Timeout | undefined;
@@ -188,7 +198,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     const message = error instanceof Error ? error.message : String(error);
     const failureFile = path.join(artifactsDir, `${input.stage}-${input.attempt}-activity-${activityAttempt}-failure.json`);
     const providerDurationMs = Date.now() - providerStarted;
-    const category = /timed out/i.test(message) ? "timeout" : /429|rate limit/i.test(message) ? "rate_limit" : /(?:401|403)|unauthori[sz]ed|authentication/i.test(message) ? "authentication" : /not configured|missing its configured model|unsupported provider/i.test(message) ? "configuration" : "provider_error";
+    const category = classifyProviderError(message);
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
     const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
