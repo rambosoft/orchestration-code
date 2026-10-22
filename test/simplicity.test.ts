@@ -19,3 +19,12 @@ describe("simplicity policy in prompts", () => {
     expect(SIMPLICITY_POLICY).toMatch(/lower priority than the acceptance checks/);
   });
 });
+
+import { openSpecRoute } from "../src/workflows.js";
+describe("openspec stage routing", () => {
+  it("defaults to codex regardless of the project default provider, and honours a manifest route", () => {
+    expect(openSpecRoute({})).toEqual({ provider: "codex" });
+    expect(openSpecRoute({ providerRouting: { plan: { provider: "claude" } } })).toEqual({ provider: "codex" });
+    expect(openSpecRoute({ providerRouting: { openspec: { provider: "claude", model: "m" } } })).toEqual({ provider: "claude", model: "m" });
+  });
+});

@@ -1,8 +1,9 @@
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { NODE_EXECUTABLE } from "./node-path.js";
 import { runCommand, type CommandRunner } from "./command.js";
 import { ProjectManifestSchema } from "./contracts.js";
+import { concurrencyError, temporalAddressError } from "./env-validation.js";
 
 export type DoctorCheck = { name: string; ok: boolean; severity: "error" | "warn"; detail: string };
 export type DoctorDeps = {
@@ -12,6 +13,8 @@ export type DoctorDeps = {
   pollersOnTaskQueue: () => Promise<number>;
   listDir: (dir: string) => Promise<string[]>;
   readManifestProviders: () => Promise<Map<string, string[]>>;
+  /** A warning text when the compiled worker is older than the sources (a stale worker silently runs old code), else undefined. */
+  buildStaleness: () => Promise<string | undefined>;
 };
 
 const pass = (name: string, detail: string): DoctorCheck => ({ name, ok: true, severity: "error", detail });
@@ -70,10 +73,11 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   checks.push(major > 20 || (major === 20 && minor >= 19) ? pass("node", `${process.version} at ${NODE_EXECUTABLE}`) : fail("node", `${process.version} is older than the required 20.19`));
   try { await access(NODE_EXECUTABLE); } catch { checks.push(fail("node-path", `${NODE_EXECUTABLE} does not exist (version manager switched?)`)); }
 
-  const concurrency = Number(deps.env.ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY ?? 2);
-  checks.push(Number.isInteger(concurrency) && concurrency >= 1 ? pass("config:concurrency", String(concurrency)) : fail("config:concurrency", `ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY must be a positive integer, got '${deps.env.ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY}'`));
+  const concurrencyProblem = concurrencyError(deps.env);
+  checks.push(concurrencyProblem ? fail("config:concurrency", concurrencyProblem) : pass("config:concurrency", deps.env.ORCHESTRATOR_MAX_ACTIVITY_CONCURRENCY ?? "2 (default)"));
   const address = deps.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233";
-  checks.push(/^[^:\s]+:\d+$/.test(address) ? pass("config:temporal-address", address) : fail("config:temporal-address", `TEMPORAL_ADDRESS must be host:port, got '${address}'`));
+  const addressProblem = temporalAddressError(deps.env);
+  checks.push(addressProblem ? fail("config:temporal-address", addressProblem) : pass("config:temporal-address", address));
 
   const bridge = (deps.env.ORCHESTRATOR_BRIDGE_URL ?? "http://127.0.0.1:3101").replace(/\/$/, "");
   const token = deps.env.ORCHESTRATOR_API_TOKEN;
@@ -104,6 +108,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
 
   const worktrees = await deps.listDir(path.join(path.resolve(deps.env.ORCHESTRATOR_DATA_DIR ?? "data"), "worktrees")).catch(() => [] as string[]);
   checks.push(worktrees.length > 20 ? fail("worktrees", `${worktrees.length} task worktrees on disk; run "dev cleanup"`, "warn") : pass("worktrees", `${worktrees.length} on disk`));
+  const stale = await deps.buildStaleness();
+  checks.push(stale ? fail("build", stale, "warn") : pass("build", "dist is up to date with src"));
   return checks;
 }
 
@@ -128,5 +134,16 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
     } finally { await connection.close(); }
   },
   listDir: readdir,
+  buildStaleness: async () => {
+    const newest = async (dir: string): Promise<number> => {
+      let latest = 0;
+      for (const entry of await readdir(dir, { withFileTypes: true })) latest = Math.max(latest, entry.isDirectory() ? await newest(path.join(dir, entry.name)) : (await stat(path.join(dir, entry.name))).mtimeMs);
+      return latest;
+    };
+    try {
+      const built = (await stat(path.resolve("dist", "src", "worker.js"))).mtimeMs;
+      return await newest(path.resolve("src")) > built ? 'src is newer than dist; run "npm run build" and restart the worker and bridge' : undefined;
+    } catch { return 'dist/src/worker.js is missing; run "npm run build"'; }
+  },
   readManifestProviders: () => manifestProviders([env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects"), env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json"]),
 });

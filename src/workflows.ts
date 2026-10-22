@@ -18,6 +18,10 @@ export function stageRoute(input: RunInput, stage: StageName) {
   const fallback: ProviderRoute = { provider: input.provider ?? "fake" };
   return input.providerRouting?.[stage] ?? fallback;
 }
+/** OpenSpec runs on the manifest's "openspec" route; without one it keeps using Codex, whatever the project default provider is. */
+export function openSpecRoute(input: Pick<RunInput, "providerRouting">): ProviderRoute {
+  return input.providerRouting?.openspec ?? { provider: "codex" };
+}
 export function failureDetails(error: unknown, maxLength = 1800): string {
   const messages: string[] = [];
   let current: unknown = error;
@@ -146,6 +150,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   let executionBrief: ExecutionBrief | undefined;
   let openSpecChangeId: string | undefined;
   let deterministicVerification: StageOutput | undefined;
+  const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, input.qualityCommands, uiUxContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
@@ -159,7 +164,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       const prepared: OpenSpecPrepared = await prepareOpenSpec({ taskId: input.taskId, runId: input.runId, prompt: input.prompt, projectRoot: workspace, artifactsDir: input.artifactsDir });
       openSpecChangeId = prepared.changeId;
       artifactRefs.push(prepared.artifactRef);
-      const output = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecProposalPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId }) });
+      const output = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecProposalPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId }) });
       if (!output.ok) { stopReason = "openspec_proposal_failed"; return finish("failed", "OpenSpec proposal stage did not complete successfully."); }
       const validateInput = { changeId: prepared.changeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir };
       let validated: OpenSpecContext;
@@ -167,7 +172,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       catch (validationError) {
         // Models often get the delta format wrong; give the proposal stage one bounded repair pass with the validator's diagnostics.
         if (isCancellation(validationError) || !patched("openspec-validation-repair")) throw validationError;
-        const repaired = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId, diagnostics: failureDetails(validationError, 6000) }) });
+        const repaired = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId, diagnostics: failureDetails(validationError, 6000) }) });
         if (!repaired.ok) { stopReason = "openspec_repair_failed"; return finish("failed", "OpenSpec validation repair did not complete successfully."); }
         validated = await validateOpenSpec(validateInput);
       }
@@ -342,7 +347,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         const specUpdate = /archive_spec_update_failed|delta|MODIFIED|REMOVED|RENAMED|not found/i.test(detail);
         if (isCancellation(archiveError) || !patched("openspec-checklist-reconcile") || (!checklist && !specUpdate)) throw archiveError;
         const prompt = checklist ? openSpecChecklistReconcilePrompt({ changeId: openSpecChangeId, error: failureDetails(archiveError, 2000) }) : openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: openSpecChangeId, diagnostics: detail });
-        const reconciled = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt });
+        const reconciled = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt });
         if (!reconciled.ok) throw archiveError;
         archived = await archiveOpenSpecChange(archiveInput);
       }

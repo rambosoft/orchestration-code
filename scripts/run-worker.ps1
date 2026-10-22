@@ -17,7 +17,14 @@ if (Test-Path .env) {
     }
   }
 }
-& $env:ComSpec /d /c "npm run worker:node >> `"$workerLog`" 2>&1"
+$workerEntry = Join-Path $root 'dist\src\worker.js'
+if (-not (Test-Path $workerEntry)) {
+  "Worker cannot start: $workerEntry is missing. Run 'npm run build' first." | Out-File -FilePath $workerLog -Append -Encoding utf8
+  exit 1
+}
+# Resolve node once instead of going through npm, which is not always on PATH for scheduled or hidden launches.
+$node = (Get-Command node -ErrorAction Stop).Source
+& $node $workerEntry *>> $workerLog
 $workerExitCode = $LASTEXITCODE
 if ($null -eq $workerExitCode) { $workerExitCode = 1 }
 "Worker exited at $(Get-Date -Format o) with code $workerExitCode" | Out-File -FilePath $workerLog -Append -Encoding utf8

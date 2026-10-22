@@ -15,6 +15,7 @@ function deps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     fetchJson: async () => ({ ok: true, projects: ["a", "b"] }),
     pollersOnTaskQueue: async () => 1,
     listDir: async () => [],
+    buildStaleness: async () => undefined,
     readManifestProviders: async () => new Map([["codex", ["dino"]], ["claude", ["dino"]], ["fake", ["x"]]]),
     ...overrides,
   };
@@ -71,5 +72,13 @@ describe("codex login detection", () => {
     const base = (login: () => Promise<string>) => deps({ run: async (command, args) => command === "claude" ? JSON.stringify({ loggedIn: true }) : args.includes("login") ? login() : "ok" });
     expect(failures(await runDoctor(base(async () => "")))).toEqual([]);
     expect(failures(await runDoctor(base(async () => { throw new Error("Not logged in"); })))).toEqual(["provider:codex"]);
+  });
+});
+
+describe("build staleness", () => {
+  it("warns (not fails) when the compiled worker is older than the sources", async () => {
+    const checks = await runDoctor(deps({ buildStaleness: async () => "src is newer than dist" }));
+    expect(checks.find(check => check.name === "build")).toMatchObject({ ok: false, severity: "warn" });
+    expect(failures(checks)).toEqual([]);
   });
 });
