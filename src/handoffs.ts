@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-export const HANDOFF_BUDGETS = { planningContext: 2400, plan: 900, brief: 800, reviewChecklist: 700 } as const;
+// The brief must carry the plan's protected hard constraints and acceptance criteria verbatim, so its cap
+// has to exceed the plan cap by the brief's own overhead (goal, steps, avoid list); otherwise a verbose but
+// valid plan can never produce a valid brief, however often it is compressed.
+export const HANDOFF_BUDGETS = { planningContext: 2400, plan: 900, brief: 1200, reviewChecklist: 900 } as const;
 
 // Provider-independent conservative estimate. Three characters per token
 // leaves headroom for punctuation-heavy, multilingual, and structured text.

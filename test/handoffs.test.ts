@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { briefPrompt, canonicalizeBrief, estimateTokens, ExecutionBriefSchema, extractHardConstraints, extractTaskConstraints, HANDOFF_BUDGETS, openSpecCoverage, openSpecOptimizationPrompt, parseStructured, PlanSchema, planningPrompt, repairOpenSpecDigestPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression } from "../src/handoffs.js";
+import { briefPrompt, canonicalizeBrief, estimateTokens, ExecutionBriefSchema, formatBrief, extractHardConstraints, extractTaskConstraints, HANDOFF_BUDGETS, openSpecCoverage, openSpecOptimizationPrompt, parseStructured, PlanSchema, planningPrompt, repairOpenSpecDigestPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression } from "../src/handoffs.js";
 import { implementationPrompt } from "../src/workflows.js";
 
 const plan = PlanSchema.parse({ task_goal: "Add a percentage button", approach: "Follow current calculator behavior", important_decisions: ["Keep existing semantics"], risks: [], acceptance_criteria: ["The button applies the existing percentage semantics."], hard_constraints: ["Do not change keyboard behavior."] });
@@ -114,7 +114,18 @@ describe("compressed handoff schemas and budgets", () => {
   it("fails closed when a protected requirement is missing or checklist exceeds its budget", () => {
     const omitted = { task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: [], verification_steps: [], acceptance_checks: ["The button applies the existing percentage semantics."] };
     expect(() => validateBrief(JSON.stringify(omitted), plan, "The implementation MUST preserve keyboard behavior.")).toThrow("omitted protected requirements");
-    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(3000)] };
-    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 800-token budget");
+    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(4500)] };
+    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 1200-token budget");
+  });
+});
+
+describe("brief budget vs verbose plan", () => {
+  it("a valid plan near its own cap can always be turned into a valid brief (regression: dino-runner task 2)", () => {
+    const criteria = Array.from({ length: 4 }, (_, i) => `Criterion ${i + 1}: ${"the system shall behave deterministically for identical inputs and report the outcome clearly; ".repeat(6)}`);
+    const verbosePlan = PlanSchema.parse({ task_goal: "Extend the runner", approach: "Extend the pure rules", important_decisions: [], risks: [], acceptance_criteria: criteria, hard_constraints: [] });
+    parseStructured(JSON.stringify(verbosePlan), PlanSchema, "Plan", HANDOFF_BUDGETS.plan);
+    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: ["Implement the rules", "Wire the view", "Add tests"], verification_steps: ["Run tests"], acceptance_checks: [] }, verbosePlan, "ctx");
+    expect(estimateTokens(formatBrief(brief))).toBeGreaterThan(800);
+    expect(() => validateBrief(formatBrief(brief), verbosePlan, "ctx")).not.toThrow();
   });
 });
