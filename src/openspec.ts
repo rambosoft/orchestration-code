@@ -8,6 +8,7 @@ export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, 
 
 export const OPEN_SPEC_VERSION = "1.14.3";
 import { childEnv } from "./env.js";
+import { NODE_EXECUTABLE } from "./node-path.js";
 const require = createRequire(import.meta.url);
 const packageEntry = require.resolve("@fission-ai/openspec");
 export const openSpecCliPath = path.resolve(path.dirname(packageEntry), "..", "bin", "openspec.js");
@@ -16,7 +17,7 @@ type CliResult = { stdout: string; stderr: string };
 export type OpenSpecCommandRunner = (args: string[], cwd: string) => Promise<CliResult>;
 
 export const runOpenSpecCommand: OpenSpecCommandRunner = (args, cwd) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, [openSpecCliPath, ...args], {
+  const child = spawn(NODE_EXECUTABLE, [openSpecCliPath, ...args], {
     cwd,
     shell: false,
     windowsHide: true,

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { ReviewAssessmentSchema, type ReviewAssessment, type StageInput, type StageOutput } from "./contracts.js";
 import { resolveRtkStatus } from "./rtk.js";
 import { childEnv } from "./env.js";
+import { NODE_EXECUTABLE } from "./node-path.js";
 import { activitySignal, killOnAbort, killProcessTree } from "./process-control.js";
 
 export interface AgentProvider { readonly id: string; run(input: StageInput): Promise<StageOutput> }
@@ -77,7 +78,7 @@ export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], 
 }
 const specs: Record<string, ProviderSpec> = {
   claude: { executable: "claude", args: (p, stage) => claudeExecutionArgs(p, stage) },
-  codex: { executable: process.execPath, args: codexExecutionArgs },
+  codex: { executable: NODE_EXECUTABLE, args: codexExecutionArgs },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
 

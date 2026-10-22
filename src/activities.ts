@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
+import { NODE_EXECUTABLE } from "./node-path.js";
 import { activitySignal, killOnAbort } from "./process-control.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
@@ -69,9 +70,9 @@ export function runCheck(executable: string, args: string[], cwd: string, maxOut
   return new Promise((resolve, reject) => {
     // npm is exposed as npm.ps1/npm.cmd on Windows, neither of which spawn()
     // can execute reliably without a shell. Invoke the bundled JS CLI instead.
-    const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-    const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? process.execPath : executable;
-    const commandArgs = command === process.execPath && executable === "npm" ? [npmCli, ...args] : args;
+    const npmCli = path.join(path.dirname(NODE_EXECUTABLE), "node_modules", "npm", "bin", "npm-cli.js");
+    const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? NODE_EXECUTABLE : executable;
+    const commandArgs = command === NODE_EXECUTABLE && executable === "npm" ? [npmCli, ...args] : args;
     const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
     child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
