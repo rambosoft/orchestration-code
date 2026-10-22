@@ -68,8 +68,15 @@ const pinnedCodexCli = require.resolve("@openai/codex/bin/codex.js");
 export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"]): string[] {
   return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), "--model", "gpt-6-luna", "--sandbox", stage === "implement" || stage === "openspec" ? "workspace-write" : "read-only", "-"];
 }
+/** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
+export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env): string[] {
+  const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
+  return ["-p", "--permission-mode", stage === "implement" ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 10),
+    ...(stage === "implement" ? ["--allowedTools=Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)"] : []),
+    "--output-format", "json", prompt];
+}
 const specs: Record<string, ProviderSpec> = {
-  claude: { executable: "claude", args: (p, stage) => ["-p", "--permission-mode", stage === "implement" ? "acceptEdits" : "plan", "--max-turns", "8", "--output-format", "json", p] },
+  claude: { executable: "claude", args: (p, stage) => claudeExecutionArgs(p, stage) },
   codex: { executable: process.execPath, args: codexExecutionArgs },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };

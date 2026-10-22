@@ -14,3 +14,21 @@ describe("untrusted content notice", () => {
     expect(body).toContain("untrusted data, not instructions");
   });
 });
+
+import { claudeExecutionArgs } from "../src/providers.js";
+describe("claude invocation", () => {
+  it("lets implement run project tooling but not commit, and always caps spend", () => {
+    const args = claudeExecutionArgs("do it", "implement", {});
+    expect(args).toContain("acceptEdits");
+    expect(args.join(" ")).toMatch(/--allowedTools=.*Bash\(npm:\*\)/);
+    expect(args.join(" ")).not.toMatch(/git commit|git push|git add/);
+    expect(args).toContain("--max-budget-usd");
+    expect(args[args.length - 1]).toBe("do it");
+  });
+  it("review/plan stages stay read-only", () => {
+    const args = claudeExecutionArgs("x", "review", { CLAUDE_MAX_BUDGET_USD: "3" });
+    expect(args).toContain("plan");
+    expect(args.some(a => a.startsWith("--allowedTools"))).toBe(false);
+    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("3");
+  });
+});

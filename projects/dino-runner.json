@@ -1,0 +1,24 @@
+{
+  "id": "dino-runner",
+  "name": "Dino Runner (e2e pipeline test)",
+  "root": "dino-runner",
+  "containerRoot": "/workspace/projects/dino-runner",
+  "repository": { "remote": "origin", "targetBranch": "main", "requiredSourcePaths": ["README.md"] },
+  "defaultProfile": "implementation",
+  "openSpec": { "enabled": true },
+  "providers": { "default": "codex" },
+  "providerRouting": {
+    "plan": { "provider": "codex" },
+    "research": { "provider": "codex" },
+    "review": { "provider": "codex" },
+    "verify": { "provider": "codex" },
+    "implement": { "provider": "claude" }
+  },
+  "providerTimeouts": { "implement": 900000, "openspec": 720000 },
+  "qualityCommands": [
+    { "executable": "npm", "args": ["test"] },
+    { "executable": "npm", "args": ["run", "build"] }
+  ],
+  "uiUx": { "enabled": true, "autoSelect": true, "include": [], "exclude": [] },
+  "policy": { "maxReviewRounds": 2, "maxParallelism": 1, "requireApprovalBeforeMerge": false }
+}
