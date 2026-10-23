@@ -28,3 +28,8 @@
 - Verified: unit, workflow, chaos, adapter, doctor and plugin tests; live runs through Paperclip with real Codex (planning), Claude (implementation) and Codex (review) for the Aurora Store prototype. The plugin worker's bridge call is covered by unit tests only: Paperclip has no environment-backed secret provider, so someone must create a secret holding `ORCHESTRATOR_API_TOKEN` and choose it in the plugin settings (runbook section 6).
 - Not verified: the wizard inside a signed-in browser (the browser pane was not signed in; the page is tested with a stubbed host and the real catalog).
 - Next: sign in once, set the plugin secret, create a project from the wizard; add `integratedBaseBranch` support if parallel plans are wanted; consider moving the contract into the task prompt through a `patched()` workflow channel.
+
+## 2026-10-23 update (UI/UX direction and plugin setup)
+- Done: B-048 (maturity-scaled design bar, page directions, DESIGN_DIRECTION.md, skills always applied to generated projects; ADR 0010) and B-049 (`npm run plugin:setup`, guided setup panel). Typecheck, 503 tests and the plugin tests pass.
+- Not verified: `plugin:setup` against the live Paperclip (needs an instance-admin `PAPERCLIP_API_TOKEN`); a new project built with the design direction.
+- Next: `npm run build`, `npm run plugin:build`, `docker compose up -d --build orchestrator` and `docker compose up -d paperclip`, restart the worker, then `npm run plugin:setup`, reload New AI project, and build a project to judge the result.

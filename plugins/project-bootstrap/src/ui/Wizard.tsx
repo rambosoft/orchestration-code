@@ -81,7 +81,22 @@ export function Wizard({ context }: { context: PluginHostContext }) {
   }
 
   if (!companyId) return <div className="pb"><p className="pb-note">Open a company first.</p></div>;
-  if (catalog.error) return <div className="pb"><h1>New AI project</h1><p className="pb-note bad">{catalog.error.message}</p><p className="pb-help" style={{ marginTop: 8 }}>Check the plugin settings: the orchestrator bridge URL and the secret holding its token.</p></div>;
+  if (catalog.error) {
+    const needsToken = /bridge token/i.test(catalog.error.message);
+    return (
+      <div className="pb">
+        <h1>New AI project</h1>
+        <p className="pb-note bad" role="alert">{needsToken ? "One-time setup needed: this plugin is not connected to the orchestrator yet." : catalog.error.message}</p>
+        {needsToken ? (
+          <ol className="pb-help" style={{ marginTop: 12, paddingLeft: 20, lineHeight: 1.7 }}>
+            <li>On the machine that runs the orchestrator, with <code>PAPERCLIP_API_TOKEN</code> and <code>ORCHESTRATOR_API_TOKEN</code> set, run <code>npm run plugin:setup</code>. It stores the token as a company secret and saves the plugin settings.</li>
+            <li>Or do it by hand: Settings, Plugins, Project Bootstrap, then choose a company secret that holds <code>ORCHESTRATOR_API_TOKEN</code> and keep the bridge URL <code>http://orchestrator:3101</code>.</li>
+            <li>Reload this page.</li>
+          </ol>
+        ) : <p className="pb-help" style={{ marginTop: 8 }}>Check the plugin settings: the orchestrator bridge URL and the secret holding its token.</p>}
+      </div>
+    );
+  }
   if (!catalog.data) return <div className="pb"><h1>New AI project</h1><p className="pb-lead pb-spin">Loading the options…</p></div>;
   const noAgent = agents !== null && agents.length === 0;
   const visible = (option: OptionDef) => option.id !== "maturity" && (advanced || !option.advanced);

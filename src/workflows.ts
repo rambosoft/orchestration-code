@@ -379,7 +379,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       currentStage = "issues";
       // The agent can only build when there is a repository to publish to and checks to gate on; otherwise the tasks wait in the backlog.
       const runnable = scaffold.repositoryUrl !== undefined && scaffold.template !== "none";
-      const plannedIssues = buildIssuePlan(blueprint, run.options, runnable);
+      const plannedIssues = buildIssuePlan(blueprint, run.options, runnable, charter);
       if (!runnable) warnings.push({ stage: "issues", message: "the tasks were left in the backlog: the agent needs a GitHub repository and quality commands in the project manifest before it can build" });
       let outcome: NonNullable<RunResult["bootstrap"]> = { ...scaffold, issues: [] };
       try {

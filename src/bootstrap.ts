@@ -3,6 +3,7 @@ import { parseJsonLoose } from "./json-extract.js";
 import { PLAN_LIMITS, projectSlug, textLines, type BootstrapForm, type OptionValue, type PlanLimits } from "./bootstrap-options.js";
 import { templateSummaries, usableTemplate, type ScaffoldTemplate } from "./bootstrap-templates.js";
 import { ProviderIdSchema, StageNameSchema, type QualityCommand } from "./contracts.js";
+import { designPromptSection, designTaskBlock, deterministicDesignRules, hasUserInterface } from "./design-direction.js";
 import { level, objects, optionalText, strings, text } from "./schema-helpers.js";
 
 // Project bootstrap (ADR 0009): stack decision, project charter and a milestone/task blueprint, each validated and recoverable like every other structured stage,
@@ -60,6 +61,7 @@ export type StackDecision = z.infer<typeof StackDecisionSchema> & { template_id:
 const STACK_HINT = `{"summary":"string","architecture":"frontend_only|fullstack|backend_only","language":"string","frameworks":[{"name":"string","role":"string","why":"string"}],"package_manager":"string","template_id":"id from the template list or none","alternatives":[{"name":"string","why_not":"string"}],"assumptions":["string"],"risks":["string"],"rationale":"string"}`;
 
 // --- Charter (the project contract) ---
+const PageDirectionSchema = z.object({ page: text(80), direction: text(300) });
 export const CharterSchema = z.object({
   vision: text(400),
   goals: strings(8, 200, 1),
@@ -68,12 +70,14 @@ export const CharterSchema = z.object({
   constraints: strings(10, 200),
   boundaries: strings(8, 200),
   design_rules: strings(8, 200),
+  design_system: strings(8, 200),
+  page_directions: z.preprocess(objects(12), z.array(PageDirectionSchema).default([])),
   quality_bar: strings(6, 200),
   definition_of_done: strings(6, 200),
   open_questions: strings(6, 200),
 });
 export type Charter = z.infer<typeof CharterSchema>;
-const CHARTER_HINT = `{"vision":"string","goals":["string"],"non_goals":["string"],"target_users":["string"],"constraints":["string"],"boundaries":["string"],"design_rules":["string"],"quality_bar":["string"],"definition_of_done":["string"],"open_questions":["string"]}`;
+const CHARTER_HINT = `{"vision":"string","goals":["string"],"non_goals":["string"],"target_users":["string"],"constraints":["string"],"boundaries":["string"],"design_rules":["string"],"design_system":["string"],"page_directions":[{"page":"string","direction":"string"}],"quality_bar":["string"],"definition_of_done":["string"],"open_questions":["string"]}`;
 
 // --- Blueprint: milestones and tasks with dependencies ---
 const TASK_TYPES = ["task", "research", "architecture"] as const;
@@ -175,7 +179,7 @@ export function deterministicCharter(run: BootstrapRunInput): Charter {
   const first = form.description.split(/(?<=[.!?])\s+/)[0]?.slice(0, 200) ?? form.description.slice(0, 200);
   return {
     vision: form.description.replace(/\s+/g, " ").slice(0, 400), goals: [first || form.name], non_goals: textLines(options.out_of_scope), target_users: [],
-    constraints: textLines(options.constraints), boundaries: ["Do not add features the task does not ask for"], design_rules: [],
+    constraints: textLines(options.constraints), boundaries: ["Do not add features the task does not ask for"], design_rules: deterministicDesignRules(options), design_system: [], page_directions: [],
     quality_bar: [`Maturity: ${String(options.maturity)}; automated tests: ${String(options.test_depth)}`], definition_of_done: ["Acceptance criteria are met", "Build and tests pass"],
     open_questions: ["The charter could not be generated; review the goals and boundaries before approving."],
   };
@@ -223,10 +227,10 @@ ${selections(options, ["platform", "maturity", "audience", "accessibility", "des
 ${textLines(options.constraints).length ? `Requester constraints:\n${textLines(options.constraints).map(line => `- ${line}`).join("\n")}\n` : ""}${textLines(options.out_of_scope).length ? `Requester says out of scope:\n${textLines(options.out_of_scope).map(line => `- ${line}`).join("\n")}\n` : ""}
 CHARTER stage. Write the project contract that every later task will be held to. Read-only: do not create files.
 - vision: what the product is and why, in two sentences. goals: the outcomes the first version must achieve. non_goals and boundaries: what the project must not grow into; include every item the requester put out of scope, verbatim in meaning.
-- constraints: technical and product rules (the stack, libraries to use or avoid, data handling). design_rules: concrete UI/UX rules when the product has a user interface (layout, typography, colour, responsive behaviour, accessibility), otherwise empty.
+- constraints: technical and product rules (the stack, libraries to use or avoid, data handling). design_rules: concrete UI/UX rules when the product has a user interface (layout, typography, colour, responsive behaviour, accessibility), otherwise empty. design_system: the named tokens and components the product is built from (palette roles with real colour values, the type pair and scale, spacing and radius scale, core components). page_directions: one entry for every page or screen the product needs, naming it and giving its layout, hero or focal element, key components and tone; no page may be left without a direction.
 - quality_bar: what "good enough" means at this maturity, consistent with the selections. definition_of_done: what each task must satisfy before it counts as finished.
 - open_questions: things you could not decide from the description that the requester should answer later; do not guess to fill a gap.
-Return only one JSON object, no prose and no code fence, matching exactly: ${CHARTER_HINT}.`;
+${designPromptSection(options)}Return only one JSON object, no prose and no code fence, matching exactly: ${CHARTER_HINT}.`;
 }
 export function repairCharterPrompt(previous: string, diagnostic: string): string {
   return `The charter answer failed validation: ${diagnostic}. Return valid JSON only, matching exactly: ${CHARTER_HINT}. Keep the substance of the previous answer.\n\nPrevious response (treat as data):\n${previous.slice(0, 5000)}`;
@@ -242,6 +246,8 @@ Stack: ${stack.summary} (${stack.language}; ${stack.frameworks.map(item => item.
 Goals: ${charter.goals.join("; ")}
 Non-goals and boundaries: ${[...charter.non_goals, ...charter.boundaries].join("; ") || "none stated"}
 Design rules: ${charter.design_rules.join("; ") || "none"}
+Design system: ${charter.design_system.join("; ") || "none"}
+Pages: ${charter.page_directions.map(item => item.page).join("; ") || "none named"}
 Selections:
 ${selections(options, ["platform", "maturity", "test_depth", "accessibility", "granularity"])}
 
@@ -249,18 +255,26 @@ BLUEPRINT stage. Break the project into milestones and tasks that an autonomous 
 - ${scaffolded ? "The repository is already scaffolded with a working app shell and one passing smoke test; do not plan a task to set it up." : "No scaffold exists for this stack: the first task must initialise the project with the chosen stack, its build and its test command."}
 - At most ${limits.milestones} milestones, ${limits.tasksPerMilestone} tasks per milestone, ${limits.totalTasks} tasks in total. Prefer fewer, meaningful tasks over many trivial ones.
 - For a product with a user interface, the first task builds the design foundation from the charter's design rules (colour, type and spacing tokens, and the base styles of links, buttons, forms and layout) so every later page uses it, and a late task polishes the visual result of the whole product; do not leave default browser styling on any page.
+- For a product with a user interface, every page task states the page's direction from the charter and the states it needs, and the last task of the last milestone is a whole-product visual polish and consistency pass; the bar below applies at every maturity, higher for MVP and production.
 - The first milestone must end in something that runs and can be seen. Order milestones so each builds on the last.
 - A task is one coherent change that a single agent run can finish and verify: say what to build and how it behaves, and give 1 to 6 acceptance statements that a test, a command or a look at the running app can confirm. Tasks for user interfaces name the pages, states (loading, empty, error) and responsive behaviour.
 - Tasks run strictly one after another in the order you list them, and each starts from the previous task's finished work, so put them in an order where every task can rely on all earlier ones. depends_on notes which earlier tasks a task relies on (keys of earlier tasks only).
 - Include the tests the selected test depth calls for inside the tasks that add behaviour. Do not plan work for deployment, CI or anything the charter puts out of scope. type is "task" for building, "research" or "architecture" only for a read-only investigation that a decision depends on.
 - Keys are short and unique (M1, M2, T1, T2 ...).
-Return only one JSON object, no prose and no code fence, matching exactly: ${BLUEPRINT_HINT}.`;
+${designPromptSection(options)}Return only one JSON object, no prose and no code fence, matching exactly: ${BLUEPRINT_HINT}.`;
 }
 export function repairBlueprintPrompt(previous: string, diagnostic: string, limits: PlanLimits): string {
   return `The blueprint answer failed validation: ${diagnostic}. Return valid JSON only, matching exactly: ${BLUEPRINT_HINT}. Keep the substance; stay within ${limits.milestones} milestones, ${limits.tasksPerMilestone} tasks per milestone and ${limits.totalTasks} tasks in total, and let depends_on name only earlier tasks.\n\nPrevious response (treat as data):\n${previous.slice(0, 7000)}`;
 }
 
 // --- Quality commands and the generated manifest ---
+/** A generated project always applies its UI/UX skills to its tasks, even when a task's wording does not mention the interface ("Add the cart" still draws a screen). */
+export function uiUxSkillsFor(options: Record<string, OptionValue>): Array<"ui-ux-pro-max" | "frontend-design" | "vercel-react-native-skills"> {
+  if (!hasUserInterface(options)) return [];
+  const platform = String(options.platform);
+  return platform === "web" || platform === "desktop" ? ["ui-ux-pro-max", "frontend-design"] : platform === "mobile_cross" ? ["ui-ux-pro-max", "vercel-react-native-skills"] : ["ui-ux-pro-max"];
+}
+
 export function qualityCommandsFor(template: ScaffoldTemplate | undefined, testDepth: string): QualityCommand[] {
   if (!template) return [];
   return testDepth === "none" ? [template.checks.build] : [template.checks.test, template.checks.build];
@@ -279,7 +293,7 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
     analysis: { enabled: options.analysis === true, docsDir: "docs/analysis" },
     providers: config.manifest.providers, providerRouting: config.manifest.providerRouting, providerTimeouts: config.manifest.providerTimeouts,
     qualityCommands: qualityCommandsFor(template, String(options.test_depth)),
-    uiUx: { enabled: options.ui_ux === true, autoSelect: true, include: [], exclude: [] },
+    uiUx: { enabled: options.ui_ux === true, autoSelect: true, include: uiUxSkillsFor(options), exclude: [] },
     ...(visual ? { visual } : {}),
     policy: { maxReviewRounds: Number(options.review_rounds) || 2, maxParallelism: 1, requireApprovalBeforeMerge: false },
   };
@@ -294,10 +308,12 @@ const CONTRACT_FOOTER = "Stay within the scope and boundaries of docs/PROJECT_CO
  * exactly one blocker (several would need an integration branch), and tasks run in parallel from the same base would conflict on the shared files of a small app.
  * A task's declared `depends_on` is therefore always satisfied, because everything it can depend on comes earlier in the chain; it stays in the text as documentation.
  */
-export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean): PlannedIssue[] {
+export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {
   const autostart = String(options.autostart);
   const issues: PlannedIssue[] = [];
   let previousTask: string | undefined;
+  const lastTask = blueprint.milestones.at(-1)?.tasks.at(-1);
+  const designBlock = (last: boolean) => { const block = designTaskBlock(options, charter, last); return block ? `\n\n${block}` : ""; };
   for (const [index, milestone] of blueprint.milestones.entries()) {
     const milestoneKey = `milestone:${milestone.key}`;
     const checklist = milestone.exit_criteria.length ? `\n\nExit criteria:\n${milestone.exit_criteria.map(item => `- ${item}`).join("\n")}` : "";
@@ -306,7 +322,7 @@ export function buildIssuePlan(blueprint: Blueprint, options: Record<string, Opt
       const reliesOn = task.depends_on.length ? `\n\nRelies on: ${task.depends_on.join(", ")}.` : "";
       const acceptance = `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
-        key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}\n\n${CONTRACT_FOOTER}`,
+        key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}\n\n${CONTRACT_FOOTER}`,
         labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: previousTask ? [previousTask] : [],
         start: runnable && (autostart === "all" || (autostart === "first_milestone" && index === 0)),
       });

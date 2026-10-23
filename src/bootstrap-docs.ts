@@ -1,12 +1,14 @@
 import { OPTION_CATALOG, type BootstrapForm, type OptionValue } from "./bootstrap-options.js";
 import type { Blueprint, Charter, StackDecision } from "./bootstrap.js";
 import type { ScaffoldTemplate } from "./bootstrap-templates.js";
+import { renderDesignDirection } from "./design-direction.js";
 import { redactSecrets } from "./redact.js";
 
 // The documents a bootstrapped repository starts with: the contract that keeps the project on its idea, the AI-agent guides (Claude Code reads CLAUDE.md, Codex reads
 // AGENTS.md), the plan and the stack decision record. Pure string builders; the scaffold activity writes them.
 export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; repoUrl?: string };
 const list = (items: string[], empty = "- none stated") => items.length ? items.map(item => `- ${item}`).join("\n") : empty;
+const designed = (input: DocsInput) => renderDesignDirection(input.options, input.charter) !== null;
 const section = (title: string, items: string[], empty?: string) => `## ${title}\n${list(items, empty)}`;
 
 function configurationTable(input: DocsInput): string {
@@ -64,7 +66,7 @@ ${form.description.split(/\r?\n/).slice(0, 6).join(" ").slice(0, 600)} Stack: ${
 
 ## Read first
 - \`docs/PROJECT_CONTRACT.md\` is binding: goals, non-goals, boundaries, design rules and the definition of done.
-- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
+${designed(input) ? "- \`docs/DESIGN_DIRECTION.md\` is binding for every screen: the visual bar, design system and per-page direction. A screen with default or library-stock styling is not finished.\n" : ""}- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
 
 ## Commands
 ${commands}
@@ -134,7 +136,7 @@ ${form.description}
 ${template ? "## Run it\n\n```bash\nnpm install\nnpm run dev\n```\n" : "## Status\n\nThe project is planned but not scaffolded; see `docs/PLAN.md`.\n"}
 ## Documents
 - [Project contract](docs/PROJECT_CONTRACT.md)
-- [Plan](docs/PLAN.md)
+${designed(input) ? "- [Design direction](docs/DESIGN_DIRECTION.md)\n" : ""}- [Plan](docs/PLAN.md)
 - [Stack decision](docs/architecture/0001-stack.md)
 `;
 }
@@ -145,6 +147,8 @@ export function renderDocs(input: DocsInput): Record<string, string> {
     "README.md": renderReadme(input), "CLAUDE.md": guide, "AGENTS.md": guide,
     "docs/PROJECT_CONTRACT.md": renderContract(input), "docs/PLAN.md": renderPlan(input), "docs/architecture/0001-stack.md": renderStackAdr(input),
   };
+  const design = renderDesignDirection(input.options, input.charter);
+  if (design) files["docs/DESIGN_DIRECTION.md"] = design;
   return Object.fromEntries(Object.entries(files).map(([file, content]) => [file, redactSecrets(content)]));
 }
 

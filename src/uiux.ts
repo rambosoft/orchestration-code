@@ -107,7 +107,7 @@ export function uiUxGuidance(input: { prompt: string; frameworks?: string[]; con
   return [
     "APPLICABLE UI/UX GUIDANCE (orchestrator-managed summaries)",
     `Detected project technologies: ${stack}.`,
-    "Use the relevant guidance below as task-specific design and implementation constraints. Preserve explicit product requirements and the existing design system. Do not claim a visual/accessibility check was performed unless it was actually checked.",
+    "Use the relevant guidance below as task-specific design and implementation constraints. Preserve explicit product requirements and the existing design system (docs/DESIGN_DIRECTION.md when the repository has one). A finished screen never shows unstyled browser defaults or a component library's stock look: it has deliberate hierarchy, spacing, typography, colour and states. Do not claim a visual/accessibility check was performed unless it was actually checked.",
     ...selected.map(skill => `\n${skill.name} (catalog ${skill.catalogVersion}; upstream: ${skill.upstreamVersion})\nSource: ${skill.source}\nLicense/redistribution: ${skill.license}\nApplicable stages: ${skill.stages.join(", " )}\n${skill.guidance}`),
   ].join("\n");
 }

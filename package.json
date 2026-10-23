@@ -30,6 +30,7 @@
     "e2e": "node dist/src/e2e.js",
     "bootstrap:e2e": "node dist/src/bootstrap-e2e.js",
     "plugin:build": "npm --prefix plugins/project-bootstrap run build",
+    "plugin:setup": "node dist/src/plugin-setup.js",
     "check:chars": "node scripts/check-control-chars.mjs",
     "scan:secrets": "tsx scripts/scan-secrets.ts",
     "ci:linux": "sh scripts/ci-linux.sh"

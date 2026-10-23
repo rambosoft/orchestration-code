@@ -246,7 +246,7 @@ describe("documents", () => {
   const docsInput = { form: run.form, options: run.options, provenance: run.provenance, stack, charter, blueprint, template: TEMPLATES["vite-react-ts"]! };
   it("writes the contract, agent guides, plan and stack decision", () => {
     const files = renderDocs(docsInput);
-    expect(Object.keys(files).sort()).toEqual(["AGENTS.md", "CLAUDE.md", "README.md", "docs/PLAN.md", "docs/PROJECT_CONTRACT.md", "docs/architecture/0001-stack.md"]);
+    expect(Object.keys(files).sort()).toEqual(["AGENTS.md", "CLAUDE.md", "README.md", "docs/DESIGN_DIRECTION.md", "docs/PLAN.md", "docs/PROJECT_CONTRACT.md", "docs/architecture/0001-stack.md"]);
     expect(files["docs/PROJECT_CONTRACT.md"]).toContain("Real payments");
     expect(files["docs/PROJECT_CONTRACT.md"]).toContain("| Automated tests | smoke | preset |");
     expect(files["docs/PROJECT_CONTRACT.md"]).toContain("Drift rules");
