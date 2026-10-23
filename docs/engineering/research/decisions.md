@@ -33,3 +33,4 @@ D-15: workflow edits that change command sequence use patched(); see B-006 (appr
 | D-28 | Size policy | adopt soft limit 10000 characters for specifications with a warning, generous input budgets, clamped descriptive text; reject hard failure on size | FM-034 | test/handoffs.test.ts |
 | D-29 | Deterministic fallbacks | adopt, built only from validated inputs; they carry every protected constraint and acceptance check | FM-033 | test/robustness.test.ts (fuzz) |
 | D-30 | Release gate | adopt the chaos suite in CI; a new structured stage must be added to its table | ADR 0006 | .github/workflows/ci.yml |
+| D-31 | Run survival vs Paperclip | adopt: a lost Paperclip lease never cancels a Temporal workflow; only an explicit cancel does; reject auto-cancel on lease loss | FM-037 | test/adapter-resilience.test.ts |
