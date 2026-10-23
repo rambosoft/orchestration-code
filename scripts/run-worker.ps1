@@ -24,8 +24,13 @@ if (-not (Test-Path $workerEntry)) {
 }
 # Resolve node once instead of going through npm, which is not always on PATH for scheduled or hidden launches.
 $node = (Get-Command node -ErrorAction Stop).Source
-& $node $workerEntry *>> $workerLog
-$workerExitCode = $LASTEXITCODE
-if ($null -eq $workerExitCode) { $workerExitCode = 1 }
-"Worker exited at $(Get-Date -Format o) with code $workerExitCode" | Out-File -FilePath $workerLog -Append -Encoding utf8
-exit $workerExitCode
+# Windows PowerShell 5.1 turns the first stderr line of a redirected native command into a terminating error under 'Stop', which killed the worker on its first log line.
+$ErrorActionPreference = 'Continue'
+# Supervise in-process: Task Scheduler does not restart the task when the worker is killed, so loop here with a short back-off.
+while ($true) {
+  & $node $workerEntry *>> $workerLog
+  $workerExitCode = $LASTEXITCODE
+  if ($null -eq $workerExitCode) { $workerExitCode = 1 }
+  "Worker exited at $(Get-Date -Format o) with code $workerExitCode; restarting in 5s" | Out-File -FilePath $workerLog -Append -Encoding utf8
+  Start-Sleep -Seconds 5
+}
