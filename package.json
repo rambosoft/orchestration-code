@@ -25,8 +25,11 @@
     "doctor": "node dist/src/cli.js doctor",
     "cleanup": "node dist/src/cli.js cleanup",
     "drain": "node dist/src/cli.js drain",
+    "reconcile": "node dist/src/cli.js reconcile",
     "deploy:worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-worker.ps1",
     "e2e": "node dist/src/e2e.js",
+    "bootstrap:e2e": "node dist/src/bootstrap-e2e.js",
+    "plugin:build": "npm --prefix plugins/project-bootstrap run build",
     "check:chars": "node scripts/check-control-chars.mjs",
     "scan:secrets": "tsx scripts/scan-secrets.ts",
     "ci:linux": "sh scripts/ci-linux.sh"

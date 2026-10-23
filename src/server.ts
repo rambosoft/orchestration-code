@@ -12,23 +12,39 @@ import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
 import { indexManifests } from "./manifest-index.js";
 import { resolveTaskType, taskTypes } from "./task-types.js";
+import { catalogPayload, resolveOptions } from "./bootstrap-options.js";
+import { templateSummaries } from "./bootstrap-templates.js";
+import { prepareBootstrapRun } from "./bootstrap-start.js";
+import { loadBootstrapConfig } from "./bootstrap-config.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
 const projectFile = process.env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json";
 const defaultProject = ProjectManifestSchema.parse(JSON.parse(await readFile(projectFile, "utf8")));
-const manifests = [defaultProject];
 const projectDirectory = process.env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects");
-try {
-  for (const entry of await readdir(projectDirectory, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(path.join(projectDirectory, entry.name), "utf8")));
-    manifests.push(manifest);
+// Hand-written manifests live in projects/, manifests written by a project bootstrap (ADR 0009) in projects/generated/.
+async function loadManifests() {
+  const manifests = [defaultProject];
+  for (const directory of [projectDirectory, path.join(projectDirectory, "generated")]) {
+    try {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        manifests.push(ProjectManifestSchema.parse(JSON.parse(await readFile(path.join(directory, entry.name), "utf8"))));
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
-} catch (error) {
-  if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  return indexManifests(manifests);
 }
-const projects = indexManifests(manifests);
+let projects = await loadManifests();
+/** A project created after startup (by a bootstrap) is picked up by re-reading the manifests once, so no bridge restart is needed. */
+async function findProject(id: string) {
+  const known = projects.get(id);
+  if (known) return known;
+  projects = await loadManifests();
+  return projects.get(id);
+}
 const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), taskType: z.string().optional(), labels: z.array(z.string().max(120)).max(50).default([]), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
@@ -37,10 +53,19 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/health") { res.end(JSON.stringify({ ok: true, project: defaultProject.id, projects: [...projects.keys()] })); return; }
     if (req.method === "GET" && url.pathname === "/v1/runs") { res.end(JSON.stringify(await listRuns())); return; }
+    // The wizard in Paperclip renders its form from this catalog, so options and presets have one definition (ADR 0009).
+    if (req.method === "GET" && url.pathname === "/v1/bootstrap/catalog") { res.end(JSON.stringify({ ...catalogPayload(), templates: templateSummaries() })); return; }
+    if (req.method === "POST" && url.pathname === "/v1/bootstrap/resolve") { const body = z.object({ options: z.record(z.string(), z.unknown()).default({}) }).parse(await readJsonBody(req)); res.end(JSON.stringify(resolveOptions(body.options))); return; }
     if (req.method === "POST" && url.pathname === "/v1/runs") {
       const payload = startSchema.parse(await readJsonBody(req));
       assertNoTestFlags(payload);
-      const project = projects.get(payload.projectId ?? defaultProject.id);
+      // A bootstrap task (ADR 0009) creates the project, so there is no manifest to look up yet.
+      const early = resolveTaskType({ ...(payload.taskType !== undefined ? { apiType: payload.taskType } : {}), labels: payload.labels, ...(parseTaskDirectives(payload.prompt).taskType ? { directive: parseTaskDirectives(payload.prompt).taskType! } : {}), ...(payload.profile ? { profile: payload.profile } : {}) });
+      if (early.type === "bootstrap") {
+        const runInput = await prepareBootstrapRun(payload, { isProjectKnown: async id => (await findProject(id)) !== undefined, config: await loadBootstrapConfig(), dataRoot: process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data"), ...(process.env.ORCHESTRATOR_PROJECTS_ROOT ? { projectsRoot: process.env.ORCHESTRATOR_PROJECTS_ROOT } : {}) });
+        res.writeHead(202); res.end(JSON.stringify(await startRun(runInput))); return;
+      }
+      const project = await findProject(payload.projectId ?? defaultProject.id);
       if (!project) throw new Error(`project '${payload.projectId}' is not configured in the orchestrator`);
       const parsedPrompt = parseTaskDirectives(payload.prompt);
       if (parsedPrompt.error) throw new Error(parsedPrompt.error);

@@ -8,6 +8,7 @@ import { parseJsonLoose } from "./json-extract.js";
 // report is rendered to a document. Nothing is implemented.
 export type ReportKind = "research" | "architecture";
 const text = (max: number) => clampedText(max);
+const optionalText = (max: number) => z.preprocess(value => typeof value === "string" && value.trim() ? value : undefined, text(max).optional());
 const strings = (max: number, each: number, min = 0) => z.preprocess(value => (value == null ? [] : Array.isArray(value) ? value : [value]).filter(item => typeof item === "string" && item.trim()).slice(0, max), z.array(text(each)).min(min));
 const level = <T extends string>(values: readonly [T, ...T[]], fallback: T) => z.preprocess(value => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : value, z.enum(values).catch(fallback));
 const objects = (max: number) => (value: unknown) => Array.isArray(value) ? value.filter(item => item && typeof item === "object").slice(0, max) : [];
@@ -29,9 +30,9 @@ export const ReportSchema = z.object({
   summary: text(600),
   findings: z.preprocess(objects(8), z.array(FindingSchema)),
   options: z.preprocess(objects(5), z.array(OptionSchema).default([])),
-  recommendation: text(500).optional(),
+  recommendation: optionalText(500),
   /** Architecture: the decision in ADR form and what follows from it. */
-  decision: text(500).optional(),
+  decision: optionalText(500),
   consequences: strings(5, 200),
   risks: strings(5, 200),
   open_questions: strings(6, 200),
@@ -122,8 +123,10 @@ export function formatReportMarkdown(report: Report, scope: Scope, meta: { taskI
   const options = report.options.map(o => `### ${o.name}\n${o.summary}\n\nPros:\n${list(o.pros)}\n\nCons:\n${list(o.cons)}`).join("\n\n");
   const followUps = report.follow_up_tasks.map(t => `- [${FOLLOW_UP_LABEL[t.type]}] ${t.title} - ${t.rationale}`).join("\n");
   const heading = meta.kind === "architecture" ? "Architecture" : "Research";
+  // Task titles are often written as "Research: ..." already; do not repeat the prefix.
+  const title = (meta.title ?? meta.taskId).replace(/^\s*(?:research|architecture|explore|spike)\s*[:\-]\s*/i, "");
   const parts = [
-    `# ${heading}: ${meta.title ?? meta.taskId}`,
+    `# ${heading}: ${title}`,
     `Task: ${meta.taskId}. Produced read-only by the orchestrator ${meta.kind} flow from a bounded context pack; nothing was implemented.${meta.kind === "architecture" ? " Status: proposed." : ""}${meta.note ? `\n\n> ${meta.note}` : ""}`,
     `## Summary\n${report.summary}`,
     `## Questions\n${list(scope.questions)}`,

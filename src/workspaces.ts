@@ -117,7 +117,30 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
     if (!url) throw new Error(`gh pr create did not return a PR URL: ${created.slice(0, 500)}`);
     pr = { url, baseRefName: repo.prBaseBranch };
   }
-  return { branch: repo.branch, baseSha: repo.baseSha, headSha, prUrl: pr.url, prBaseBranch: pr.baseRefName };
+  // A rerun of the same task (Paperclip's review path, a retry) has its own branch; the earlier attempt's PR must not stay open next to it. Best effort: publishing already succeeded.
+  const superseded = await closeSupersededPullRequests({ taskId: input.taskId, currentBranch: repo.branch, currentUrl: pr.url, worktree }, runner).catch(() => [] as string[]);
+  return { branch: repo.branch, baseSha: repo.baseSha, headSha, prUrl: pr.url, prBaseBranch: pr.baseRefName, ...(superseded.length ? { superseded } : {}) };
+}
+
+export type OpenPullRequest = { number: number; url: string; headRefName: string; body?: string };
+/**
+ * Open PRs that belong to the same task as the one just published but come from an earlier run. A task's branches share the prefix `taskBranch` builds, and the PR body
+ * the orchestrator writes starts with an exact "Paperclip task: <id>" line; both must match, so a task whose id merely starts the same way is never touched.
+ */
+export function supersededPullRequests(open: OpenPullRequest[], taskId: string, currentBranch: string): OpenPullRequest[] {
+  const prefix = `codex/${taskId.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "")}-`;
+  return open.filter(pr => pr.headRefName !== currentBranch && pr.headRefName.startsWith(prefix) && (pr.body ?? "").split(/\r?\n/, 1)[0] === `Paperclip task: ${taskId}`);
+}
+
+/** Closes the earlier attempts of a task with a pointer to the new PR. The branches stay (they are never deleted), so nothing is lost and a PR can be reopened. Returns the closed PR URLs. */
+export async function closeSupersededPullRequests(input: { taskId: string; currentBranch: string; currentUrl: string; worktree: string }, runner = runCommand): Promise<string[]> {
+  const open = JSON.parse(await runner("gh", ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,url,headRefName,body"], input.worktree)) as OpenPullRequest[];
+  const closed: string[] = [];
+  for (const pr of supersededPullRequests(open, input.taskId, input.currentBranch)) {
+    await runner("gh", ["pr", "close", String(pr.number), "--comment", `Superseded by ${input.currentUrl}: a later run of the same task published there. This branch is kept; reopen this PR if it was closed by mistake.`], input.worktree);
+    closed.push(pr.url);
+  }
+  return closed;
 }
 
 /** Rebase a stacked child after its parent PR merges; conflicts are left for a human. */

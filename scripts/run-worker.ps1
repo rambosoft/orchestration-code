@@ -28,6 +28,8 @@ $node = (Get-Command node -ErrorAction Stop).Source
 $ErrorActionPreference = 'Continue'
 # Supervise in-process: Task Scheduler does not restart the task when the worker is killed, so loop here with a short back-off.
 while ($true) {
+  # After the machine was off or asleep, Temporal finished workflows that Paperclip never heard about. Report them before taking new work (idempotent; a failure here must never stop the worker).
+  if ($env:PAPERCLIP_API_TOKEN) { try { & $node (Join-Path $root 'dist\src\cli.js') reconcile --apply *>> $workerLog } catch { "Reconcile skipped: $_" | Out-File -FilePath $workerLog -Append -Encoding utf8 } }
   & $node $workerEntry *>> $workerLog
   $workerExitCode = $LASTEXITCODE
   if ($null -eq $workerExitCode) { $workerExitCode = 1 }

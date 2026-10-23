@@ -19,3 +19,12 @@
 - Done: task-type registry and label routing, bug flow (parallel diagnose and reproduce with cross-fed hints, verified reproduction, regression gate, `needs_info`), research and architecture flow (bounded context pack, report as draft doc PR and issue comment). ADR 0008. Replay fixture unchanged.
 - Verified: unit and workflow tests with the fake provider (typed-flows, task-types suites) and the existing suites. Not verified: a real Codex or Claude run of the new flows, a live Paperclip label reaching the bridge, a real GitHub document PR.
 - Next: deploy (build, restart worker, `docker compose up -d --build orchestrator`, Paperclip adapter restart), create a `type:bug` and a `type:research` issue on a test project and read the comments; then decide on the refactor type.
+
+## 2026-10-23 update (bootstrap design)
+- ADR 0009 (Proposed): Paperclip plugin for the wizard UI plus a `bootstrap` task type. Backlog B-041..B-044 added, no code yet. Next: verify the plugin launcher slot and install persistence, then B-041.
+
+## 2026-10-23 update (project bootstrap, ADR 0009)
+- Done: B-041, B-042, B-043; B-044 partly (contract and agent guides are written into every generated repository and every task points at the contract; a workflow-level channel for the contract is open). Plugin installed and ready in Paperclip (`orchestrator.project-bootstrap`), bridge image rebuilt, worker redeployed, Paperclip container recreated (compose carry-over bug on Windows, FM-042).
+- Verified: unit, workflow, chaos, adapter, doctor and plugin tests; live runs through Paperclip with real Codex (planning), Claude (implementation) and Codex (review) for the Aurora Store prototype. The plugin worker's bridge call is covered by unit tests only: Paperclip has no environment-backed secret provider, so someone must create a secret holding `ORCHESTRATOR_API_TOKEN` and choose it in the plugin settings (runbook section 6).
+- Not verified: the wizard inside a signed-in browser (the browser pane was not signed in; the page is tested with a stubbed host and the real catalog).
+- Next: sign in once, set the plugin secret, create a project from the wizard; add `integratedBaseBranch` support if parallel plans are wanted; consider moving the contract into the task prompt through a `patched()` workflow channel.

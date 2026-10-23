@@ -21,6 +21,9 @@ describe("claude invocation", () => {
     const args = claudeExecutionArgs("do it", "implement", {});
     expect(args).toContain("acceptEdits");
     expect(args.join(" ")).toMatch(/--allowedTools=.*Bash\(npm:\*\)/);
+    // Claude Code on Windows runs commands through PowerShell, which needs its own allow rules or the agent cannot run the project's tests.
+    for (const command of ["npm", "npx", "node"]) expect(args.join(" ")).toContain(`PowerShell(${command}:*)`);
+    expect(claudeExecutionArgs("p", "reproduce", {}).join(" ")).toContain("PowerShell(npm:*)");
     expect(args.join(" ")).not.toMatch(/git commit|git push|git add/);
     expect(args).toContain("--max-budget-usd");
     expect(args[args.length - 1]).toBe("do it");

@@ -2,14 +2,14 @@ import { z } from "zod";
 
 // Task types are the user-facing concept (a Paperclip label, a "Type:" line); a profile is the delivery stage list a type reuses (src/profiles.ts).
 // A run with no taskType takes the original pipeline unchanged, which keeps in-flight Temporal runs replayable.
-export const TaskTypeIdSchema = z.enum(["task", "bug", "research", "architecture"]);
+export const TaskTypeIdSchema = z.enum(["task", "bug", "research", "architecture", "bootstrap"]);
 export type TaskTypeId = z.infer<typeof TaskTypeIdSchema>;
 /** delivery: plan -> brief -> implement -> review -> verify. bug: investigate first, then delivery. investigation: read-only exploration that ends in a document. */
-export type TaskFlow = "delivery" | "bug" | "investigation";
+export type TaskFlow = "delivery" | "bug" | "investigation" | "bootstrap";
 export type TaskTypeDefinition = {
   id: TaskTypeId; label: string; profile: string; flow: TaskFlow;
-  /** What the run produces: a code change or a committed document, always as a draft PR. */
-  delivers: "code" | "document";
+  /** What the run produces: a code change or a committed document (a draft PR), or a whole project (repository, manifest and Paperclip issues). */
+  delivers: "code" | "document" | "project";
   /** Names accepted from labels, directives and API fields (lower case). */
   aliases: string[];
   /** Ordered phases, for documentation and progress display only; the workflow owns the real sequence. */
@@ -21,6 +21,7 @@ export const taskTypes: Record<TaskTypeId, TaskTypeDefinition> = {
   bug: { id: "bug", label: "Bug / issue", profile: "bug", flow: "bug", delivers: "code", aliases: ["bug", "defect", "bugfix", "regression", "issue"], phases: ["diagnose", "reproduce", "plan", "brief", "implement", "review", "verify"] },
   research: { id: "research", label: "Research / exploration", profile: "investigation", flow: "investigation", delivers: "document", aliases: ["research", "explore", "exploration", "spike", "investigation"], phases: ["scope", "context", "explore", "report"] },
   architecture: { id: "architecture", label: "Architecture", profile: "investigation", flow: "investigation", delivers: "document", aliases: ["architecture", "arch", "design", "adr"], phases: ["scope", "context", "explore", "report"] },
+  bootstrap: { id: "bootstrap", label: "Project bootstrap", profile: "bootstrap", flow: "bootstrap", delivers: "project", aliases: ["bootstrap", "new-project", "project-setup"], phases: ["stack", "charter", "blueprint", "approval", "scaffold", "issues"] },
 };
 
 const lookup = new Map<string, TaskTypeId>(Object.values(taskTypes).flatMap(type => type.aliases.map(alias => [alias, type.id] as const)));

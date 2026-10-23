@@ -1,0 +1,22 @@
+{
+  "stages": {
+    "stack": { "provider": "codex" },
+    "charter": { "provider": "codex" },
+    "blueprint": { "provider": "codex" }
+  },
+  "manifest": {
+    "providers": { "default": "codex" },
+    "providerRouting": {
+      "plan": { "provider": "codex" },
+      "research": { "provider": "codex" },
+      "review": { "provider": "codex" },
+      "verify": { "provider": "codex" },
+      "implement": { "provider": "claude" },
+      "analyze": { "provider": "codex" },
+      "openspec": { "provider": "codex" }
+    },
+    "providerTimeouts": { "implement": 900000, "openspec": 720000 },
+    "containerProjectsRoot": "/workspace/projects",
+    "targetBranch": "main"
+  }
+}

@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vitest";
+import type { RunResult } from "../src/contracts.js";
+import { formatFindings, latestRun, reconcile, resultComment, statusFor, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
+
+// The case that motivated it: the machine was off, Temporal finished the workflow, Paperclip marked the task blocked because the adapter never reported.
+const publish = { branch: "codex/x-a1", baseSha: "a".repeat(40), headSha: "b".repeat(40), prUrl: "https://github.com/me/shop/pull/7", prBaseBranch: "codex/prev" };
+const result = (overrides: Partial<RunResult> = {}): RunResult => ({ runId: "r", status: "needs_review", stages: [], artifactRefs: [], message: "quality gates passed; draft PR published with 1 unresolved review finding", publish, metadata: { review: { maxReviewRounds: 1, reviewCount: 1, repairCount: 0, findingsFixed: 0, reviewRuns: [], nonBlockingNotes: [], unresolvedFindings: [{ severity: "high", category: "functional", title: "Checkout total ignores shipping", evidence: "e", fixableInCode: true }] } }, ...overrides });
+
+type World = { issues: Array<{ id: string; identifier: string; status: string }>; runs: RunRow[]; details: Record<string, RunDetail>; comments: Record<string, string[]>; writes: Array<{ method: string; route: string; body?: Record<string, unknown> }> };
+function world(overrides: Partial<World> = {}): { deps: ReconcileDeps; state: World } {
+  const state: World = { issues: [], runs: [], details: {}, comments: {}, writes: [], ...overrides };
+  const deps: ReconcileDeps = {
+    listRuns: async () => state.runs,
+    inspect: async id => state.details[id] ?? { status: "FAILED" },
+    paperclip: async <T,>(method: "GET" | "POST" | "PATCH", route: string, body?: unknown) => {
+      if (method === "GET" && route === "/api/companies") return [{ id: "C1" }] as T;
+      if (method === "GET" && route.startsWith("/api/companies/C1/issues")) return state.issues as T;
+      const comments = /^\/api\/issues\/([^/?]+)\/comments/.exec(route);
+      if (method === "GET" && comments) return (state.comments[comments[1]!] ?? []).map(text => ({ body: text })) as T;
+      state.writes.push({ method, route, ...(body ? { body: body as Record<string, unknown> } : {}) });
+      return {} as T;
+    },
+  };
+  return { deps, state };
+}
+const wf = "pc-I65-2026-10-23T17-52-34.015Z-a1";
+
+describe("statusFor", () => {
+  it("maps results to the status the adapter would set", () => {
+    expect(statusFor(result({ status: "completed" }))).toBe("done");
+    expect(statusFor(result({ status: "needs_review" }))).toBe("in_review");
+    expect(statusFor(result({ status: "needs_info", publish: undefined }))).toBe("blocked");
+    expect(statusFor(result({ status: "completed", publish: undefined, bootstrap: { projectRoot: "p", commit: "c", manifestPath: "m", template: "t", verified: true, issues: [], warnings: [] } }))).toBe("done");
+    expect(statusFor(result({ status: "rejected", publish: undefined, metadata: { taskType: "bootstrap" } as RunResult["metadata"] }))).toBe("cancelled");
+  });
+  it("leaves the status alone when the result does not decide it", () => {
+    expect(statusFor(result({ status: "failed", publish: undefined }))).toBeUndefined();
+    expect(statusFor(result({ status: "completed", publish: undefined }))).toBeUndefined();
+    expect(statusFor(undefined)).toBeUndefined();
+  });
+});
+
+describe("resultComment", () => {
+  it("carries the publication marker the next task's dependency check reads, the PR and the open findings", () => {
+    const comment = resultComment(wf, "COMPLETED", result());
+    expect(comment).toContain(`Temporal workflow \`${wf}\` finished with status **needs_review**`);
+    expect(comment).toContain("Draft PR: https://github.com/me/shop/pull/7");
+    expect(comment).toContain("Checkout total ignores shipping");
+    expect(comment).toMatch(/<!-- orchestration-publish \{.*"headSha":"b{40}".*\} -->/);
+    expect(comment).toContain("reconcile step");
+  });
+});
+
+describe("reconcile", () => {
+  it("reports a finished workflow to a blocked task: comment and status in one update", async () => {
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "COMPLETED" }], details: { [wf]: { status: "COMPLETED", result: result() } } });
+    const findings = await reconcile(deps, { apply: true });
+    expect(findings).toMatchObject([{ issue: "LOC-65", action: "reported", status: "in_review" }]);
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0]).toMatchObject({ method: "PATCH", route: "/api/issues/I65", body: { status: "in_review" } });
+    expect(String(state.writes[0]!.body!.comment)).toContain("orchestration-publish");
+  });
+  it("changes nothing in a dry run, and says what it would do", async () => {
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "COMPLETED" }], details: { [wf]: { status: "COMPLETED", result: result() } } });
+    const findings = await reconcile(deps, { apply: false });
+    expect(findings[0]).toMatchObject({ action: "would_report", status: "in_review" });
+    expect(state.writes).toEqual([]);
+    expect(formatFindings(findings, false)).toContain("--apply");
+  });
+  it("is idempotent: a result already reported is not reported again", async () => {
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "COMPLETED" }], details: { [wf]: { status: "COMPLETED", result: result() } }, comments: { I65: [`Temporal workflow \`${wf}\` finished with status **needs_review**.`] } });
+    expect((await reconcile(deps, { apply: true }))[0]).toMatchObject({ action: "already_reported" });
+    expect(state.writes).toEqual([]);
+  });
+  it("leaves old history alone: only runs that ended within the window are considered", async () => {
+    const now = new Date("2026-10-23T18:00:00Z");
+    const old = { status: "COMPLETED", closeTime: "2026-10-01T10:00:00Z", result: result() };
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "COMPLETED" }], details: { [wf]: old } });
+    expect(await reconcile(deps, { apply: true, now })).toEqual([]);
+    expect(state.writes).toEqual([]);
+    state.details[wf] = { ...old, closeTime: "2026-10-23T17:00:00Z" };
+    expect(await reconcile(deps, { apply: true, now })).toMatchObject([{ action: "reported" }]);
+    state.details[wf] = { ...old, closeTime: "2026-10-01T10:00:00Z" };
+    expect(await reconcile(deps, { apply: false, days: 30, now })).toMatchObject([{ action: "would_report" }]);
+  });
+  it("can be limited to one task, by identifier or id, and also catches a task parked in review whose result nobody reported", async () => {
+    const { deps, state } = world({
+      issues: [{ id: "I65", identifier: "LOC-65", status: "in_review" }, { id: "I1", identifier: "LOC-1", status: "blocked" }],
+      runs: [{ workflowId: wf, status: "COMPLETED" }, { workflowId: "pc-I1-x-a1", status: "COMPLETED" }],
+      details: { [wf]: { status: "COMPLETED", result: result() }, "pc-I1-x-a1": { status: "COMPLETED", result: result({ status: "failed", publish: undefined }) } },
+    });
+    expect((await reconcile(deps, { apply: true, only: "loc-65" })).map(finding => finding.issue)).toEqual(["LOC-65"]);
+    expect(state.writes.map(write => write.route)).toEqual(["/api/issues/I65"]);
+    expect((await reconcile(deps, { apply: false, only: "I1" })).map(finding => finding.issue)).toEqual(["LOC-1"]);
+  });
+  it("never touches a workflow that is still running", async () => {
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "in_progress" }], runs: [{ workflowId: wf, status: "RUNNING" }] });
+    expect((await reconcile(deps, { apply: true }))[0]).toMatchObject({ action: "running" });
+    expect(state.writes).toEqual([]);
+  });
+  it("tells the user to retry when the workflow itself failed, without inventing a result", async () => {
+    const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "FAILED" }], details: { [wf]: { status: "FAILED" } } });
+    const [finding] = await reconcile(deps, { apply: true });
+    expect(finding).toMatchObject({ action: "failed_run" });
+    expect(finding!.detail).toContain("retry the task");
+    expect(state.writes).toEqual([]);
+  });
+  it("posts only a comment when the result does not decide the status, and ignores tasks that are not stuck or have no run", async () => {
+    const { deps, state } = world({
+      issues: [{ id: "I1", identifier: "LOC-1", status: "blocked" }, { id: "I2", identifier: "LOC-2", status: "done" }, { id: "I3", identifier: "LOC-3", status: "blocked" }],
+      runs: [{ workflowId: "pc-I1-x-a1", status: "COMPLETED" }, { workflowId: "pc-I2-x-a1", status: "COMPLETED" }],
+      details: { "pc-I1-x-a1": { status: "COMPLETED", result: result({ status: "failed", publish: undefined, message: "review failed closed" }) } },
+    });
+    const findings = await reconcile(deps, { apply: true });
+    expect(findings.map(finding => finding.issue)).toEqual(["LOC-1"]);
+    expect(state.writes).toMatchObject([{ method: "POST", route: "/api/issues/I1/comments" }]);
+  });
+  it("picks the running workflow of a task, else the newest, and never another task's", () => {
+    const rows = [{ workflowId: "pc-I1-2026-10-22-a1", status: "COMPLETED" }, { workflowId: "pc-I1-2026-10-23-a1", status: "FAILED" }, { workflowId: "pc-I2-2026-10-24-a1", status: "RUNNING" }];
+    expect(latestRun(rows, "I1")?.workflowId).toBe("pc-I1-2026-10-23-a1");
+    expect(latestRun(rows, "I3")).toBeUndefined();
+    expect(formatFindings([], true)).toContain("nothing to reconcile");
+  });
+});

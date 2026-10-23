@@ -38,3 +38,18 @@ Transient `spawn ... ENOENT` or auth errors: run `doctor`, fix, restart with the
 
 ## 5. Housekeeping
 `node dist/src/cli.js cleanup --dry-run`, then `cleanup --days 7` (default) removes old task worktrees; `--all` removes every one. Branches are never deleted (they back draft PRs). Do not run `--all` while a run is active.
+
+## 6. Bootstrap a project (ADR 0009)
+**One-time setup.** `npm run plugin:build` (needs `npm install` once in `plugins/project-bootstrap`), then `docker compose up -d --build orchestrator` and `docker compose up -d paperclip` (the second mounts the plugin folder and reloads the adapter; plan it between runs). In Paperclip (instance admin): install the local path `/opt/paperclip-plugins/project-bootstrap` (Settings, Plugins, or `POST /api/plugins/install` with `{"packageName":"/opt/paperclip-plugins/project-bootstrap","isLocalPath":true}`), create a company secret that holds `ORCHESTRATOR_API_TOKEN`, and set the plugin settings (`bridgeUrl`, `bridgeToken`). The worker needs `ORCHESTRATOR_PROJECTS_ROOT`, `PAPERCLIP_API_TOKEN`, a `gh` login and npm network access (`npm run doctor`).
+**Use.** Open "New AI project" (sidebar or top bar), describe the idea, pick maturity and platform (Advanced shows every option), press "Create and plan". The project's Bootstrap tab shows progress and the plan; "Approve and create" builds the repository, manifest and tasks. Without the browser: `npm run bootstrap:e2e -- examples/aurora-store.bootstrap.json --approve`.
+**If it fails.** The task comment says what exists. Before the repository was created the scaffold removes its own folder; after it, delete the GitHub repository and the folder named in the message and `projects/generated/<project id>.json`, then move the task back to todo. A project is bootstrapped once: a project whose manifest exists is refused.
+
+## 7. After the machine was off, asleep or offline (reconcile)
+Temporal keeps running workflows and finishes them even when the laptop is off, but the Paperclip adapter that reports the result is gone, so Paperclip marks the task **blocked** ("requires reconciliation") although the work is done and the draft PR exists. Nothing is lost; the result only has to be reported:
+
+```bash
+npm run reconcile                      # dry run: lists what it would report
+npm run reconcile -- --apply           # reports it: a comment (with the PR and the publication marker) and the status
+npm run reconcile -- --apply --issue LOC-65 --days 7
+```
+It handles blocked, in-progress and in-review tasks whose latest workflow ended within `--days` (default 3), skips results already reported and workflows still running, and never invents a result: a workflow that itself failed is listed with the advice to retry the task from Paperclip. **It also runs by itself every time the worker (re)starts** (`scripts/run-worker.ps1`), so after a reboot the board catches up without anyone doing anything. A task that comes back as `in_review` has an open review finding; accept the PR (move the task to done) or comment what to fix and re-run it.

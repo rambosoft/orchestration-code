@@ -273,6 +273,8 @@ async function buildContextPackImpl(input: { worktree: string; terms: string[]; 
 }
 export const buildContextPack = heartbeating(buildContextPackImpl);
 
+const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+
 /** Paths in `git status --porcelain -z` output; a rename or copy entry is followed by its source path, which is skipped. */
 export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean }> {
   const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean }> = [];
@@ -305,9 +307,13 @@ async function verifyReproductionImpl(input: { worktree: string; command: Pick<Q
     reverted.push(normalized);
   }
   const cwd = path.resolve(root, input.command.cwd ?? ".");
-  const result = await runCheck(input.command.executable, input.command.args, cwd, 6000);
-  const output = [result.output, result.stderr].filter(Boolean).join("\n");
-  const excerpt = output.replace(/\s+/g, " ").trim().slice(0, 700);
+  const result = await runCheck(input.command.executable, input.command.args, cwd, 40_000);
+  // Test runners colour their output; escape codes inside "AssertionError: ..." would defeat the signature match.
+  const output = stripAnsi([result.output, result.stderr].filter(Boolean).join("\n"));
+  const flat = output.replace(/\s+/g, " ").trim();
+  const at = flat.toLowerCase().indexOf(input.expectedFailure.replace(/\s+/g, " ").trim().toLowerCase());
+  // Show the failure itself: around the signature when present, otherwise the end of the output (runners print failures last).
+  const excerpt = at >= 0 ? flat.slice(Math.max(0, at - 150), at + 550) : flat.slice(-700);
   const base = reverted.length ? { revertedFiles: reverted } : {};
   if (result.code === 0) return { reproduced: false, exitCode: 0, evidence: `the reproduction test passed, so it does not show the defect${reverted.length ? ` (changes outside the tests were undone: ${reverted.join(", ")})` : ""}`, ...base };
   const squash = (value: string) => value.replace(/\s+/g, " ").toLowerCase();
@@ -315,3 +321,13 @@ async function verifyReproductionImpl(input: { worktree: string; command: Pick<Q
   return { reproduced: true, exitCode: result.code, evidence: excerpt, ...base };
 }
 export const verifyReproduction = heartbeating(verifyReproductionImpl);
+
+/** Post a comment on the draft PR (open review findings for a human to accept or send back). */
+async function commentOnPullRequestImpl(input: { worktree: string; prUrl: string; body: string }): Promise<void> {
+  if (!/^https:\/\/[^\s]+\/pull\/\d+$/.test(input.prUrl)) throw new Error(`refusing to comment on '${input.prUrl}': not a pull request URL`);
+  await runCommand("gh", ["pr", "comment", input.prUrl, "--body", input.body.slice(0, 9000)], input.worktree);
+}
+export const commentOnPullRequest = heartbeating(commentOnPullRequestImpl);
+
+// Project bootstrap steps (ADR 0009) live in their own module; the worker registers every export of this file.
+export { prepareBootstrapSandbox, scaffoldProject, materializeIssues } from "./bootstrap-activities.js";

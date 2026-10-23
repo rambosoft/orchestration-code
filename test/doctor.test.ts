@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { formatDoctor, manifestProviders, parseNodeVersion, runDoctor, type DoctorDeps } from "../src/doctor.js";
+import { formatDoctor, manifestProviders, parseNodeVersion, pluginProblem, runDoctor, type DoctorDeps } from "../src/doctor.js";
 
 function deps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
   return {
@@ -107,5 +107,26 @@ describe("running workflows", () => {
   it("does not check for a browser when no project uses screenshots", async () => {
     const checks = await runDoctor(deps({ visualProjects: async () => [], findBrowser: () => undefined }));
     expect(checks.some(item => item.name === "visual:browser")).toBe(false);
+  });
+});
+
+describe("project bootstrap plugin", () => {
+  it("accepts a built plugin whose SDK pin matches the Paperclip checkout, with or without the tag's v", () => {
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1", hostVersion: "v2026.916.1" })).toBeUndefined();
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1" })).toBeUndefined();
+  });
+  it("names the fix for an unbuilt plugin and for an SDK pin that no longer matches Paperclip", () => {
+    expect(pluginProblem({ built: false })).toContain("npm run plugin:build");
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1", hostVersion: "v2026.1001.0" })).toContain("update the pin");
+  });
+  it("is reported only when the plugin folder exists, as a warning that never blocks a run", async () => {
+    expect((await runDoctor(deps())).some(item => item.name.startsWith("plugin:"))).toBe(false);
+    const stale = await runDoctor(deps({ env: { ORCHESTRATOR_API_TOKEN: "t" }, pluginStatus: async () => ({ built: true, sdkPin: "1", hostVersion: "v2" }) }));
+    expect(stale.find(item => item.name === "plugin:project-bootstrap")).toMatchObject({ ok: false, severity: "warn" });
+    expect(stale.find(item => item.name === "bootstrap:worker-env")).toMatchObject({ ok: false, severity: "warn" });
+    expect(failures(stale)).toEqual([]);
+    const healthy = await runDoctor(deps({ env: { ORCHESTRATOR_API_TOKEN: "t", ORCHESTRATOR_PROJECTS_ROOT: "C:\p", PAPERCLIP_API_TOKEN: "x" }, pluginStatus: async () => ({ built: true, sdkPin: "2", hostVersion: "v2" }) }));
+    expect(healthy.find(item => item.name === "plugin:project-bootstrap")?.ok).toBe(true);
+    expect(healthy.find(item => item.name === "bootstrap:worker-env")?.ok).toBe(true);
   });
 });

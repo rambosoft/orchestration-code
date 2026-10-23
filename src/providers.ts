@@ -39,6 +39,9 @@ export class FakeProvider implements AgentProvider {
       const fails = input.prompt.includes("[INJECT_NO_REPRO]") || (input.prompt.includes("[INJECT_REPRO_ON_HINT]") && !input.prompt.includes("HINTS from code analysis"));
       summary = JSON.stringify(fails ? { outcome: "not_reproduced", summary: "Could not trigger the defect.", test_files: [], attempts: ["Requested the same id twice"], blockers: ["Needs production data"] } : { outcome: "reproduced", summary: "A test fails with the wrong locale.", test_files: ["test/repro.test.ts"], command: { executable: "npm", args: ["test", "--", "test/repro.test.ts"] }, expected_failure: "FAKE_REPRO_FAIL", attempts: [], blockers: [] });
     }
+    if (input.stage === "stack") summary = JSON.stringify({ summary: "A single-page React app built with Vite and TypeScript.", architecture: "frontend_only", language: "TypeScript", frameworks: [{ name: "React", role: "UI", why: "Component model fits the screens" }, { name: "Vite", role: "build and dev server", why: "Fast and minimal" }, { name: "Vitest", role: "tests", why: "Shares the Vite config" }], package_manager: "npm", template_id: "vite-react-ts", alternatives: [{ name: "Next.js", why_not: "No server rendering is needed for a prototype" }], assumptions: ["Current stable releases of React and Vite"], risks: ["Mock data only"], rationale: "The simplest stack that shows the idea." });
+    if (input.stage === "charter") summary = JSON.stringify({ vision: "A small, polished storefront prototype that shows the shopping flow.", goals: ["Browse and search products", "Complete a mock checkout"], non_goals: ["Real payments", "User accounts"], target_users: ["Shoppers on desktop and mobile"], constraints: ["Frontend only; data is mocked"], boundaries: ["No backend services", "No new runtime dependencies without a reason"], design_rules: ["Responsive from 360px", "Visible keyboard focus"], quality_bar: ["Builds and passes its tests"], definition_of_done: ["Acceptance criteria met", "Checks pass"], open_questions: ["Which currency should prices use?"] });
+    if (input.stage === "blueprint") summary = JSON.stringify({ summary: "Two milestones: the storefront shell, then the buying flow.", milestones: [{ key: "M1", title: "Storefront", goal: "Browse and find products.", exit_criteria: ["Landing and search work"], tasks: [{ key: "T1", title: "Landing page", description: "Hero, featured products and navigation.", type: "task", acceptance: ["The landing page lists featured products"], depends_on: [] }, { key: "T2", title: "Search page", description: "Search and filter the product list.", type: "task", acceptance: ["Typing filters the list"], depends_on: ["T1"] }] }, { key: "M2", title: "Buying flow", goal: "Choose a product and check out.", exit_criteria: ["A mock order can be placed"], tasks: [{ key: "T3", title: "Product detail page", description: "Show one product with add to cart.", type: "task", acceptance: ["The detail page shows price and add to cart"], depends_on: [] }, { key: "T4", title: "Checkout page", description: "Collect details and confirm a mock order.", type: "task", acceptance: ["Submitting shows a confirmation"], depends_on: ["T3"] }] }] });
     if (input.stage === "scope") summary = JSON.stringify({ restated: "Understand how requests are routed.", questions: ["Where are requests routed?", "What decides the handler?"], search_terms: ["route", "handler"], paths_of_interest: ["src"], out_of_scope: ["Deployment"] });
     if (input.stage === "explore") {
       const architecture = input.prompt.includes("EXPLORE stage (architecture)");
@@ -78,16 +81,19 @@ export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"], model: string = process.env.CODEX_MODEL ?? DEFAULT_CODEX_MODEL, images: string[] = []): string[] {
   return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" || stage === "reproduce" ? "workspace-write" : "read-only", "-"];
 }
+const WRITE_TOOLS = ["npm", "npx", "node", "git status", "git diff", "git log", "ls"].flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
 export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string): string[] {
   const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
   const writes = stage === "implement" || stage === "reproduce";
   return ["-p", "--permission-mode", writes ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
-    ...(writes ? ["--allowedTools=Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)"] : []),
+    // On Windows Claude Code runs commands through its PowerShell tool, which has its own rules: without them every test command was denied and the agent delivered code it never ran.
+    ...(writes ? [`--allowedTools=${WRITE_TOOLS.join(",")}`] : []),
     ...(model ? ["--model", model] : []), "--output-format", "json", prompt];
 }
 const specs: Record<string, ProviderSpec> = {
-  claude: { executable: "claude", args: (p, stage, _effort, model) => claudeExecutionArgs(p, stage, process.env, model) },
+  // ECC_GATEGUARD=off: an interactive "state the facts first" hook of the operator's own Claude plugins must not deny the first tool call of an unattended run.
+  claude: { executable: "claude", args: (p, stage, _effort, model) => claudeExecutionArgs(p, stage, process.env, model), env: { ECC_GATEGUARD: "off" } },
   codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" || stage === "reproduce" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
@@ -126,7 +132,7 @@ export function cliProviderEnvironment(environment: NodeJS.ProcessEnv = process.
 
 /** Real tasks are not small: implementation gets 30 minutes by default, analysis and review 15, planning 10. A manifest providerTimeouts entry overrides these. */
 export function defaultProviderTimeoutMs(stage: StageInput["stage"]): number {
-  const minutes: Record<StageInput["stage"], number> = { implement: 30, openspec: 15, analyze: 15, review: 15, research: 15, plan: 10, spec_optimize: 5, brief: 5, verify: 5, diagnose: 15, reproduce: 20, scope: 5, explore: 20 };
+  const minutes: Record<StageInput["stage"], number> = { implement: 30, openspec: 15, analyze: 15, review: 15, research: 15, plan: 10, spec_optimize: 5, brief: 5, verify: 5, diagnose: 15, reproduce: 20, scope: 5, explore: 20, stack: 10, charter: 10, blueprint: 15 };
   return minutes[stage] * 60_000;
 }
 
@@ -206,8 +212,8 @@ export class OpenRouterProvider implements AgentProvider {
             type: "object", additionalProperties: false,
             properties: {
               verdict: { type: "string", enum: ["pass", "needs_changes"] },
-              findings: { type: "array", items: { type: "object", additionalProperties: false, properties: { severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] }, category: { type: "string", enum: ["functional", "acceptance", "regression", "security", "accessibility", "tests", "environment", "approval", "polish", "other"] }, title: { type: "string" }, evidence: { type: "string" }, acceptanceCriterion: { type: "string" }, fixableInCode: { type: "boolean" } }, required: ["severity", "category", "title", "evidence", "fixableInCode"] } },
-              notes: { type: "array", items: { type: "object", additionalProperties: false, properties: { severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] }, category: { type: "string", enum: ["functional", "acceptance", "regression", "security", "accessibility", "tests", "environment", "approval", "polish", "other"] }, title: { type: "string" }, evidence: { type: "string" }, acceptanceCriterion: { type: "string" }, fixableInCode: { type: "boolean" } }, required: ["severity", "category", "title", "evidence", "fixableInCode"] } },
+              findings: { type: "array", items: { type: "object", additionalProperties: false, properties: { severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] }, category: { type: "string", enum: ["functional", "acceptance", "regression", "security", "accessibility", "tests", "environment", "approval", "polish", "other"] }, title: { type: "string" }, evidence: { type: "string" }, acceptanceCriterion: { type: "string" }, scenario: { type: "string" }, fixableInCode: { type: "boolean" } }, required: ["severity", "category", "title", "evidence", "fixableInCode"] } },
+              notes: { type: "array", items: { type: "object", additionalProperties: false, properties: { severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] }, category: { type: "string", enum: ["functional", "acceptance", "regression", "security", "accessibility", "tests", "environment", "approval", "polish", "other"] }, title: { type: "string" }, evidence: { type: "string" }, acceptanceCriterion: { type: "string" }, scenario: { type: "string" }, fixableInCode: { type: "boolean" } }, required: ["severity", "category", "title", "evidence", "fixableInCode"] } },
             }, required: ["verdict", "findings", "notes"],
           },
         },

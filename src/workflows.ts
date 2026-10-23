@@ -5,20 +5,26 @@ import { profiles } from "./profiles.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
-import { isBlockingFinding, isExternalBlocker, reviewRepairPrompt } from "./review.js";
+import { declaredUnmetAcceptance, isBlockingFinding, isExternalBlocker, openFindingsComment, requireSubstantiatedBlockers, reviewRepairPrompt } from "./review.js";
 import { analysisBlock, analysisConstraints, analysisPrompt as makeAnalysisPrompt, formatAnalysisMarkdown, repairAnalysisPrompt, salvageAnalysis, validateAnalysis, type Analysis } from "./analysis.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
 import { taskTypes } from "./task-types.js";
 import { diagnosePrompt, diagnosisBlock, diagnosisConstraints, formatDiagnosisMarkdown, hintFromDiagnosis, hintFromReproduction, needsInfoMessage, regressionGate, repairDiagnosisPrompt, repairReproductionPrompt, reproducePrompt, salvageDiagnosis, validateDiagnosis, validateReproduction, type BugOutcome, type Diagnosis, type ReproVerification, type Reproduction } from "./bug.js";
+import { blueprintPrompt, buildIssuePlan, charterPrompt, deterministicBlueprint, deterministicCharter, deterministicStack, planLimits, repairBlueprintPrompt, repairCharterPrompt, repairStackPrompt, salvageBlueprint, stackPrompt, validateBlueprint, validateCharter, validateStack, type Blueprint, type BootstrapState, type Charter, type StackDecision } from "./bootstrap.js";
+import { renderPlanSummary } from "./bootstrap-docs.js";
+import { usableTemplate } from "./bootstrap-templates.js";
 import { deterministicScope, explorePrompt, formatReportMarkdown, rawReport, repairReportPrompt, repairScopePrompt, scopePrompt, validateReport, validateScope, type Report, type ReportKind, type Scope } from "./research.js";
 import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+// Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
+const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
 export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[] }>("progress");
+export const bootstrapStateQuery = defineQuery<BootstrapState>("bootstrap");
 
 export function stageRoute(input: RunInput, stage: StageName) {
   const fallback: ProviderRoute = { provider: input.provider ?? "fake" };
@@ -75,12 +81,12 @@ export function implementationPrompt(taskPrompt: string, repairFindings?: Review
   const configuredChecks = qualityCommands.length
     ? `\nThe orchestration will run these configured deterministic checks as a publication gate after implementation/review${repairFindings?.length ? "; after repair it runs them before the follow-up review" : ""}:\n${qualityCommands.map(check => `- ${check.executable} ${check.args.join(" ")}${check.cwd ? ` (cwd: ${check.cwd})` : ""}`).join("\n")}`
     : "\nNo deterministic checks are configured; report this as a blocking delivery risk.";
-  const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Add focused regression coverage and run focused tests only. Inspect the diff and report changed files and test results accurately. The orchestration runs configured quality gates; do not claim checks you did not run.
+  const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Deliver production-ready work: clean code that reads like its surroundings, and meaningful tests (regression coverage plus the edge cases and boundaries of the behaviour). Run the checks yourself before you finish: the project's full test suite and its build or typecheck (for example npm test and npm run build). Fix every failure; never leave a test broken, skipped, weakened or deleted, and never rely on the orchestration's gates to find problems for you. If you cannot run a check in this environment, say so plainly with the exact reason and do not claim it passed. Inspect the diff and report changed files and test results accurately. Do not decide on your own that a requirement is unnecessary or infeasible and ship a weaker variant: if you could not satisfy an acceptance check, say which one and why. End your answer with one line, "UNMET_ACCEPTANCE: none", or "UNMET_ACCEPTANCE:" followed by one line per unmet check; unmet checks are sent back for rework. The orchestration runs configured quality gates again afterwards.
 
 ${SIMPLICITY_POLICY}${configuredChecks}`;
   const guidance = [uiUxContext, analysisDecisions].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
-  const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}`).join("\n");
+  const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}${finding.scenario ? `\n   Scenario: ${finding.scenario}` : ""}`).join("\n");
   return `${taskPrompt}${guidance}\n\n${deliveryContract}\n\nREPAIR: One bounded repair pass remains. Resolve each blocker below with the smallest complete fix; add or update a regression test. Run focused tests; the orchestration runs its quality gate before follow-up review. Report each resolution and any unresolved blocker with evidence.\n${repairList}`;
 }
 
@@ -104,14 +110,14 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
   const verification = [...stageResults].reverse().find(result => result.stage === "verify");
   const verificationSummary = verification ? `\nDeterministic check result before this review: ${verification.ok ? "PASS" : "FAIL"}. ${verification.summary}\n` : "";
   const reviewMode = reviewNumber <= 1
-    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report substantiated findings only.\n\n${reviewChecklist}`
-    : `FOLLOW-UP REVIEW ${reviewNumber} — verify only prior blockers, the acceptance checks, and regressions introduced by repair. Do not restart broad review or repeat fixed findings. If all fixes are correct, return pass.\n\nPrior blocking findings:\n${previousFindings}${verificationSummary}\n${reviewChecklist}`;
+    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report EVERY blocking problem you can substantiate in this single pass, not only the most salient one: a follow-up round only re-checks your list, so a problem left out now can no longer block. Report substantiated findings only.\n\n${reviewChecklist}`
+    : `FOLLOW-UP REVIEW ${reviewNumber} — verify only prior blockers, the acceptance checks, and regressions introduced by repair. Do not restart broad review or repeat fixed findings. A new blocking finding is allowed only for a defect the repair introduced, shown by a concrete scenario; asking for code or tests to be stricter, more thorough or differently structured is not a defect. If all fixes are correct, return pass.\n\nPrior blocking findings:\n${previousFindings}${verificationSummary}\n${reviewChecklist}`;
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
   const analysisReviewText = analysisDecisions ? `\n\n${analysisDecisions}\nReview against these analysis decisions: report a blocking finding if the implementation contradicts a chosen parameter or lacks a test for a validation property.` : "";
   const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
 
-Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Do not execute commands. ${checkStatus}`;
+Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","scenario":"a concrete input or state and the wrong result it produces","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Evidence standard: every critical/high finding must carry a scenario (for a test finding: a real defect the test would let through). If you cannot state one, it is a note, not a finding; remarks that code or tests could be stricter, more thorough or differently structured are notes. Do not execute commands. ${checkStatus}`;
   return prompt;
 }
 
@@ -153,6 +159,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   };
   let openSpecInfo: NonNullable<RunResult["metadata"]>["openSpec"];
   let gateCommands = input.qualityCommands ?? [];
+  let openFindings: ReviewFinding[] = [];
   let investigationConstraints: string[] = [];
   const resultMetadata = () => ({ ...(taskType ? { taskType: taskType.id } : {}), review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
   // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
@@ -335,6 +342,62 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return finish("failed", `analysis output rejected: ${failureDetails(error)}`);
     }
   }
+  if (taskType?.flow === "bootstrap") {
+    // ADR 0009: stack, charter and blueprint (model stages, each validated and recoverable), a human approval gate, then the scaffold (repository, manifest) and the Paperclip issues.
+    const run = input.bootstrap;
+    if (!run) return finish("failed", "a bootstrap run needs its project form");
+    const state: { phase: BootstrapState["phase"]; stack?: StackDecision; charter?: Charter; blueprint?: Blueprint; summary?: string } = { phase: "planning" };
+    const warningLines = () => warnings.map(warning => `${warning.stage}: ${warning.message}`);
+    setHandler(bootstrapStateQuery, () => ({ ...state, warnings: warningLines() }));
+    try {
+      workspace = await prepareBootstrapSandbox(input.runId);
+      const platform = String(run.options.platform);
+      currentStage = "stack";
+      const stack = (await structuredStage<StackDecision>({ stage: "stack", prompt: stackPrompt(run), parse: output => validateStack(output.summary, platform), repairPrompt: (previous, diagnostic) => repairStackPrompt(run, previous.summary, diagnostic), repairs: 1, fallback: () => deterministicStack(run) })).value;
+      state.stack = stack; completedStages.push("stack");
+      const template = usableTemplate(stack.template_id, platform, stack.architecture);
+      currentStage = "charter";
+      const charter = (await structuredStage<Charter>({ stage: "charter", prompt: charterPrompt(run, stack), parse: output => validateCharter(output.summary), repairPrompt: (previous, diagnostic) => repairCharterPrompt(previous.summary, diagnostic), repairs: 1, fallback: () => deterministicCharter(run) })).value;
+      state.charter = charter; completedStages.push("charter");
+      currentStage = "blueprint";
+      const limits = planLimits(String(run.options.granularity));
+      let lastBlueprint = "";
+      const blueprint = (await structuredStage<Blueprint>({ stage: "blueprint", prompt: blueprintPrompt(run, stack, charter, limits, template !== undefined), parse: output => { lastBlueprint = output.summary; return validateBlueprint(output.summary, limits); }, repairPrompt: (previous, diagnostic) => repairBlueprintPrompt(previous.summary, diagnostic, limits), repairs: 2, fallback: () => salvageBlueprint(lastBlueprint, limits) ?? deterministicBlueprint(run.form, template !== undefined) })).value;
+      state.blueprint = blueprint; completedStages.push("blueprint");
+      const docs = { form: run.form, options: run.options, provenance: run.provenance, stack, charter, blueprint, ...(template ? { template } : {}) };
+      state.summary = renderPlanSummary(docs, { warnings: warningLines() });
+      state.phase = "awaiting_approval";
+      if (input.approval) {
+        currentStage = "approval";
+        if (!(await condition(() => approved || rejected, input.approvalTimeoutMs ?? 7 * 86_400_000))) { stopReason = "approval_timeout"; return finish("failed", "the project plan was not approved in time; nothing was created"); }
+        if (rejected) return finish("rejected", "the project plan was rejected; nothing was created");
+        completedStages.push("approval");
+      }
+      state.phase = "creating"; currentStage = "scaffold";
+      const scaffold = await scaffoldProject({ runId: input.runId, run, stack, charter, blueprint });
+      completedStages.push("scaffold");
+      currentStage = "issues";
+      // The agent can only build when there is a repository to publish to and checks to gate on; otherwise the tasks wait in the backlog.
+      const runnable = scaffold.repositoryUrl !== undefined && scaffold.template !== "none";
+      const plannedIssues = buildIssuePlan(blueprint, run.options, runnable);
+      if (!runnable) warnings.push({ stage: "issues", message: "the tasks were left in the backlog: the agent needs a GitHub repository and quality commands in the project manifest before it can build" });
+      let outcome: NonNullable<RunResult["bootstrap"]> = { ...scaffold, issues: [] };
+      try {
+        outcome = { ...scaffold, issues: await materializeIssues({ companyId: run.form.paperclip.companyId, projectId: run.form.paperclip.projectId, ...(run.form.paperclip.agentId ? { agentId: run.form.paperclip.agentId } : {}), issues: plannedIssues }) };
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        stopReason = "issues_failed";
+        return { ...finish("failed", `the repository and manifest were created (${scaffold.projectRoot}) but the Paperclip tasks could not be: ${failureDetails(error)}`), bootstrap: outcome };
+      }
+      completedStages.push("issues"); currentStage = null; state.phase = "done";
+      const markdown = renderPlanSummary(docs, { warnings: [...warningLines(), ...scaffold.warnings], ...(scaffold.repositoryUrl ? { repoUrl: scaffold.repositoryUrl } : {}), created: outcome.issues.length });
+      return { ...finish("completed", withWarnings(`project created: ${outcome.issues.length} Paperclip issues${scaffold.repositoryUrl ? `, repository ${scaffold.repositoryUrl}` : ""}`)), report: { title: `Project plan: ${run.form.name}`, markdown }, bootstrap: outcome };
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "bootstrap_failed";
+      return finish("failed", `${currentStage ?? "bootstrap"} step failed: ${failureDetails(error)}`);
+    }
+  }
   if (investigating) {
     // ADR 0008: research and architecture explore read-only from a bounded context pack and end in a validated report, committed as a document (draft PR).
     const kind: ReportKind = input.taskType === "architecture" ? "architecture" : "research";
@@ -353,7 +416,6 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       completedStages.push("scope");
       currentStage = "context";
       const pack = await buildContextPack({ worktree: workspace, terms: scoped.value.search_terms, paths: scoped.value.paths_of_interest });
-      if (pack.truncated) warnings.push({ stage: "context", message: "the repository context pack hit its size limit; the exploration saw a bounded extract" });
       completedStages.push("context");
       currentStage = "explore";
       let lastReport = "";
@@ -484,9 +546,14 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         if (output.metadata?.reviewUnparseable) { stopReason = "review_unparseable"; unresolvedFindings.push({ severity: "high", category: "other", title: "Review output unreadable", evidence: output.summary.slice(0, 400), fixableInCode: false }); return finish("failed", "review output could not be read as an assessment, even after a request to restate it; the gate fails closed"); }
         const external = externalBlockers(output);
         if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
-        const blocking = blockingFindings(output);
+        const latestImplementation = [...stages].reverse().find(result => result.stage === "implement");
+        const blocking = [...blockingFindings(output), ...(latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [])];
         if (!blocking.length) break;
-        if (reviewCount >= maxRounds) { unresolvedFindings.push(...blocking); stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
+        if (reviewCount >= maxRounds) {
+          unresolvedFindings.push(...blocking);
+          // The deterministic gates are not affected by review findings: publish the draft with the open findings as a PR comment and let a human accept or send it back.
+          if (patched("publish-with-open-findings")) { openFindings = blocking; stopReason = "review_findings_unresolved"; break; }
+          stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
         try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
@@ -497,15 +564,17 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }
         try { output = await readable(await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions) })); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "follow_up_review_failed"; return finish("failed", `follow-up review failed: ${failureDetails(error)}`); }
+        // A follow-up review may only keep blocking findings that restate a prior blocker or show a concrete scenario; the rest become notes.
+        output = requireSubstantiatedBlockers(output, blocking);
         noteReview(output);
         findingsFixed = initialBlocking;
       }
-      if (!output.ok) {
+      if (!output.ok && !openFindings.length) {
         unresolvedFindings.push(...output.findings.map(title => ({ severity: "high" as const, category: "other" as const, title, evidence: title, fixableInCode: false })));
         stopReason = "unclassified_review_failure"; return finish("failed", "review failed without a structured code-fixable finding");
       }
     }
-    if (!output.ok) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
+    if (!output.ok && !(stage === "review" && openFindings.length)) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
     completedStages.push(stage);
   }
   currentStage = null;
@@ -559,10 +628,16 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   if (input.repository && workspace !== input.projectRoot) {
     try {
       const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt });
+      if (openFindings.length) {
+        // A failed comment must not hide the published PR: the findings are also in the result and the Paperclip comment.
+        try { await commentOnPullRequest({ worktree: workspace, prUrl: publish.prUrl, body: openFindingsComment(openFindings, { rounds: reviewCount }) }); }
+        catch (error) { if (isCancellation(error)) throw error; warnings.push({ stage: "review", message: `the open review findings could not be posted as a PR comment: ${failureDetails(error, 300)}` }); }
+        return { ...finish("needs_review", withWarnings(`quality gates passed; draft PR published with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"} (see the PR comment)`)), publish };
+      }
       return { ...finish("completed", withWarnings("quality gates passed; draft PR published")), publish };
     } catch (error) {
       stopReason = "publish_failed"; return finish("failed", `publish failed; task requires recovery: ${failureDetails(error)}`);
     }
   }
-  return finish("completed", withWarnings("workflow completed"));
+  return finish(openFindings.length ? "needs_review" : "completed", withWarnings(openFindings.length ? `workflow completed with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"}` : "workflow completed"));
 }

@@ -113,7 +113,8 @@ describe("manifest and profiles", () => {
       { executable: "npm", args: ["run", "test:e2e"] },
     ]);
     expect(prompt).toContain("satisfy every acceptance_check");
-    expect(prompt).toContain("run focused tests only");
+    expect(prompt).toContain("Run the checks yourself before you finish");
+    expect(prompt).toContain("never rely on the orchestration's gates");
     expect(prompt).toContain("Inspect the diff");
     expect(prompt).toContain("npm test");
     expect(prompt).toContain("npm run test:e2e");

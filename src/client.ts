@@ -1,7 +1,7 @@
 import { Client, Connection } from "@temporalio/client";
 import { randomUUID } from "node:crypto";
 import type { RunInput, RunResult } from "./contracts.js";
-import { projectWorkflow, approveSignal, progressQuery } from "./workflows.js";
+import { projectWorkflow, approveSignal, bootstrapStateQuery, progressQuery } from "./workflows.js";
 
 export async function withTemporal<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const connection = await Connection.connect({ address: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233" });
@@ -30,7 +30,7 @@ export async function startRun(input: Omit<RunInput, "runId"> & { runId?: string
   const started = await withTemporal(client => startOrAttach(client, id, full));
   return { workflowId: id, ...started };
 }
-export async function inspectRun(id: string): Promise<unknown> { return withTemporal(async c => { const h = c.workflow.getHandle(id); const d = await h.describe(); const progress = d.status.name === "RUNNING" ? await h.query(progressQuery).catch(() => undefined) : undefined; return { workflowId: id, status: d.status.name, startTime: d.startTime, closeTime: d.closeTime, progress, result: d.status.name === "COMPLETED" ? await h.result() : undefined }; }); }
+export async function inspectRun(id: string): Promise<unknown> { return withTemporal(async c => { const h = c.workflow.getHandle(id); const d = await h.describe(); const progress = d.status.name === "RUNNING" ? await h.query(progressQuery).catch(() => undefined) : undefined; const bootstrap = d.status.name === "RUNNING" ? await h.query(bootstrapStateQuery).catch(() => undefined) : undefined; return { workflowId: id, status: d.status.name, startTime: d.startTime, closeTime: d.closeTime, progress, ...(bootstrap ? { bootstrap } : {}), result: d.status.name === "COMPLETED" ? await h.result() : undefined }; }); }
 export async function cancelRun(id: string): Promise<void> { await withTemporal(async c => c.workflow.getHandle(id).cancel()); }
 export async function signalApproval(id: string, approved: boolean): Promise<void> { await withTemporal(async c => c.workflow.getHandle(id).signal(approveSignal, approved)); }
 export async function waitRun(id: string): Promise<RunResult> { return withTemporal(async c => c.workflow.getHandle(id).result()); }
