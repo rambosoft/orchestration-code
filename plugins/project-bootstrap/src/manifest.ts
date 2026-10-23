@@ -20,7 +20,8 @@ const manifest: PaperclipPluginManifestV1 = {
     type: "object",
     properties: {
       bridgeUrl: { type: "string", title: "Orchestrator bridge URL", default: "http://orchestrator:3101", description: "Where the Temporal orchestrator bridge listens, as seen from the Paperclip server." },
-      bridgeToken: { type: "string", format: "secret-ref", title: "Orchestrator bridge token", description: "A secret holding ORCHESTRATOR_API_TOKEN." },
+      // The host stores a secret binding object ({ type: "secret_ref", secretId }) for this field and validates it against this schema, so a plain "string" rejects every real value.
+      bridgeToken: { type: ["string", "object"], format: "secret-ref", title: "Orchestrator bridge token", description: "A secret holding ORCHESTRATOR_API_TOKEN." },
     },
     required: ["bridgeToken"],
   },
