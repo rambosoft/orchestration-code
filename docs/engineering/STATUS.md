@@ -8,3 +8,7 @@
 - Running stack at the end of this pass: docker bridge rebuilt earlier; the host worker was found not polling by doctor and must be restarted before the next run (see runbooks/operate-and-e2e.md).
 - Known gaps: Paperclip adapter hop untested live; no token/cost budgets; no worker supervision; review is weak at completeness; Claude implement can run npm/node (FM-026).
 - Resume: read BACKLOG.md, run doctor, take the first todo by tier and score. Lessons are in research/lessons.md, failure modes FM-017..FM-027.
+
+## 2026-10-23 update
+- LOC-38 (difficulty curve, run 4) completed through Paperclip: all stages, analysis doc, draft PR rambosoft/dino-runner#5, one size warning shown (spec 10298 chars). It survived the worker being down ~38 min (Temporal held the workflow).
+- FM-037 mitigated (adapter detaches on lease loss; deployed via Paperclip restart). Open: worker is an unsupervised background process (B-027); reconcile command not built.
