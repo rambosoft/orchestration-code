@@ -147,6 +147,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   };
   let openSpecInfo: NonNullable<RunResult["metadata"]>["openSpec"];
   const resultMetadata = () => ({ review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
+  // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
+  const withWarnings = (message: string): string => warnings.length ? `${message} (${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(warning => `${warning.stage}: ${warning.message}`).join(" | ").slice(0, 1200)})` : message;
   const finish = (status: RunResult["status"], message: string): RunResult => ({ runId: input.runId, status, stages, artifactRefs, message, metadata: resultMetadata() });
   let workflowPrompt = input.prompt;
   let openSpecContext = "";
@@ -427,10 +429,10 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   if (input.repository && workspace !== input.projectRoot) {
     try {
       const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt });
-      return { ...finish("completed", "quality gates passed; draft PR published"), publish };
+      return { ...finish("completed", withWarnings("quality gates passed; draft PR published")), publish };
     } catch (error) {
       stopReason = "publish_failed"; return finish("failed", `publish failed; task requires recovery: ${failureDetails(error)}`);
     }
   }
-  return finish("completed", "workflow completed");
+  return finish("completed", withWarnings("workflow completed"));
 }

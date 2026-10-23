@@ -101,6 +101,7 @@ describe("structured stages never kill a run", () => {
   it("records a warning when a deterministic fallback had to replace an unusable answer", async () => {
     const { result } = await run({ calls: [], stage: "plan", defect: DEFECTS.proseOnly!, mode: "always" });
     expect(result.metadata?.warnings?.some(w => w.stage === "plan" && w.message.includes("deterministic fallback"))).toBe(true);
+    expect(result.message).toContain("warning");
   }, 90_000);
 
   it("keeps the protected constraints when the brief falls back", async () => {
