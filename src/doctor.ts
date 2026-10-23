@@ -86,6 +86,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     try {
       const health = await deps.fetchJson(`${bridge}/health`, { authorization: `Bearer ${token}` }) as { ok?: boolean; projects?: string[] };
       checks.push(health.ok ? pass("bridge", `${bridge} ok, ${health.projects?.length ?? 0} projects`) : fail("bridge", `${bridge} responded but not ok`));
+      try {
+        const active = (await deps.fetchJson(`${bridge}/v1/runs`, { authorization: `Bearer ${token}` }) as Array<{ workflowId: string; status: string }>).filter(run => run.status === "RUNNING");
+        checks.push(active.length ? fail("running-workflows", `${active.length} workflow(s) running (${active.map(run => run.workflowId.slice(0, 40)).join(", ")}); restarting the worker or bridge now would interrupt them`, "warn") : pass("running-workflows", "none"));
+      } catch { /* the bridge check above already reports an unreachable bridge */ }
     } catch (error) { checks.push(fail("bridge", `${bridge} unreachable: ${error instanceof Error ? error.message : String(error)}`)); }
   }
 

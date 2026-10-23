@@ -24,3 +24,4 @@
 | ../runbooks/operate-and-e2e.md | operating, restart and e2e procedures |
 | ../../examples/dino-runner.tasks.json | example task chain for the e2e driver |
 | ../../docs/adr/0005-optional-analysis-stage.md | ADR for the optional analysis stage |
+| ../../docs/adr/0006-uniform-structured-stage-recovery.md | ADR for the uniform recovery policy |

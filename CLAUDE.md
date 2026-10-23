@@ -61,3 +61,10 @@ Plan -> implement -> verify -> report. Backlog is `docs/engineering/BACKLOG.md`;
 - Child processes use `childEnv()` (`src/env.ts`): never pass service tokens to model-run code.
 - Publishing goes through `findPublishViolations` (`src/publish-guard.ts`); bridge test flags need `ORCHESTRATOR_ALLOW_TEST_FLAGS=1`.
 - Workflow edits that change the command sequence need `patched()` and a regenerated replay fixture (`UPDATE_REPLAY_FIXTURE=1 npx vitest run test/replay.test.ts`). See `docs/engineering/EXTENDING.md`.
+
+## Robustness rules (from the audit)
+- Every stage whose answer is structured goes through `structuredStage` (validate, repair with diagnostics, deterministic fallback in `src/fallbacks.ts`); a new one must be added to the table in `test/chaos.test.ts`.
+- Schemas for model output are tolerant (unknown keys dropped, lists coerced, text clamped); identifiers and protected requirement text are never altered. Size above 10000 characters of specification warns, never fails.
+- The review verdict is enforced for every provider (`applyReviewAssessment`); an unreadable review fails closed. Code tasks need quality commands.
+- Source files are LF. Scripted edits must throw when their anchor is missing; `npm run check:chars` runs in CI.
+- ADRs 0005 (analysis stage) and 0006 (recovery policy) explain the why.

@@ -167,3 +167,14 @@ describe("infrastructure failures stay bounded", () => {
     expect(state.calls.filter(call => call.stage === "plan").length).toBeLessThanOrEqual(3);
   }, 90_000);
 });
+
+describe("a run nothing can verify is refused up front", () => {
+  it("refuses a real implement provider with no quality commands, before spending any model call", async () => {
+    const id = `chaos-${++sequence}`;
+    runs.set(id, { calls: [] });
+    const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "chaos", workflowId: id, args: [{ runId: id, taskId: "CH-2", projectId: "p", profile: "implementation", prompt: "Do it", openSpec: false, provider: "fake" as const, providerRouting: { implement: { provider: "codex" as const } }, projectRoot: tmp, artifactsDir: path.join(tmp, "art"), repository: { remote: "origin", targetBranch: "main", branch: "codex/q", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "t" }, approval: false, plugins: [], qualityCommands: [] }] });
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("No deterministic quality commands");
+    expect(runs.get(id)!.calls).toHaveLength(0);
+  }, 90_000);
+});

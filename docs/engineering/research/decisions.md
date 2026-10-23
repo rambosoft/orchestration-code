@@ -28,3 +28,8 @@ D-15: workflow edits that change command sequence use patched(); see B-006 (appr
 | D-23 | Preflight | adopt `doctor` (providers, worker, bridge, build staleness, environment) | FM-023/024 | test/doctor.test.ts |
 | D-24 | Admission dirtiness | adopt own rule (ignore CR-at-EOL-only differences) over git config tweaks; reject core.autocrlf overrides (git status stays stale-dirty) | FM-028 | test/workspaces.test.ts |
 | D-25 | Secret scanning | adopt repo-wide scan reusing publish-guard patterns in CI; reject a third-party scanner (no new dependency, one pattern source) | FM-029 | scripts/scan-secrets.ts |
+| D-26 | Structured stage failure policy | adopt one policy (validate, repair with diagnostics, deterministic fallback, fail only without fallback) via structuredStage; reject per-stage ad-hoc handling | FM-033; ADR 0006 | test/chaos.test.ts |
+| D-27 | Review gate | adopt enforcement for every provider, tolerant parsing, fail closed when unreadable after one restatement, up to 4 rounds | FM-030 | test/chaos.test.ts |
+| D-28 | Size policy | adopt soft limit 10000 characters for specifications with a warning, generous input budgets, clamped descriptive text; reject hard failure on size | FM-034 | test/handoffs.test.ts |
+| D-29 | Deterministic fallbacks | adopt, built only from validated inputs; they carry every protected constraint and acceptance check | FM-033 | test/robustness.test.ts (fuzz) |
+| D-30 | Release gate | adopt the chaos suite in CI; a new structured stage must be added to its table | ADR 0006 | .github/workflows/ci.yml |

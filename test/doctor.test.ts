@@ -82,3 +82,17 @@ describe("build staleness", () => {
     expect(failures(checks)).toEqual([]);
   });
 });
+
+describe("running workflows", () => {
+  it("warns (does not fail) when workflows are running, so a restart is not done blindly", async () => {
+    const checks = await runDoctor(deps({ fetchJson: async (url) => url.endsWith("/health") ? { ok: true, projects: ["a"] } : [{ workflowId: "pc-abc", status: "RUNNING" }, { workflowId: "pc-old", status: "COMPLETED" }] }));
+    const check = checks.find(item => item.name === "running-workflows")!;
+    expect(check).toMatchObject({ ok: false, severity: "warn" });
+    expect(check.detail).toContain("1 workflow(s) running");
+    expect(failures(checks)).toEqual([]);
+  });
+  it("reports none when nothing is running", async () => {
+    const checks = await runDoctor(deps({ fetchJson: async (url) => url.endsWith("/health") ? { ok: true, projects: [] } : [] }));
+    expect(checks.find(item => item.name === "running-workflows")?.ok).toBe(true);
+  });
+});
