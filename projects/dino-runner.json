@@ -1,0 +1,137 @@
+{
+  "id": "b0477a04-323c-4d1d-982d-595f8b8cb479",
+  "aliases": [
+    "dino-runner"
+  ],
+  "name": "Dino Runner (e2e pipeline test)",
+  "root": "dino-runner",
+  "containerRoot": "/workspace/projects/dino-runner",
+  "repository": {
+    "remote": "origin",
+    "targetBranch": "main",
+    "requiredSourcePaths": [
+      "README.md"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "openSpec": {
+    "enabled": true
+  },
+  "analysis": {
+    "enabled": false,
+    "docsDir": "docs/analysis"
+  },
+  "providers": {
+    "default": "codex"
+  },
+  "providerRouting": {
+    "plan": {
+      "provider": "codex"
+    },
+    "research": {
+      "provider": "codex"
+    },
+    "review": {
+      "provider": "codex"
+    },
+    "verify": {
+      "provider": "codex"
+    },
+    "implement": {
+      "provider": "claude"
+    },
+    "analyze": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 900000,
+    "openspec": 720000
+  },
+  "qualityCommands": [
+    {
+      "executable": "npm",
+      "args": [
+        "test"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "uiUx": {
+    "enabled": true,
+    "autoSelect": true,
+    "include": [],
+    "exclude": []
+  },
+  "policy": {
+    "maxReviewRounds": 2,
+    "maxParallelism": 1,
+    "requireApprovalBeforeMerge": false
+  },
+  "visual": {
+    "command": {
+      "executable": "npm",
+      "args": [
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5199",
+        "--strictPort"
+      ]
+    },
+    "url": "http://127.0.0.1:5199/",
+    "readyTimeoutMs": 60000,
+    "viewports": [
+      {
+        "name": "desktop",
+        "width": 900,
+        "height": 500
+      }
+    ],
+    "steps": [
+      {
+        "do": "shot",
+        "name": "initial"
+      },
+      {
+        "do": "wait",
+        "ms": 1200
+      },
+      {
+        "do": "shot",
+        "name": "running"
+      },
+      {
+        "do": "press",
+        "key": "Space"
+      },
+      {
+        "do": "wait",
+        "ms": 250
+      },
+      {
+        "do": "shot",
+        "name": "jump"
+      },
+      {
+        "do": "wait",
+        "ms": 1500
+      },
+      {
+        "do": "shot",
+        "name": "later"
+      }
+    ],
+    "maxImages": 6,
+    "required": false
+  }
+}

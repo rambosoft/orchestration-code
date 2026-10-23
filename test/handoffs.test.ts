@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { briefPrompt, canonicalizeBrief, estimateTokens, ExecutionBriefSchema, extractHardConstraints, extractTaskConstraints, HANDOFF_BUDGETS, openSpecCoverage, openSpecOptimizationPrompt, parseStructured, PlanSchema, planningPrompt, repairOpenSpecDigestPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression } from "../src/handoffs.js";
+import { briefPrompt, canonicalizeBrief, estimateTokens, ExecutionBriefSchema, formatBrief, extractHardConstraints, extractTaskConstraints, HANDOFF_BUDGETS, openSpecCoverage, openSpecOptimizationPrompt, parseStructured, PlanSchema, planningPrompt, repairOpenSpecDigestPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression } from "../src/handoffs.js";
 import { implementationPrompt } from "../src/workflows.js";
+import { deterministicDigest } from "../src/fallbacks.js";
 
 const plan = PlanSchema.parse({ task_goal: "Add a percentage button", approach: "Follow current calculator behavior", important_decisions: ["Keep existing semantics"], risks: [], acceptance_criteria: ["The button applies the existing percentage semantics."], hard_constraints: ["Do not change keyboard behavior."] });
 
@@ -13,7 +14,11 @@ describe("compressed handoff schemas and budgets", () => {
   it("uses conservative token estimates and rejects oversized phase output", () => {
     expect(estimateTokens("12345678")).toBe(3);
     expect(() => parseStructured("x".repeat(4000), PlanSchema, "Plan", HANDOFF_BUDGETS.plan)).toThrow("exceeds its 900-token budget");
-    expect(() => planningPrompt("task", "x".repeat(10_000))).toThrow("Planning context exceeds its 2400-token budget");
+    // An oversized task text is cut with a marker instead of failing the run (regression: size limits must never fail a run).
+    const huge = planningPrompt("t".repeat(120_000), "{\"digest\":true}");
+    expect(huge).toContain("[task text truncated");
+    expect(huge).toContain("{\"digest\":true}");
+    expect(planningPrompt("short task", "{}")).not.toContain("truncated");
   });
 
   it("keeps planner acceptance checks grouped and non-duplicative", () => {
@@ -36,7 +41,7 @@ describe("compressed handoff schemas and budgets", () => {
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, requirements: optimized.requirements.slice(1) }), spec)).toThrow("failed coverage validation");
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, hard_constraints: optimized.hard_constraints.slice(1) }), spec)).toThrow("failed coverage validation");
     expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, hard_constraints: [...optimized.hard_constraints, "Invented constraint"] }), spec)).toThrow("extraConstraints");
-    expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, relevant_design_decisions: ["x".repeat(5_000)] }), spec)).toThrow("exceeds its 1400-token budget");
+    expect(() => validateOpenSpecDigest(JSON.stringify({ ...optimized, relevant_design_decisions: ["x".repeat(20_000)] }), spec)).toThrow("exceeds its 5000-token budget");
     expect(() => planningPrompt("Redesign the game landing page", JSON.stringify(optimized))).not.toThrow();
   });
 
@@ -50,7 +55,9 @@ describe("compressed handoff schemas and budgets", () => {
 
   it("rejects malformed plan and execution brief JSON", () => {
     expect(() => parseStructured("not json", PlanSchema, "Plan", HANDOFF_BUDGETS.plan)).toThrow("not valid JSON");
-    expect(() => parseStructured(JSON.stringify({ task_goal: "x" }), ExecutionBriefSchema, "Execution brief", HANDOFF_BUDGETS.brief)).toThrow("does not match its required schema");
+    expect(() => parseStructured("[1,2,3]", ExecutionBriefSchema, "Execution brief", HANDOFF_BUDGETS.brief)).toThrow("does not match its required schema");
+    // A missing or partial object is tolerated and defaulted (see "tolerant handoff schemas"); only structurally wrong answers are rejected.
+    expect(parseStructured(JSON.stringify({ task_goal: "x" }), ExecutionBriefSchema, "Execution brief", HANDOFF_BUDGETS.brief).acceptance_checks).toHaveLength(1);
   });
 
   it("accepts a shorter plan only when protected decisions remain verbatim", () => {
@@ -114,7 +121,93 @@ describe("compressed handoff schemas and budgets", () => {
   it("fails closed when a protected requirement is missing or checklist exceeds its budget", () => {
     const omitted = { task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: [], verification_steps: [], acceptance_checks: ["The button applies the existing percentage semantics."] };
     expect(() => validateBrief(JSON.stringify(omitted), plan, "The implementation MUST preserve keyboard behavior.")).toThrow("omitted protected requirements");
-    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(3000)] };
-    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 800-token budget");
+    const large = { ...omitted, must_follow: ["Do not change keyboard behavior."], implementation_steps: ["x".repeat(6500)], acceptance_checks: [...plan.acceptance_criteria] };
+    expect(() => validateBrief(JSON.stringify(large), plan, "")).toThrow("exceeds its 1700-token budget");
+    const longChecklist = { ...omitted, must_follow: ["Do not change keyboard behavior."], acceptance_checks: [...plan.acceptance_criteria, "x".repeat(3000)] };
+    expect(() => validateBrief(JSON.stringify(longChecklist), plan, "")).toThrow("Review checklist exceeds its 900-token budget");
+  });
+});
+
+describe("brief budget vs verbose plan", () => {
+  it("a valid plan near its own cap can always be turned into a valid brief (regression: dino-runner task 2)", () => {
+    const criteria = Array.from({ length: 4 }, (_, i) => `Criterion ${i + 1}: ${"the system shall behave deterministically for identical inputs and report the outcome clearly; ".repeat(6)}`);
+    const verbosePlan = PlanSchema.parse({ task_goal: "Extend the runner", approach: "Extend the pure rules", important_decisions: [], risks: [], acceptance_criteria: criteria, hard_constraints: [] });
+    parseStructured(JSON.stringify(verbosePlan), PlanSchema, "Plan", HANDOFF_BUDGETS.plan);
+    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: ["Implement the rules", "Wire the view", "Add tests"], verification_steps: ["Run tests"], acceptance_checks: [] }, verbosePlan, "ctx");
+    expect(estimateTokens(formatBrief(brief))).toBeGreaterThan(800);
+    expect(() => validateBrief(formatBrief(brief), verbosePlan, "ctx")).not.toThrow();
+  });
+});
+
+describe("OpenSpec digest budget", () => {
+  it("accepts a digest of ~1800 tokens that still fits the planning context (regression: dino-runner task 3)", () => {
+    const reqs = Array.from({ length: 9 }, (_, i) => ({ id: `Requirement: R${i}`, intent: "x".repeat(200), scenarios: [{ id: `Scenario: S${i}a`, expected: "y".repeat(190) }, { id: `Scenario: S${i}b`, expected: "z".repeat(190) }] }));
+    const context = reqs.map(r => `### ${r.id}\n${r.scenarios.map(sc => `#### ${sc.id}`).join("\n")}`).join("\n");
+    const raw = JSON.stringify({ task_goal: "Polish the runner", requirements: reqs, hard_constraints: [], relevant_design_decisions: [] });
+    expect(estimateTokens(raw)).toBeGreaterThan(1400);
+    expect(() => validateOpenSpecDigest(raw, context)).not.toThrow();
+    expect(() => planningPrompt("Polish the runner", raw)).not.toThrow();
+  });
+});
+
+import { BRIEF_HARD_CEILING } from "../src/handoffs.js";
+describe("handoff budget invariants (guard against re-introducing structurally unfittable limits)", () => {
+  it("keeps every downstream cap large enough for the protected content of the stage before it", () => {
+    expect(HANDOFF_BUDGETS.brief).toBeGreaterThan(HANDOFF_BUDGETS.plan);
+    expect(HANDOFF_BUDGETS.reviewChecklist).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.plan);
+    expect(HANDOFF_BUDGETS.planningContext).toBeGreaterThan(HANDOFF_BUDGETS.openSpecDigest);
+    expect(HANDOFF_BUDGETS.planningContext - HANDOFF_BUDGETS.openSpecDigest).toBeGreaterThanOrEqual(400);
+    expect(BRIEF_HARD_CEILING).toBeGreaterThan(HANDOFF_BUDGETS.brief);
+    // The optional analysis stage adds at most ~700 tokens to the planning context and ~600 tokens of protected constraints to the brief.
+    expect(HANDOFF_BUDGETS.planningContext).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.openSpecDigest + 700 + 300);
+    expect(HANDOFF_BUDGETS.brief).toBeGreaterThanOrEqual(HANDOFF_BUDGETS.plan + 600 + 150);
+  });
+  it("accepts a brief between the soft cap and the hard ceiling only when asked to, and still rejects beyond the ceiling", () => {
+    const criteria = Array.from({ length: 4 }, (_, i) => `Criterion ${i}: ${"deterministic behaviour for identical inputs with a clear outcome; ".repeat(8)}`);
+    const big = PlanSchema.parse({ task_goal: "g", approach: "a", important_decisions: [], risks: [], acceptance_criteria: criteria, hard_constraints: [] });
+    const brief = canonicalizeBrief({ task_goal: "x", files_or_modules: [], must_follow: [], must_avoid: [], implementation_steps: Array.from({ length: 5 }, (_, i) => `Step ${i}: ${"implement the described behaviour in the pure rules module and wire it into the view. ".repeat(10)}`), verification_steps: ["v"], acceptance_checks: [] }, big, "ctx");
+    const tokens = estimateTokens(formatBrief(brief));
+    expect(tokens).toBeGreaterThan(HANDOFF_BUDGETS.brief);
+    expect(tokens).toBeLessThan(BRIEF_HARD_CEILING);
+    expect(() => validateBrief(formatBrief(brief), big, "ctx")).toThrow("exceeds its");
+    expect(() => validateBrief(formatBrief(brief), big, "ctx", undefined, BRIEF_HARD_CEILING)).not.toThrow();
+    expect(() => validateBrief(formatBrief({ ...brief, implementation_steps: ["x".repeat(6000)] }), big, "ctx", undefined, BRIEF_HARD_CEILING)).toThrow("exceeds its");
+  });
+});
+
+describe("OpenSpec digest tolerates over-long descriptions (regression: LOC-35)", () => {
+  it("clamps an over-long intent and expectation instead of failing coverage-validated digests", () => {
+    const spec = "### openspec/changes/c/specs/x/spec.md\n\n## ADDED Requirements\n\n### Requirement: Curve\nIt SHALL ramp.\n\n#### Scenario: Ramp\n- **WHEN** time passes";
+    const digest = { task_goal: "g".repeat(600), requirements: [{ id: "Requirement: Curve", intent: "i".repeat(900), scenarios: [{ id: "Scenario: Ramp", expected: "e".repeat(800) }] }], hard_constraints: [], relevant_design_decisions: ["one", "two", "three"] };
+    const parsed = validateOpenSpecDigest(JSON.stringify(digest), spec);
+    expect(parsed.requirements[0]!.intent.length).toBeLessThanOrEqual(700);
+    expect(parsed.requirements[0]!.scenarios[0]!.expected.length).toBeLessThanOrEqual(500);
+    expect(parsed.task_goal.length).toBeLessThanOrEqual(400);
+    expect(parsed.relevant_design_decisions).toEqual(["one"]);
+  });
+  it("still fails when a requirement is missing", () => {
+    const spec = "### openspec/changes/c/specs/x/spec.md\n\n### Requirement: A\nx\n\n### Requirement: B\ny";
+    expect(() => validateOpenSpecDigest(JSON.stringify({ task_goal: "g", requirements: [{ id: "Requirement: A", intent: "i", scenarios: [] }], hard_constraints: [], relevant_design_decisions: [] }), spec)).toThrow("failed coverage validation");
+  });
+});
+
+import { SPEC_SOFT_LIMIT_CHARS, specSizeWarnings } from "../src/handoffs.js";
+describe("specification size: accepted up to 10000 characters, a warning beyond, never a failure", () => {
+  const requirement = (name: string, chars: number) => `### Requirement: ${name}\nThe system SHALL ${"do a thing and describe it at length ".repeat(Math.ceil(chars / 36)).slice(0, chars)}\n\n#### Scenario: S ${name}\n- **WHEN** x\n`;
+  it("does not warn at or below the soft limit", () => {
+    expect(SPEC_SOFT_LIMIT_CHARS).toBe(10_000);
+    expect(specSizeWarnings(requirement("small", 800))).toEqual([]);
+    expect(specSizeWarnings("x".repeat(SPEC_SOFT_LIMIT_CHARS))).toEqual([]);
+  });
+  it("warns, but only warns, for a very large change, a very large digest and a single huge requirement", () => {
+    const big = [requirement("a", 4_000), requirement("b", 4_000), requirement("c", 4_000)].join("\n");
+    expect(specSizeWarnings(big).join(" ")).toContain("consider splitting this task");
+    expect(specSizeWarnings(requirement("huge", 12_000)).join(" ")).toContain('Requirement "huge"');
+    expect(specSizeWarnings("", "d".repeat(10_001)).join(" ")).toContain("planning digest");
+  });
+  it("a 30000 character specification still produces a valid digest and plan (deterministic path)", () => {
+    const context = Array.from({ length: 12 }, (_, i) => requirement(`Behavior ${i}`, 2_500)).join("\n\n");
+    expect(context.length).toBeGreaterThan(30_000);
+    expect(() => validateOpenSpecDigest(JSON.stringify(deterministicDigest(context, "goal")), context)).not.toThrow();
   });
 });

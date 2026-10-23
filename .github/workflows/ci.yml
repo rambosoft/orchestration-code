@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+    branches: [main, "mission/**"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: git config --global user.name ci && git config --global user.email ci@example.test
+      - run: npm ci
+      - run: npm run check:chars
+      - run: npm run scan:secrets
+      - run: npm run typecheck
+      - run: npx vitest run

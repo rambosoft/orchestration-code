@@ -43,7 +43,7 @@ describe("OpenSpec workflow gating", () => {
       runId: "workflow-openspec-success", taskId: "PERCENT-1", taskRevision: "rev-1", projectId: "calculator", profile: "implementation", prompt: "Add a percentage button.", openSpec: true,
       provider: "fake" as const, providerRouting: { implement: { provider: "codex" as const, reasoningEffort: "low" as const } }, uiUxFrameworks: ["react", "web"], projectRoot, artifactsDir: path.join(projectRoot, "artifacts"),
       repository: { remote: "origin", targetBranch: "main", branch: "codex/percent-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Percentage button" },
-      approval: false, plugins: [], qualityCommands: [],
+      approval: false, plugins: [], qualityCommands: [{ executable: "npm" as const, args: ["test"] }],
     };
     try {
       const worker = await Worker.create({
@@ -70,9 +70,9 @@ describe("OpenSpec workflow gating", () => {
         expect(stageInputs.find(stage => stage.stage === "brief")).toMatchObject({ provider: "fake" });
         expect(stageInputs.map(stage => stage.stage).slice(0, 6)).toEqual(["openspec", "spec_optimize", "plan", "brief", "implement", "review"]);
         const verificationStages = stageInputs.filter(stage => stage.stage === "verify");
-        expect(verificationStages).toHaveLength(2);
+        // The deterministic quality commands are the verification: no second, always-passing model verify call.
+        expect(verificationStages).toHaveLength(1);
         expect(verificationStages[0]).toMatchObject({ provider: "fake", verificationOnly: true });
-        expect(verificationStages[1]).toMatchObject({ deterministicChecksAlreadyPassed: true, qualityCommands: [] });
         expect(stageInputs.find(stage => stage.stage === "implement")?.reasoningEffort).toBe("low");
         expect(stageInputs.find(stage => stage.stage === "review")?.prompt).toContain("running concurrently");
 

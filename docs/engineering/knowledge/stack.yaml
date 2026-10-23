@@ -1,0 +1,17 @@
+schema_version: 1
+last_verified: 2026-10-22
+runtime: {node: "22.22.2 (engines >=20.19.0)", language: "TypeScript 5.9.3 strict, ESM NodeNext", pkg: "npm (package-lock.json, legacy-peer-deps)"}
+components:
+  - {name: "@temporalio/client|worker|workflow", version: "1.24.0", role: "durable workflow engine SDK", risk: "no heartbeats/replay tests yet"}
+  - {name: "@temporalio/testing", version: "1.24.0", role: "time-skipping test env"}
+  - {name: "temporalio/temporal dev image", version: "1.9.1", role: "local Temporal server (SQLite)", risk: "dev-only, not production"}
+  - {name: "zod", version: "4.6.7", role: "contract/manifest validation"}
+  - {name: "@fission-ai/openspec", version: "1.14.3", role: "spec-driven change proposal/validate/archive", risk: "run via CLI in worktree"}
+  - {name: "@openai/codex", version: "0.163.0", role: "implement/openspec provider CLI (pinned)", risk: "model hard-coded gpt-6-luna in providers.ts"}
+  - {name: "vitest", version: "4.1.11", role: "tests"}
+  - {name: "tsx", version: "4.20.6", role: "dev runner"}
+  - {name: "Paperclip", version: "v2026.916.1 (d554c47)", role: "task board; external adapter in paperclip-adapter/", risk: "cloned under .runtime/ (ignored); adapter is plain JS"}
+  - {name: "OpenRouter", version: "API", role: "plan/review/research provider via fetch", risk: "free-tier models; fixed URL"}
+  - {name: "gh CLI + git", version: "host", role: "draft PR publication"}
+  - {name: "Docker Compose", version: "host", role: "Paperclip + Temporal + bridge stack"}
+absent: [ECC (not a dependency of this repo), eslint/prettier, CI, LICENSE, replay tests, heartbeats]

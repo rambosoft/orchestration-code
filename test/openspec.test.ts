@@ -90,3 +90,46 @@ describe("pinned OpenSpec CLI lifecycle", () => {
     expect(calls).toEqual([["--version"]]);
   });
 });
+
+describe("archive when the implementing agent already archived the change", () => {
+  it("recognises the date-prefixed archive entry and skips status/archive commands", async () => {
+    const calls: string[] = [];
+    const root = await mkdtemp(path.join(os.tmpdir(), "orch-archived-"));
+    try {
+      const result = await archiveOpenSpec({ changeId: "task-dino-1-abc", projectRoot: root, artifactsDir: path.join(root, "artifacts") }, async (args) => {
+        calls.push(args[0]!);
+        if (args[0] === "list") return { stdout: JSON.stringify({ changes: [{ name: "2026-10-22-task-dino-1-abc", status: "complete", archived: true }] }), stderr: "" };
+        return { stdout: "{}", stderr: "" };
+      });
+      expect(result.archivedPath).toContain("2026-10-22-task-dino-1-abc");
+      expect(calls).toEqual(["list", "validate"]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
+describe("proposal prompt guidance learned from e2e runs", () => {
+  it("keeps checkboxes machine-verifiable and warns about ADDED vs MODIFIED", () => {
+    const prompt = openSpecProposalPrompt({ taskPrompt: "t", changeId: "c" });
+    expect(prompt).toContain("verifiable unattended");
+    expect(prompt).toContain("Manual verification");
+    expect(prompt).toContain("## ADDED Requirements");
+    expect(prompt).toContain("MODIFIED only when that exact requirement already exists");
+  });
+});
+
+import { runValidation } from "../src/openspec.js";
+describe("validation tolerance (regression: LOC-36 failed after archive on a style warning)", () => {
+  const failing = (issues: Array<{ level: string; message: string }>) => async () => { throw new Error(`OpenSpec command failed (exit 1): openspec validate --specs --strict\n${JSON.stringify({ items: [{ id: "dino", valid: false, issues }], summary: { totals: { failed: 1 } } }, null, 2)}`); };
+  it("accepts a run that only has cosmetic warnings such as a very long requirement", async () => {
+    const result = await runValidation(failing([{ level: "WARNING", message: "Requirement text is very long (>500 characters). Move examples into scenarios." }]), ["validate"], ".");
+    expect(JSON.parse(result.stdout).summary.totals.failed).toBe(0);
+  });
+  it("still fails on structural warnings and on mixed findings", async () => {
+    await expect(runValidation(failing([{ level: "WARNING", message: 'Requirement "X" is under "## Requirements", which is not a delta section, so it is ignored.' }]), ["validate"], ".")).rejects.toThrow("not a delta section");
+    await expect(runValidation(failing([{ level: "WARNING", message: "Requirement text is very long (>500 characters)." }, { level: "ERROR", message: "Scenario missing WHEN/THEN" }]), ["validate"], ".")).rejects.toThrow("exit 1");
+  });
+  it("passes a successful validation through untouched and rethrows non-validation failures", async () => {
+    expect((await runValidation(async () => ({ stdout: "{}", stderr: "" }), ["validate"], ".")).stdout).toBe("{}");
+    await expect(runValidation(async () => { throw new Error("OpenSpec command timed out after 120000ms"); }, ["validate"], ".")).rejects.toThrow("timed out");
+  });
+});

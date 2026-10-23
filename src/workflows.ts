@@ -1,13 +1,18 @@
-import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation } from "@temporalio/workflow";
+import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
-import { openSpecProposalPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
+import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
+import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
+import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
+import { isBlockingFinding, isExternalBlocker, reviewRepairPrompt } from "./review.js";
+import { analysisBlock, analysisConstraints, analysisPrompt as makeAnalysisPrompt, formatAnalysisMarkdown, repairAnalysisPrompt, salvageAnalysis, validateAnalysis, type Analysis } from "./analysis.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
-import { assertTokenBudget, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
+import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
-const { executeStage, prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
 export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[] }>("progress");
@@ -16,14 +21,18 @@ export function stageRoute(input: RunInput, stage: StageName) {
   const fallback: ProviderRoute = { provider: input.provider ?? "fake" };
   return input.providerRouting?.[stage] ?? fallback;
 }
-export function failureDetails(error: unknown): string {
+/** OpenSpec runs on the manifest's "openspec" route; without one it keeps using Codex, whatever the project default provider is. */
+export function openSpecRoute(input: Pick<RunInput, "providerRouting">): ProviderRoute {
+  return input.providerRouting?.openspec ?? { provider: "codex" };
+}
+export function failureDetails(error: unknown, maxLength = 1800): string {
   const messages: string[] = [];
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
     if (current.message) messages.push(current.message);
     current = current.cause;
   }
-  return (messages.join(" <- ") || "unknown error").slice(0, 1800);
+  return (messages.join(" <- ") || "unknown error").slice(0, maxLength);
 }
 
 function stageCompletionTokens(output: StageOutput): number | undefined {
@@ -37,7 +46,7 @@ function stageCompletionTokens(output: StageOutput): number | undefined {
 }
 
 export function openSpecContextPrompt(taskPrompt: string, context: string): string {
-  return `${taskPrompt}\n\nVALIDATED OPENSPEC CONTEXT — follow these requirements and the implementation checklist exactly. Do not weaken or omit acceptance criteria. During implementation and repair, use the $openspec-apply-change workflow and mark checklist items complete only after their code and validation are complete.\n\n${context}`;
+  return `${taskPrompt}\n\nVALIDATED OPENSPEC CONTEXT — follow these requirements and the implementation checklist exactly. Do not weaken or omit acceptance criteria. During implementation and repair, use the $openspec-apply-change workflow and mark checklist items complete only after their code and validation are complete. Do not archive the change or sync specs yourself; the orchestrator archives it after the quality gates pass.\n\n${context}`;
 }
 
 export function plannedTaskPrompt(taskPrompt: string, planningSummary: string): string {
@@ -45,32 +54,34 @@ export function plannedTaskPrompt(taskPrompt: string, planningSummary: string): 
 }
 
 export function effectiveMaxReviewRounds(input: Pick<RunInput, "maxReviewRounds" | "maxRepairAttempts">): number {
-  if (input.maxReviewRounds !== undefined) return Math.max(1, Math.min(2, Math.trunc(input.maxReviewRounds)));
-  if (input.maxRepairAttempts !== undefined) return Math.max(1, Math.min(2, Math.trunc(input.maxRepairAttempts) + 1));
+  if (input.maxReviewRounds !== undefined) return Math.max(1, Math.min(4, Math.trunc(input.maxReviewRounds)));
+  if (input.maxRepairAttempts !== undefined) return Math.max(1, Math.min(4, Math.trunc(input.maxRepairAttempts) + 1));
   return 2;
 }
 
 export function blockingFindings(output: StageOutput): ReviewFinding[] {
-  if (output.review) return output.review.findings.filter(f => (f.severity === "critical" || f.severity === "high") && f.fixableInCode && f.category !== "environment" && f.category !== "approval");
+  if (output.review) return output.review.findings.filter(isBlockingFinding);
   return output.ok ? [] : output.findings.map(title => ({ severity: "high", category: "functional", title: title.slice(0, 180), evidence: title, fixableInCode: true }));
 }
 
 export function externalBlockers(output: StageOutput): ReviewFinding[] {
-  return output.review?.findings.filter(f => f.category === "environment" || f.category === "approval" || !f.fixableInCode) ?? [];
+  return output.review?.findings.filter(isExternalBlocker) ?? [];
 }
 
-export function implementationPrompt(taskPrompt: string, repairFindings?: ReviewFinding[], qualityCommands: StageInput["qualityCommands"] = [], uiUxContext = ""): string {
+export function implementationPrompt(taskPrompt: string, repairFindings?: ReviewFinding[], qualityCommands: StageInput["qualityCommands"] = [], uiUxContext = "", analysisDecisions = ""): string {
   const configuredChecks = qualityCommands.length
     ? `\nThe orchestration will run these configured deterministic checks as a publication gate after implementation/review${repairFindings?.length ? "; after repair it runs them before the follow-up review" : ""}:\n${qualityCommands.map(check => `- ${check.executable} ${check.args.join(" ")}${check.cwd ? ` (cwd: ${check.cwd})` : ""}`).join("\n")}`
     : "\nNo deterministic checks are configured; report this as a blocking delivery risk.";
-  const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Add focused regression coverage and run focused tests only. Inspect the diff and report changed files and test results accurately. The orchestration runs configured quality gates; do not claim checks you did not run.${configuredChecks}`;
-  const guidance = uiUxContext ? `\n\n${uiUxContext}` : "";
+  const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Add focused regression coverage and run focused tests only. Inspect the diff and report changed files and test results accurately. The orchestration runs configured quality gates; do not claim checks you did not run.
+
+${SIMPLICITY_POLICY}${configuredChecks}`;
+  const guidance = [uiUxContext, analysisDecisions].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
   const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}`).join("\n");
   return `${taskPrompt}${guidance}\n\n${deliveryContract}\n\nREPAIR: One bounded repair pass remains. Resolve each blocker below with the smallest complete fix; add or update a regression test. Run focused tests; the orchestration runs its quality gate before follow-up review. Report each resolution and any unresolved blocker with evidence.\n${repairList}`;
 }
 
-export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = ""): string {
+export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = "", analysisDecisions = ""): string {
   let reviewChecklist = taskPrompt;
   try {
     const brief = JSON.parse(taskPrompt) as Partial<ExecutionBrief>;
@@ -94,7 +105,10 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
     : `FOLLOW-UP REVIEW ${reviewNumber} — verify only prior blockers, the acceptance checks, and regressions introduced by repair. Do not restart broad review or repeat fixed findings. If all fixes are correct, return pass.\n\nPrior blocking findings:\n${previousFindings}${verificationSummary}\n${reviewChecklist}`;
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
-  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\nReturn exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Do not execute commands. ${checkStatus}`;
+  const analysisReviewText = analysisDecisions ? `\n\n${analysisDecisions}\nReview against these analysis decisions: report a blocking finding if the implementation contradicts a chosen parameter or lacks a test for a validation property.` : "";
+  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
+
+Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Do not execute commands. ${checkStatus}`;
   return prompt;
 }
 
@@ -110,6 +124,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   setHandler(progressQuery, () => ({ currentStage, completedStages: [...completedStages] }));
   let workspace = input.projectRoot;
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
+  if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
   if (profile.stages.includes("implement") && input.repository) {
     try {
       await checkDependencies({ blockerIds: input.blockerIds ?? [], parentPublications: input.parentPublications ?? [], repository: input.repository, projectRoot: input.projectRoot });
@@ -124,27 +139,63 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   setHandler(approveSignal, (value) => { approved = value; rejected = !value; });
   const maxRounds = effectiveMaxReviewRounds(input); let repairCount = 0; let reviewCount = 0; let findingsFixed = 0; let stopReason: string | undefined;
   const nonBlockingNotes: ReviewFinding[] = []; const unresolvedFindings: ReviewFinding[] = [];
+  const warnings: Array<{ stage: string; message: string }> = [];
   const reviewRuns: NonNullable<RunResult["metadata"]>["review"]["reviewRuns"] = [];
   const recordReview = (output: StageOutput, round: number) => {
     const blockingCount = blockingFindings(output).length;
     reviewRuns.push({ round, provider: output.provider, durationMs: output.durationMs, verdict: output.review?.verdict ?? (output.ok ? "pass" : "unstructured"), blockingFindingCount: blockingCount, nonBlockingNoteCount: output.review?.notes.length ?? 0, ...(output.metadata?.usage !== undefined ? { usage: output.metadata.usage } : {}) });
   };
   let openSpecInfo: NonNullable<RunResult["metadata"]>["openSpec"];
-  const resultMetadata = () => ({ review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}) });
+  const resultMetadata = () => ({ review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
+  // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
+  const withWarnings = (message: string): string => warnings.length ? `${message} (${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(warning => `${warning.stage}: ${warning.message}`).join(" | ").slice(0, 1200)})` : message;
   const finish = (status: RunResult["status"], message: string): RunResult => ({ runId: input.runId, status, stages, artifactRefs, message, metadata: resultMetadata() });
   let workflowPrompt = input.prompt;
   let openSpecContext = "";
   let optimizedOpenSpec = "";
   let planningTaskGoal = "";
+  let analysis: Analysis | undefined;
+  let analysisDecisions = "";
+  let analysisNote: string | undefined;
   let plan: Plan | undefined;
   let executionBrief: ExecutionBrief | undefined;
   let openSpecChangeId: string | undefined;
   let deterministicVerification: StageOutput | undefined;
+  const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
-    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, input.qualityCommands, uiUxContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
+    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, input.qualityCommands, uiUxContext, analysisDecisions) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? input.qualityCommands ?? [], verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
-    const output = await executeStage(args); stages.push(output); artifactRefs.push(...output.artifactRefs); return output;
+    if (stage === "review" && input.visual) args.visual = input.visual;
+    const output = await executeStage(args);
+    // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
+    const reported = output.metadata?.warnings;
+    if (Array.isArray(reported)) for (const message of reported) if (typeof message === "string" && !warnings.some(item => item.stage === stage && item.message === message)) warnings.push({ stage, message });
+    stages.push(output); artifactRefs.push(...output.artifactRefs); return output;
+  };
+  // One recovery policy for every stage whose answer must be structured: validate, give the stage up to `repairs` repair attempts that carry the
+  // validator's diagnostics, then use the deterministic fallback when there is one, and only otherwise fail with the last diagnostic. Infrastructure
+  // failures (the activity itself failing after its bounded retries) are not repaired here; they propagate.
+  const structuredStage = async <T>(spec: { stage: StageName; prompt: string; parse: (output: StageOutput) => T; repairPrompt: (previous: StageOutput, diagnostic: string, attempt: number) => string; repairs?: number; fallback?: () => T }): Promise<{ value: T; output: StageOutput; degraded?: string }> => {
+    let output = await execute(spec.stage, { prompt: spec.prompt });
+    let lastError: unknown = output.ok ? undefined : new Error(`${spec.stage} stage reported a failure: ${output.summary.slice(0, 300)}`);
+    if (output.ok) {
+      try { return { value: spec.parse(output), output }; }
+      catch (error) { if (isCancellation(error)) throw error; lastError = error; }
+    }
+    for (let attempt = 1; attempt <= (spec.repairs ?? 1); attempt++) {
+      output = await execute(spec.stage, { prompt: spec.repairPrompt(output, failureDetails(lastError, 3000), attempt) });
+      if (!output.ok) { lastError = new Error(`${spec.stage} repair reported a failure: ${output.summary.slice(0, 300)}`); continue; }
+      try { return { value: spec.parse(output), output }; }
+      catch (error) { if (isCancellation(error)) throw error; lastError = error; }
+    }
+    if (spec.fallback) {
+      const degraded = failureDetails(lastError, 600);
+      output.metadata = { ...output.metadata, degraded, fallback: "deterministic" };
+      warnings.push({ stage: spec.stage, message: `a deterministic fallback replaced the model answer after it failed validation: ${degraded.slice(0, 300)}` });
+      return { value: spec.fallback(), output, degraded };
+    }
+    throw lastError;
   };
   if (shouldRunOpenSpec(input.openSpec, profile.stages)) {
     if (!input.repository || workspace === input.projectRoot) return finish("failed", "OpenSpec requires an isolated Git worktree; configure a repository for this implementation task.");
@@ -153,29 +204,40 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       const prepared: OpenSpecPrepared = await prepareOpenSpec({ taskId: input.taskId, runId: input.runId, prompt: input.prompt, projectRoot: workspace, artifactsDir: input.artifactsDir });
       openSpecChangeId = prepared.changeId;
       artifactRefs.push(prepared.artifactRef);
-      const output = await execute("openspec", { provider: "codex", providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecProposalPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId }) });
+      const output = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecProposalPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId }) });
       if (!output.ok) { stopReason = "openspec_proposal_failed"; return finish("failed", "OpenSpec proposal stage did not complete successfully."); }
-      const validated: OpenSpecContext = await validateOpenSpec({ changeId: prepared.changeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir });
+      const validateInput = { changeId: prepared.changeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir };
+      let validated: OpenSpecContext;
+      try { validated = await validateOpenSpec(validateInput); }
+      catch (validationError) {
+        // Models often get the delta format wrong; give the proposal stage one bounded repair pass with the validator's diagnostics.
+        if (isCancellation(validationError) || !patched("openspec-validation-repair")) throw validationError;
+        const repaired = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt: openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: prepared.changeId, diagnostics: failureDetails(validationError, 6000) }) });
+        if (!repaired.ok) { stopReason = "openspec_repair_failed"; return finish("failed", "OpenSpec validation repair did not complete successfully."); }
+        validated = await validateOpenSpec(validateInput);
+      }
       artifactRefs.push(validated.artifactRef);
-      openSpecContext = validated.context;
+      openSpecContext = changeOnlyContext(validated.context);
+      for (const message of [...(validated.warnings ?? []), ...specSizeWarnings(openSpecContext)]) warnings.push({ stage: "openspec", message });
       openSpecInfo = { changeId: prepared.changeId, version: validated.version, contextArtifact: validated.artifactRef };
       output.metadata = { ...output.metadata, openSpec: { changeId: prepared.changeId, version: validated.version, validated: true, contextArtifact: validated.artifactRef } };
       completedStages.push("openspec");
       currentStage = "spec_optimize";
-      let optimized = await execute("spec_optimize", { prompt: openSpecOptimizationPrompt(openSpecContext) });
-      if (!optimized.ok) { stopReason = "openspec_optimization_failed"; return finish("failed", "OpenSpec optimization stage did not complete successfully."); }
-      let digest;
-      try { digest = validateOpenSpecDigest(optimized.summary, openSpecContext, stageCompletionTokens(optimized)); }
-      catch (validationError) {
-        if (isCancellation(validationError)) throw validationError;
-        const diagnostic = failureDetails(validationError);
-        optimized = await execute("spec_optimize", { prompt: repairOpenSpecDigestPrompt(openSpecContext, optimized.summary, diagnostic) });
-        if (!optimized.ok) { stopReason = "openspec_optimization_repair_failed"; return finish("failed", "OpenSpec optimization repair did not complete successfully."); }
-        digest = validateOpenSpecDigest(optimized.summary, openSpecContext, stageCompletionTokens(optimized));
+      const digestResult = await structuredStage<OpenSpecDigest | null>({
+        stage: "spec_optimize",
+        prompt: openSpecOptimizationPrompt(openSpecContext),
+        parse: output => validateOpenSpecDigest(output.summary, openSpecContext, stageCompletionTokens(output)),
+        repairPrompt: (previous, diagnostic) => repairOpenSpecDigestPrompt(openSpecContext, previous.summary, diagnostic),
+        // Built from the validated change itself; when even that is impossible planning simply proceeds from the task text and the raw constraints.
+        fallback: () => { try { return deterministicDigest(openSpecContext, workflowPrompt); } catch { return null; } },
+      });
+      const digest = digestResult.value;
+      if (digest) {
+        optimizedOpenSpec = JSON.stringify(digest);
+        for (const message of specSizeWarnings("", optimizedOpenSpec)) warnings.push({ stage: "spec_optimize", message });
+        planningTaskGoal = digest.task_goal;
+        digestResult.output.metadata = { ...digestResult.output.metadata, sourceArtifact: validated.artifactRef, coverageValidated: true, sourceRequirementCount: digest.requirements.length, sourceScenarioCount: digest.requirements.reduce((sum, req) => sum + req.scenarios.length, 0) };
       }
-      optimizedOpenSpec = JSON.stringify(digest);
-      planningTaskGoal = digest.task_goal;
-      optimized.metadata = { ...optimized.metadata, sourceArtifact: validated.artifactRef, coverageValidated: true, sourceRequirementCount: digest.requirements.length, sourceScenarioCount: digest.requirements.reduce((sum, req) => sum + req.scenarios.length, 0) };
       completedStages.push("spec_optimize");
     } catch (error) {
       if (isCancellation(error)) throw error;
@@ -183,119 +245,146 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return finish("failed", `OpenSpec stage failed before planning: ${failureDetails(error)}`);
     }
   }
+  if (input.analysis && profile.stages.includes("implement") && patched("analysis-stage")) {
+    // Optional analysis: compare approaches and fix the parameters before planning. Runs once with one bounded repair pass; its decisions
+    // travel as protected constraints through plan, brief, implementation and review, and the full text is committed as a document.
+    currentStage = "analyze";
+    try {
+      const analysisGoal = planningTaskGoal || workflowPrompt;
+      let lastAnalysisSummary = "";
+      const analysisResult = await structuredStage<Analysis | null>({
+        stage: "analyze",
+        prompt: makeAnalysisPrompt(analysisGoal, optimizedOpenSpec),
+        parse: output => { lastAnalysisSummary = output.summary; return validateAnalysis(output.summary, stageCompletionTokens(output)); },
+        repairPrompt: (previous, diagnostic) => repairAnalysisPrompt(analysisGoal, previous.summary, diagnostic),
+        repairs: 2,
+        // Keep whatever is usable of the last answer; when nothing is, the run continues without analysis (and says so) rather than failing.
+        fallback: () => salvageAnalysis(lastAnalysisSummary) ?? null,
+      });
+      if (analysisResult.value) {
+        analysis = analysisResult.value;
+        if (analysisResult.degraded) analysisNote = "The analysis answer did not fully match the expected format; the usable parts were kept (some sections may be missing).";
+        analysisResult.output.metadata = { ...analysisResult.output.metadata, analysisValidated: !analysisResult.degraded, chosenApproach: analysis.chosen.name, candidateCount: analysis.candidates.length };
+        analysisDecisions = analysisBlock(analysis);
+        completedStages.push("analyze");
+      } else warnings.push({ stage: "analyze", message: "the analysis stage produced nothing usable, so planning and implementation ran without analysis decisions" });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "analysis_output_invalid";
+      return finish("failed", `analysis output rejected: ${failureDetails(error)}`);
+    }
+  }
   for (const stage of profile.stages) {
     currentStage = stage;
-    if (stage === "implement" && input.approval) { await condition(() => approved || rejected); if (rejected) return { runId: input.runId, status: "rejected", stages, artifactRefs, message: "human approval rejected" }; }
-    const effectiveStage: StageName = stage;
+    if (stage === "implement" && input.approval) {
+      // patched(): runs already waiting without a timer must replay the original unbounded wait.
+      if (patched("approval-timeout")) { if (!(await condition(() => approved || rejected, input.approvalTimeoutMs ?? 86_400_000))) { stopReason = "approval_timeout"; return finish("failed", "human approval timed out; no changes were published"); } }
+      else await condition(() => approved || rejected);
+      if (rejected) return { runId: input.runId, status: "rejected", stages, artifactRefs, message: "human approval rejected" }; }
     let output: StageOutput;
     try {
-      if (stage === "review" && profile.stages.includes("verify")) {
+      if (stage === "plan") {
+        const specConstraints = optimizedOpenSpec ? ((JSON.parse(optimizedOpenSpec) as { hard_constraints?: string[] }).hard_constraints ?? []) : extractHardConstraints(openSpecContext);
+        // Source requirements, task constraints and analysis decisions are authoritative: they are restored into the plan whatever the model wrote.
+        const protectedConstraints = [...new Set([...specConstraints, ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])];
+        const digest = optimizedOpenSpec ? JSON.parse(optimizedOpenSpec) as OpenSpecDigest : undefined;
+        let oversizedPlan: Plan | undefined;
+        const planned = await structuredStage<Plan>({
+          stage: "plan",
+          prompt: makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions),
+          parse: planOutput => {
+            const candidate: Plan = { ...parseStructured(planOutput.summary, PlanSchema, "Plan", Number.MAX_SAFE_INTEGER), hard_constraints: protectedConstraints };
+            try { parseStructured(planOutput.summary, PlanSchema, "Plan", HANDOFF_BUDGETS.plan, stageCompletionTokens(planOutput)); }
+            catch (budgetError) { oversizedPlan = candidate; throw budgetError; }
+            if (oversizedPlan) validatePlanCompression(oversizedPlan, candidate);
+            return candidate;
+          },
+          repairPrompt: (previous, diagnostic) => diagnostic.includes("exceeds its") && oversizedPlan ? compressPlanPrompt(oversizedPlan) : repairStructuredPrompt("plan", PLAN_SCHEMA_HINT, previous.summary, diagnostic),
+          repairs: 2,
+          fallback: () => ({ ...deterministicPlan({ taskPrompt: workflowPrompt, ...(digest ? { digest } : {}) }), hard_constraints: protectedConstraints }),
+        });
+        plan = planned.value;
+        output = planned.output;
+      } else if (stage === "brief") {
+        const sourcePlan = plan!;
+        let oversizedBrief: ExecutionBrief | undefined;
+        const briefed = await structuredStage<ExecutionBrief>({
+          stage: "brief",
+          prompt: makeBriefPrompt(workflowPrompt, openSpecContext, sourcePlan),
+          parse: briefOutput => {
+            // Protected constraints are restored deterministically before the budget check; validation still fails when the complete brief cannot fit.
+            const canonical = canonicalizeBrief(parseStructured(briefOutput.summary, ExecutionBriefSchema, "Execution brief", Number.MAX_SAFE_INTEGER), sourcePlan, openSpecContext);
+            try { return validateBrief(formatBrief(canonical), sourcePlan, openSpecContext); }
+            catch (budgetError) { oversizedBrief = canonical; throw budgetError; }
+          },
+          repairPrompt: (previous, diagnostic, attempt) => diagnostic.includes("exceeds its") && oversizedBrief ? compressBriefPrompt(oversizedBrief, attempt === 1 ? 650 : 500) : repairStructuredPrompt("execution brief", BRIEF_SCHEMA_HINT, previous.summary, diagnostic),
+          repairs: 2,
+          // Prefer the model's own (slightly oversized) brief up to the hard ceiling, otherwise the deterministic one.
+          fallback: () => {
+            for (const candidate of [oversizedBrief, deterministicBrief(sourcePlan, openSpecContext)]) {
+              if (!candidate) continue;
+              try { return validateBrief(formatBrief(candidate), sourcePlan, openSpecContext, undefined, BRIEF_HARD_CEILING); } catch { /* try the next candidate */ }
+            }
+            throw new Error("the protected requirements do not fit the brief budget; split this task into smaller ones");
+          },
+        });
+        executionBrief = briefed.value;
+        output = briefed.output;
+      } else if (stage === "review" && profile.stages.includes("verify")) {
         const round = ++reviewCount;
         const [review, verification] = await Promise.all([
-          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext) }),
+          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions) }),
           execute("verify", { provider: "fake", verificationOnly: true }),
         ]);
         output = review;
         deterministicVerification = verification;
       } else if (stage === "verify" && deterministicVerification) {
-        if (!deterministicVerification.ok) output = deterministicVerification;
+        // The deterministic quality commands are the verification. A second model call here could only ever pass, so it is skipped
+        // (patched(): runs already past this point replay the original call).
+        if (!deterministicVerification.ok || patched("skip-model-verify")) output = deterministicVerification;
         else output = await execute("verify", { deterministicChecksAlreadyPassed: true, qualityCommands: [] });
       } else {
-        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext) })
-          : stage === "brief" ? await execute("brief")
-          : await execute(effectiveStage);
+        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions) })
+          : await execute(stage);
       }
     }
-    catch (error) { if (isCancellation(error)) throw error; stopReason = `${stage}_activity_failed`; return finish("failed", `${stage} Activity failed after bounded retries: ${failureDetails(error)}`); }
-    if (stage === "plan") {
-      try {
-        const parsedPlan = parseStructured(output.summary, PlanSchema, "Plan", Number.MAX_SAFE_INTEGER);
-        // Treat source requirements as authoritative; do not preserve boilerplate
-        // the model may mistakenly classify as a project constraint.
-        const validatedSpecConstraints = optimizedOpenSpec
-          ? ((JSON.parse(optimizedOpenSpec) as { hard_constraints?: string[] }).hard_constraints ?? [])
-          : extractHardConstraints(openSpecContext);
-        const firstPlan: Plan = { ...parsedPlan, hard_constraints: [...new Set([...validatedSpecConstraints, ...extractTaskConstraints(workflowPrompt)])] };
-        try {
-          parseStructured(output.summary, PlanSchema, "Plan", HANDOFF_BUDGETS.plan, stageCompletionTokens(output));
-          plan = firstPlan;
-        } catch (budgetError) {
-          if (!(budgetError instanceof Error) || !budgetError.message.includes("exceeds its")) throw budgetError;
-          const compressedOutput = await execute("plan", { prompt: compressPlanPrompt(firstPlan) });
-          const compressedPlan = parseStructured(compressedOutput.summary, PlanSchema, "Compressed plan", HANDOFF_BUDGETS.plan, stageCompletionTokens(compressedOutput));
-          validatePlanCompression(firstPlan, compressedPlan);
-          plan = compressedPlan;
-          output = compressedOutput;
-        }
-      }
-      catch (error) { stopReason = "plan_output_invalid"; return finish("failed", `planning output rejected: ${failureDetails(error)}`); }
-    }
-    if (stage === "brief") {
-      try {
-        if (!plan) throw new Error("plan output is unavailable");
-        const parsedBrief = parseStructured(output.summary, ExecutionBriefSchema, "Execution brief", Number.MAX_SAFE_INTEGER);
-        const firstBrief = canonicalizeBrief(parsedBrief, plan, openSpecContext);
-        try {
-          // Reconstitute protected source requirements deterministically before
-          // checking the budget. Providers can paraphrase or omit a constraint;
-          // canonicalization restores it from the validated plan/OpenSpec, and
-          // validation still fails closed if the complete brief cannot fit.
-          executionBrief = validateBrief(formatBrief(firstBrief), plan, openSpecContext);
-        } catch (budgetError) {
-          if (!(budgetError instanceof Error) || !budgetError.message.includes("exceeds its")) throw budgetError;
-          let compressionError: unknown;
-          let compressedOutput: StageOutput | undefined;
-          for (const targetTokens of [650, 500]) {
-            const candidateOutput = await execute("brief", { prompt: compressBriefPrompt(firstBrief, targetTokens) });
-            try {
-              const compressedBrief = parseStructured(candidateOutput.summary, ExecutionBriefSchema, "Compressed brief", HANDOFF_BUDGETS.brief, stageCompletionTokens(candidateOutput));
-              const protectedBrief = canonicalizeBrief(compressedBrief, plan, openSpecContext);
-              validateBriefCompression(firstBrief, protectedBrief);
-              executionBrief = validateBrief(formatBrief(protectedBrief), plan, openSpecContext);
-              compressedOutput = candidateOutput;
-              break;
-            } catch (compressionValidationError) {
-              compressionError = compressionValidationError;
-              if (!(compressionValidationError instanceof Error) || !compressionValidationError.message.includes("exceeds its")) throw compressionValidationError;
-            }
-          }
-          if (!compressedOutput) throw compressionError ?? new Error("Execution brief could not fit its token budget");
-          output = compressedOutput;
-        }
-      } catch (error) { stopReason = "brief_output_invalid"; return finish("failed", `execution brief rejected: ${failureDetails(error)}`); }
+    catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = stage === "plan" || stage === "brief" ? `${stage}_output_invalid` : `${stage}_activity_failed`;
+      return finish("failed", stage === "plan" || stage === "brief" ? `${stage} could not be produced: ${failureDetails(error)}` : `${stage} Activity failed after bounded retries: ${failureDetails(error)}`);
     }
     if (stage === "review") {
-      output.metadata = { ...output.metadata, reviewRound: reviewCount, ...(output.review ? { reviewFindingCount: output.review.findings.length, nonBlockingNoteCount: output.review.notes.length } : {}) };
-      recordReview(output, reviewCount);
-      nonBlockingNotes.push(...(output.review?.notes ?? []));
-      let blocking = blockingFindings(output); const external = externalBlockers(output);
-      if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
-      if (blocking.length && reviewCount < maxRounds) {
+      // A reviewer answer that cannot be read as an assessment gets one request to restate it; it never counts as a pass.
+      const readable = async (reviewed: StageOutput): Promise<StageOutput> => reviewed.metadata?.reviewUnparseable && patched("review-enforcement") ? await execute("review", { prompt: reviewRepairPrompt(reviewed.summary) }) : reviewed;
+      const noteReview = (reviewed: StageOutput) => {
+        reviewed.metadata = { ...reviewed.metadata, reviewRound: reviewCount, ...(reviewed.review ? { reviewFindingCount: reviewed.review.findings.length, nonBlockingNoteCount: reviewed.review.notes.length } : {}) };
+        recordReview(reviewed, reviewCount);
+        nonBlockingNotes.push(...(reviewed.review?.notes ?? []));
+      };
+      try { output = await readable(output); } catch (error) { if (isCancellation(error)) throw error; stopReason = "review_activity_failed"; return finish("failed", `review Activity failed after bounded retries: ${failureDetails(error)}`); }
+      noteReview(output);
+      const initialBlocking = blockingFindings(output).length;
+      for (;;) {
+        if (output.metadata?.reviewUnparseable) { stopReason = "review_unparseable"; unresolvedFindings.push({ severity: "high", category: "other", title: "Review output unreadable", evidence: output.summary.slice(0, 400), fixableInCode: false }); return finish("failed", "review output could not be read as an assessment, even after a request to restate it; the gate fails closed"); }
+        const external = externalBlockers(output);
+        if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
+        const blocking = blockingFindings(output);
+        if (!blocking.length) break;
+        if (reviewCount >= maxRounds) { unresolvedFindings.push(...blocking); stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
-        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, input.qualityCommands, uiUxContext) }); }
+        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, input.qualityCommands, uiUxContext, analysisDecisions) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
         try {
           const verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
           deterministicVerification = verification;
           if (!verification.ok) { unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${verification.summary}`); }
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }
-        try { output = await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext) }); }
+        try { output = await readable(await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions) })); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "follow_up_review_failed"; return finish("failed", `follow-up review failed: ${failureDetails(error)}`); }
-        output.metadata = { ...output.metadata, reviewRound: reviewCount, ...(output.review ? { reviewFindingCount: output.review.findings.length, nonBlockingNoteCount: output.review.notes.length } : {}) };
-        recordReview(output, reviewCount);
-        nonBlockingNotes.push(...(output.review?.notes ?? [])); blocking = blockingFindings(output); const followupExternal = externalBlockers(output);
-        if (followupExternal.length) { unresolvedFindings.push(...followupExternal); stopReason = "external_or_approval_prerequisite"; return finish("failed", "follow-up review stopped: external prerequisite requires operator action"); }
-        if (blocking.length || !output.ok) {
-          unresolvedFindings.push(...(blocking.length ? blocking : output.findings.map(title => ({ severity: "high" as const, category: "other" as const, title, evidence: title, fixableInCode: true }))));
-          stopReason = "blocking_findings_remain_after_final_review";
-          return finish("failed", "review quality gate failed after the maximum of two review rounds");
-        }
-        findingsFixed += blockingFindings(stages.filter(item => item.stage === "review")[0]!).length;
-      } else if (blocking.length) {
-        unresolvedFindings.push(...blocking); stopReason = "blocking_findings_remain_after_final_review";
-        return finish("failed", "review quality gate failed after the maximum of two review rounds");
+        noteReview(output);
+        findingsFixed = initialBlocking;
       }
-      if (!output.ok && blocking.length === 0) {
+      if (!output.ok) {
         unresolvedFindings.push(...output.findings.map(title => ({ severity: "high" as const, category: "other" as const, title, evidence: title, fixableInCode: false })));
         stopReason = "unclassified_review_failure"; return finish("failed", "review failed without a structured code-fixable finding");
       }
@@ -307,7 +396,20 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   if (openSpecChangeId) {
     currentStage = "openspec-archive";
     try {
-      const archived = await archiveOpenSpecChange({ changeId: openSpecChangeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir });
+      const archiveInput = { changeId: openSpecChangeId, runId: input.runId, projectRoot: workspace, artifactsDir: input.artifactsDir };
+      let archived: Awaited<ReturnType<typeof archiveOpenSpecChange>>;
+      try { archived = await archiveOpenSpecChange(archiveInput); }
+      catch (archiveError) {
+        // Gates passed; archive failures are bookkeeping in the OpenSpec artifacts. Repair once, then archive again.
+        const detail = failureDetails(archiveError, 6000);
+        const checklist = /checklist.*is not complete|incomplete/i.test(detail);
+        const specUpdate = /archive_spec_update_failed|delta|MODIFIED|REMOVED|RENAMED|not found/i.test(detail);
+        if (isCancellation(archiveError) || !patched("openspec-checklist-reconcile") || (!checklist && !specUpdate)) throw archiveError;
+        const prompt = checklist ? openSpecChecklistReconcilePrompt({ changeId: openSpecChangeId, error: failureDetails(archiveError, 2000) }) : openSpecRepairPrompt({ taskPrompt: input.prompt, changeId: openSpecChangeId, diagnostics: detail });
+        const reconciled = await execute("openspec", { ...openSpecRouteOptions, providerTimeoutMs: input.providerTimeouts?.openspec ?? 720_000, openSpecChangeId, prompt });
+        if (!reconciled.ok) throw archiveError;
+        archived = await archiveOpenSpecChange(archiveInput);
+      }
       artifactRefs.push(archived.artifactRef);
       if (openSpecInfo) openSpecInfo = { ...openSpecInfo, archivedPath: archived.archivedPath };
       completedStages.push("openspec-archive");
@@ -318,14 +420,24 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
   }
   currentStage = null;
+  if (analysis && workspace !== input.projectRoot && patched("analysis-stage")) {
+    try {
+      const document = await writeAnalysisDocument({ worktree: workspace, docsDir: input.analysisDocsDir ?? "docs/analysis", taskId: input.taskId, markdown: formatAnalysisMarkdown(analysis, { taskId: input.taskId, ...(input.repository?.taskTitle ? { title: input.repository.taskTitle } : {}), ...(analysisNote ? { note: analysisNote } : {}) }) });
+      artifactRefs.push(document);
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "analysis_document_failed";
+      return finish("failed", `analysis document could not be written: ${failureDetails(error)}`);
+    }
+  }
   if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
   if (input.repository && workspace !== input.projectRoot) {
     try {
       const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt });
-      return { ...finish("completed", "quality gates passed; draft PR published"), publish };
+      return { ...finish("completed", withWarnings("quality gates passed; draft PR published")), publish };
     } catch (error) {
       stopReason = "publish_failed"; return finish("failed", `publish failed; task requires recovery: ${failureDetails(error)}`);
     }
   }
-  return finish("completed", "workflow completed");
+  return finish("completed", withWarnings("workflow completed"));
 }

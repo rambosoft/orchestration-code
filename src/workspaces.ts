@@ -1,22 +1,36 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import type { RepositoryContext, PublishResult } from "./contracts.js";
+import { findPublishViolations } from "./publish-guard.js";
 
-export type CommandRunner = (command: string, args: string[], cwd: string) => Promise<string>;
-export const runCommand: CommandRunner = (command, args, cwd) => new Promise((resolve, reject) => {
-  const child = spawn(command, args, { cwd, shell: false, windowsHide: true }); const out: Buffer[] = []; const err: Buffer[] = [];
-  child.stdout.on("data", (b: Buffer) => out.push(b)); child.stderr.on("data", (b: Buffer) => err.push(b));
-  child.on("error", reject); child.on("close", code => code === 0 ? resolve(Buffer.concat(out).toString("utf8").trim()) : reject(new Error(Buffer.concat(err).toString("utf8").trim() || `${command} exited ${code}`)));
-});
+import { runCommand, type CommandRunner } from "./command.js";
+export { runCommand, type CommandRunner };
 const git = (args: string[], cwd: string, runner = runCommand) => runner("git", args, cwd);
+
+/**
+ * Porcelain entries that really make the tree dirty. A Windows checkout (core.autocrlf=true) viewed from the Linux bridge container
+ * shows every text file as modified because only the line endings differ; those entries are ignored. Untracked files, deletions,
+ * additions, renames and quoted paths always count as dirty.
+ */
+export async function dirtyEntries(root: string, runner = runCommand): Promise<string[]> {
+  const status = await git(["status", "--porcelain", "--untracked-files=all"], root, runner);
+  const dirty: string[] = [];
+  for (const line of status.split(/\r?\n/).filter(item => item.trim())) {
+    const match = /^\s*([MADRCU?!]{1,2})\s+(.+)$/.exec(line);
+    const file = match?.[2];
+    if (!match || match[1] !== "M" && match[1] !== "MM" || !file || file.startsWith("\"") || file.includes(" -> ")) { dirty.push(line.trim()); continue; }
+    const sameIgnoringEol = await git(["diff", "--ignore-cr-at-eol", "--quiet", "HEAD", "--", file], root, runner).then(() => true, () => false);
+    if (!sameIgnoringEol) dirty.push(line.trim());
+  }
+  return dirty;
+}
 
 /** Fail closed before dispatch: never snapshot a dirty tree or invent a base. */
 export async function admitRepository(input: { projectRoot: string; remote: string; targetBranch: string }, runner = runCommand): Promise<{ baseSha: string; remoteUrl: string }> {
   const root = path.resolve(input.projectRoot);
   await git(["rev-parse", "--show-toplevel"], root, runner);
-  const status = await git(["status", "--porcelain", "--untracked-files=all"], root, runner);
-  if (status) throw new Error(`project working tree is not clean (tracked or untracked changes): ${status.slice(0, 1000)}`);
+  const dirty = await dirtyEntries(root, runner);
+  if (dirty.length) throw new Error(`project working tree is not clean (tracked or untracked changes): ${dirty.join("\n").slice(0, 1000)}`);
   const remoteUrl = await git(["remote", "get-url", input.remote], root, runner);
   if (!/(github\.com[:/])/i.test(remoteUrl)) throw new Error(`remote '${input.remote}' is not a GitHub remote`);
   await git(["fetch", "--no-tags", input.remote, input.targetBranch], root, runner);
@@ -75,10 +89,11 @@ export async function collectWorktree(input: { runId: string; projectRoot: strin
 export async function publishWorktree(input: { repository: RepositoryContext; worktree: string; taskId: string; prompt: string }, runner = runCommand): Promise<PublishResult> {
   const { repository: repo, worktree } = input;
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
-  if (status) {
-    await git(["add", "--all"], worktree, runner);
-    await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
-  }
+  if (status) await git(["add", "--all"], worktree, runner);
+  // Inspect everything that would be published, including commits the agent made itself.
+  const violations = await findPublishViolations(worktree, repo.baseSha, runner);
+  if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
+  if (status) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
   const headSha = await git(["rev-parse", "HEAD"], worktree, runner);
   if (headSha === repo.baseSha) throw new Error("publish gate failed: no changes were committed");
   await git(["push", "--set-upstream", repo.remote, repo.branch], worktree, runner);

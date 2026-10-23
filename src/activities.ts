@@ -1,17 +1,21 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { StageOutputSchema, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { getProvider } from "./providers.js";
+import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { Context } from "@temporalio/activity";
+import { ApplicationFailure, Context } from "@temporalio/activity";
+import { childEnv } from "./env.js";
+import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
+import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
 import type { OpenSpecPrepared, OpenSpecContext } from "./contracts.js";
-export { prepareWorktree, collectWorktree, publishWorktree } from "./workspaces.js";
+import { prepareWorktree as prepareWorktreeImpl, collectWorktree as collectWorktreeImpl, publishWorktree as publishWorktreeImpl } from "./workspaces.js";
 
 async function emitActivityEvent(event: Record<string, unknown>, level: "info" | "error" = "info"): Promise<void> {
   const line = JSON.stringify(event);
@@ -25,19 +29,22 @@ async function emitActivityEvent(event: Record<string, unknown>, level: "info" |
   }
 }
 
-export async function prepareOpenSpec(input: { taskId: string; runId: string; prompt: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecPrepared> {
+async function prepareOpenSpecImpl(input: { taskId: string; runId: string; prompt: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecPrepared> {
   return prepareOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
 }
 
-export async function validateOpenSpec(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecContext> {
-  return validateOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
+async function validateOpenSpecImpl(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<OpenSpecContext> {
+  // Validation failures are deterministic for a given change; retrying cannot help, the workflow decides whether to repair.
+  try { return await validateOpenSpecProject({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
+  catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecValidationError"); }
 }
 
-export async function archiveOpenSpecChange(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {
-  return archiveOpenSpec({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) });
+async function archiveOpenSpecChangeImpl(input: { changeId: string; runId: string; projectRoot: string; artifactsDir: string }): Promise<{ archivedPath: string; artifactRef: string }> {
+  try { return await archiveOpenSpec({ ...input, artifactsDir: path.join(input.artifactsDir, input.runId) }); }
+  catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecArchiveError"); }
 }
 
-export async function checkDependencies(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
+async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
   if (!input.blockerIds.length) return;
   const token = process.env.PAPERCLIP_API_TOKEN;
   if (!token) throw new Error("PAPERCLIP_API_TOKEN is required on the Windows worker to recheck task blockers before branch creation");
@@ -59,26 +66,25 @@ export async function checkDependencies(input: { blockerIds: string[]; parentPub
   }
 }
 
-function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000): Promise<{ code: number | null; output: string; stderr: string }> {
+export function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000, signal: AbortSignal | undefined = activitySignal()): Promise<{ code: number | null; output: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    // npm is exposed as npm.ps1/npm.cmd on Windows, neither of which spawn()
-    // can execute reliably without a shell. Invoke the bundled JS CLI instead.
-    const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-    const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? process.execPath : executable;
-    const commandArgs = command === process.execPath && executable === "npm" ? [npmCli, ...args] : args;
-    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true }); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
+    const { command, args: commandArgs } = toolCommand(executable, args);
+    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
     child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
-    child.on("error", reject); child.on("close", code => resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }));
+    child.on("error", error => { stopKill(); reject(error); }); child.on("close", code => { stopKill(); if (signal?.aborted) return reject(new Error("cancelled: process killed")); resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }); });
   });
 }
 
-export function reviewPromptWithDiff(prompt: string, diff: string): string {
-  return `${prompt}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, 40_000)}`;
+export const REVIEW_DIFF_LIMIT = 60_000;
+/** The reviewer always sees the list of changed files; a truncated diff says so and tells the reviewer to read the rest itself. */
+export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles = ""): string {
+  const truncated = diff.length > REVIEW_DIFF_LIMIT;
+  return `${prompt}${changedFiles ? `\n\nChanged files:\n${changedFiles}` : ""}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, REVIEW_DIFF_LIMIT)}${truncated ? `\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters: inspect the remaining changes yourself with git diff and by reading the files before you decide]` : ""}`;
 }
 
 /** Install locked npm dependencies in a fresh isolated worktree before agents or quality checks use them. */
-export async function prepareProjectDependencies(
+async function prepareProjectDependenciesImpl(
   projectRoot: string,
   run: typeof runCheck = runCheck,
 ): Promise<{ installed: boolean; summary: string }> {
@@ -96,7 +102,25 @@ export async function prepareProjectDependencies(
   return { installed: true, summary: "Installed npm dependencies from package-lock.json with npm ci." };
 }
 
+export type ProviderErrorCategory = "timeout" | "rate_limit" | "authentication" | "configuration" | "provider_error";
+/** Authentication and configuration failures are permanent; everything else may be retried. Word boundaries keep "authored" or port 4030 from being misread as auth failures. */
+export function classifyProviderError(message: string): ProviderErrorCategory {
+  if (/timed out/i.test(message)) return "timeout";
+  if (/\b429\b|rate[ -]limit/i.test(message)) return "rate_limit";
+  if (/\b(?:401|403)\b|unauthori[sz]ed|\bauthentication\b/i.test(message)) return "authentication";
+  if (/not configured|missing its configured model|unsupported provider/i.test(message)) return "configuration";
+  return "provider_error";
+}
+
+/** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
 export async function executeStage(input: StageInput): Promise<StageOutput> {
+  let timer: NodeJS.Timeout | undefined;
+  try { const context = Context.current(); timer = setInterval(() => context.heartbeat(), HEARTBEAT_INTERVAL_MS); } catch { /* direct unit invocation */ }
+  try { return await executeStageInner(input); } finally { if (timer) clearInterval(timer); }
+}
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+async function executeStageInner(input: StageInput): Promise<StageOutput> {
   const info = (() => { try { return Context.current().info; } catch { return undefined; } })();
   const activityStartedAt = Date.now();
   const queueWaitMs = info ? Math.max(0, activityStartedAt - info.currentAttemptScheduledTimestampMs) : undefined;
@@ -105,13 +129,14 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
   await emitActivityEvent({ event: "activity.start", ...activityContext });
   if (queueWaitMs !== undefined && Number.isFinite(queueAlertMs) && queueWaitMs >= queueAlertMs) await emitActivityEvent({ event: "activity.queue_wait_alert", thresholdMs: queueAlertMs, ...activityContext }, "error");
   const errors = await pluginRegistry.check(input.plugins, { stage: input.stage, provider: input.provider });
-  if (errors.length) throw new Error(errors.join("; "));
+  if (errors.length) throw ApplicationFailure.nonRetryable(errors.join("; "), "PluginConfigError");
   // Keep artifacts from retries and later task revisions separate. Temporal
   // workflow history still records the same paths returned by each stage.
   const artifactsDir = path.join(input.artifactsDir, input.runId);
   await mkdir(artifactsDir, { recursive: true });
   const qualityRefs: string[] = [];
   let qualityChecks: Array<{ executable: string; args: string[]; exitCode: number | null; durationMs: number; output: string; stderr: string }> | undefined;
+  const qualityWarnings: string[] = []; const visualWarnings: string[] = []; const visualImages: string[] = [];
   if (input.stage === "verify") {
     const checks = input.qualityCommands ?? [];
     if (checks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
@@ -124,7 +149,9 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
       const checkStartedAt = Date.now();
       const result = await runCheck(check.executable, check.args, path.resolve(input.projectRoot, check.cwd ?? "."));
       results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: result.output, stderr: result.stderr });
-      if (result.code !== 0) {
+      if (result.code !== 0 && check.severity === "warn") {
+        qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
+      } else if (result.code !== 0) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
@@ -137,7 +164,7 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
     qualityChecks = results;
   }
   if (input.verificationOnly) {
-    const output: StageOutput = { stage: input.stage, ok: true, summary: "Deterministic quality checks passed before focused review.", findings: [], artifactRefs: qualityRefs, provider: "quality-gate", durationMs: Date.now() - activityStartedAt, metadata: { deterministicQuality: { passed: true, checks: qualityChecks ?? [] }, verificationOnly: true, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+    const output: StageOutput = { stage: input.stage, ok: true, summary: "Deterministic quality checks passed before focused review.", findings: [], artifactRefs: qualityRefs, provider: "quality-gate", durationMs: Date.now() - activityStartedAt, metadata: { deterministicQuality: { passed: true, checks: qualityChecks ?? [] }, ...(qualityWarnings.length ? { warnings: qualityWarnings } : {}), verificationOnly: true, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     const file = path.join(artifactsDir, `verify-${input.attempt}.json`);
     await writeFile(file, JSON.stringify({ ...output, runId: input.runId, taskId: input.taskId }, null, 2));
     await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: output.provider, ok: true, providerDurationMs: 0, activityDurationMs: output.durationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), verificationOnly: true, ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
@@ -150,9 +177,29 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
     // Give every real reviewer the implementation itself, including newly
     // created files, rather than asking it to review only the task summary.
     await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
-    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, 40_000);
+    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, REVIEW_DIFF_LIMIT + 1);
+    const changed = await runCheck("git", ["diff", "--stat", "--stat-width=140", "HEAD"], input.projectRoot, 6_000);
     if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
-    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output);
+    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
+  }
+  if (input.stage === "review" && input.visual?.enabled) {
+    // Screenshots are evidence for the reviewer. Problems only warn unless the project requires visual verification.
+    const shots = await captureScreenshots(input.visual, { cwd: input.projectRoot, outDir: path.join(artifactsDir, `visual-${input.attempt}`), signal: activitySignal() });
+    visualWarnings.push(...shots.warnings); visualImages.push(...shots.images);
+    if (shots.images.length) { stageInput.prompt += visualReviewSection(shots.images); stageInput.images = shots.images; }
+    else if (input.visual.required) throw ApplicationFailure.nonRetryable(`visual verification is required but no screenshots were captured: ${shots.warnings.join("; ")}`, "VisualVerificationError");
+  }
+  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
+  // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
+  const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
+  const stageFile = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
+  const previous = await readFile(stageFile, "utf8").then(text => JSON.parse(text) as { inputHash?: string }, () => undefined);
+  if (previous?.inputHash === inputHash) {
+    const reusable = StageOutputSchema.safeParse(previous);
+    if (reusable.success && reusable.data.ok) {
+      await emitActivityEvent({ event: "activity.reused", ...activityContext, provider: reusable.data.provider });
+      return { ...reusable.data, stage: input.stage, metadata: { ...reusable.data.metadata, reused: true }, artifactRefs: reusable.data.artifactRefs.includes(stageFile) ? reusable.data.artifactRefs : [...reusable.data.artifactRefs, stageFile] };
+    }
   }
   const providerStarted = Date.now();
   let result: StageOutput;
@@ -162,20 +209,46 @@ export async function executeStage(input: StageInput): Promise<StageOutput> {
     const message = error instanceof Error ? error.message : String(error);
     const failureFile = path.join(artifactsDir, `${input.stage}-${input.attempt}-activity-${activityAttempt}-failure.json`);
     const providerDurationMs = Date.now() - providerStarted;
-    const category = /timed out/i.test(message) ? "timeout" : /429|rate limit/i.test(message) ? "rate_limit" : /401|403|auth/i.test(message) ? "authentication" : "provider_error";
+    const category = classifyProviderError(message);
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
-    throw new Error(`${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`);
+    const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
+    // Retrying bad credentials or configuration only repeats the failure (and the cost).
+    throw category === "authentication" || category === "configuration" ? ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError") : new Error(detail);
   }
   const parsed = StageOutputSchema.safeParse(result);
-  if (!parsed.success) throw new Error(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`);
-  const providerOutput = parsed.data;
+  if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
+  // CLI reviewers (codex, claude) return prose or JSON text; without this the verdict was never enforced and blocking findings passed the gate.
+  const providerOutput = input.stage === "review" ? applyReviewAssessment(parsed.data) : parsed.data;
   const out: StageOutput = input.stage === "verify" && input.provider !== "fake"
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
   const file = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
-  await writeFile(file, JSON.stringify({ ...out, stage: input.stage, runId: input.runId, taskId: input.taskId }, null, 2), { flag: "w" });
+  await writeFile(file, JSON.stringify({ ...out, metadata: withVisual(out.metadata), stage: input.stage, runId: input.runId, taskId: input.taskId, inputHash }, null, 2), { flag: "w" });
   await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
-  return { ...out, stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, file] };
+  return { ...out, metadata: withVisual(out.metadata), stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, ...visualImages, file] };
 }
-export async function timeoutProbe(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
+async function timeoutProbeImpl(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
+
+// Every activity heartbeats (see heartbeating): the workflow sets a heartbeatTimeout on all of them.
+export const prepareWorktree = heartbeating(prepareWorktreeImpl);
+export const collectWorktree = heartbeating(collectWorktreeImpl);
+export const publishWorktree = heartbeating(publishWorktreeImpl);
+export const prepareOpenSpec = heartbeating(prepareOpenSpecImpl);
+export const validateOpenSpec = heartbeating(validateOpenSpecImpl);
+export const archiveOpenSpecChange = heartbeating(archiveOpenSpecChangeImpl);
+export const checkDependencies = heartbeating(checkDependenciesImpl);
+export const prepareProjectDependencies = heartbeating(prepareProjectDependenciesImpl);
+export const timeoutProbe = heartbeating(timeoutProbeImpl);
+
+/** Write the analysis document into the task worktree so it is part of the published change. */
+async function writeAnalysisDocumentImpl(input: { worktree: string; docsDir: string; taskId: string; markdown: string }): Promise<string> {
+  const root = path.resolve(input.worktree);
+  const dir = path.resolve(root, input.docsDir);
+  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error(`analysis docsDir '${input.docsDir}' must stay inside the task worktree`);
+  const file = path.join(dir, `${input.taskId.replace(/[^A-Za-z0-9._-]+/g, "-")}.md`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, input.markdown, "utf8");
+  return file;
+}
+export const writeAnalysisDocument = heartbeating(writeAnalysisDocumentImpl);

@@ -29,16 +29,16 @@ describe("manifest and profiles", () => {
     expect(resolveProjectId({ projectId: null }, undefined)).toBeUndefined();
   });
   it("resolves projects below one shared checkout root and rejects paths outside it", () => {
-    expect(resolveProjectHostRoot({ id: "ui-pilot", root: "mobile-rts-landing" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toBe(path.resolve("C:/projects/mobile-rts-landing"));
+    expect(resolveProjectHostRoot({ id: "ui-pilot", root: "mobile-rts-landing" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toBe(path.win32.resolve("C:/projects/mobile-rts-landing"));
     expect(() => resolveProjectHostRoot({ id: "unsafe", root: "../other" }, { ORCHESTRATOR_PROJECTS_ROOT: "C:/projects" })).toThrow("must stay inside ORCHESTRATOR_PROJECTS_ROOT");
-    expect(resolveProjectHostRoot({ id: "legacy", root: "unused", rootEnv: "LEGACY_ROOT" }, { LEGACY_ROOT: "C:/legacy/project" })).toBe(path.resolve("C:/legacy/project"));
+    expect(resolveProjectHostRoot({ id: "legacy", root: "unused", rootEnv: "LEGACY_ROOT" }, { LEGACY_ROOT: "C:/legacy/project" })).toBe(path.win32.resolve("C:/legacy/project"));
   });
   it("validates project manifests and rejects malformed identifiers", () => {
     expect(ProjectManifestSchema.safeParse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation" }).success).toBe(true);
     expect(ProjectManifestSchema.safeParse({ id: "BAD ID", name: "Demo", root: "./demo", defaultProfile: "unknown" }).success).toBe(false);
     const legacy = ProjectManifestSchema.parse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation", policy: { maxRepairAttempts: 3 } });
-    expect(legacy.policy.maxReviewRounds).toBe(2);
-    expect(effectiveMaxReviewRounds({ maxReviewRounds: legacy.policy.maxReviewRounds, maxRepairAttempts: legacy.policy.maxRepairAttempts })).toBe(2);
+    expect(legacy.policy.maxReviewRounds).toBe(4);
+    expect(effectiveMaxReviewRounds({ maxReviewRounds: legacy.policy.maxReviewRounds, maxRepairAttempts: legacy.policy.maxRepairAttempts })).toBe(4);
     expect(ProjectManifestSchema.parse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation" }).policy.maxReviewRounds).toBe(2);
     expect(effectiveMaxReviewRounds({ maxRepairAttempts: 0 })).toBe(1);
     expect(effectiveMaxReviewRounds({})).toBe(2);

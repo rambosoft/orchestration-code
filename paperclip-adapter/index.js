@@ -157,10 +157,23 @@ export function createServerAdapter() {
       const issueId = String(ctx.context.issueId ?? taskId);
       await addIssueComment(ctx, issueId, `Temporal workflow started: \`${workflowId}\` (profile \`${request.profile}\`; stage providers are set by the project manifest).`).catch(error => ctx.onLog("stderr", `Could not post start comment: ${String(error)}\n`));
       let lastStage = "";
+      let failedPolls = 0;
+      const pollMs = Number(ctx.config.pollIntervalMs ?? 1000);
+      const retryMs = Number(ctx.config.retryDelayMs ?? 2000);
       while (!ctx.signal?.aborted) {
-        const response = await fetch(`${base}/v1/runs/${encodeURIComponent(workflowId)}`, { headers, signal: ctx.signal });
-        if (!response.ok) return { exitCode: 1, signal: null, timedOut: false, errorMessage: `Workflow inspection failed (${response.status})` };
-        const state = await response.json();
+        let state;
+        try {
+          const response = await fetch(`${base}/v1/runs/${encodeURIComponent(workflowId)}`, { headers, signal: ctx.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          state = await response.json();
+          failedPolls = 0;
+        } catch (error) {
+          if (ctx.signal?.aborted) break;
+          // A bridge or network blip must not end a run that is still progressing in Temporal; give up only after a sustained outage.
+          if (++failedPolls >= 60) return { exitCode: 1, signal: null, timedOut: false, errorMessage: `Workflow inspection failed ${failedPolls} times in a row: ${String(error)}` };
+          await new Promise(resolve => setTimeout(resolve, retryMs));
+          continue;
+        }
         const stage = state.progress?.currentStage;
         if (stage && stage !== lastStage) { lastStage = stage; await ctx.onLog("stdout", `Temporal stage started: ${stage}\n`); }
       if (["COMPLETED", "FAILED", "CANCELED", "CANCELLED", "TERMINATED", "TIMED_OUT"].includes(state.status)) {
@@ -200,7 +213,14 @@ export function createServerAdapter() {
           }
           return { exitCode: published && paperclipUpdateOk ? 0 : 1, signal: null, timedOut: false, summary: result?.message ?? state.status, ...(!paperclipUpdateOk ? { errorMessage: "Workflow passed but Paperclip status/comment update failed; task requires recovery" } : {}) };
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, pollMs));
+      }
+      // Paperclip aborts a legacy adapter when its own controller lease lapses (for example when the Paperclip server was unreachable for a minute).
+      // That says nothing about the task: leave the workflow running so the work is not thrown away, and let it be reconciled afterwards.
+      const abortReason = String(ctx.signal?.reason?.message ?? ctx.signal?.reason ?? "");
+      if (/lease lost/i.test(abortReason)) {
+        await ctx.onLog("stderr", `Paperclip controller lease lost; leaving Temporal workflow ${workflowId} running. Inspect it with GET /v1/runs/${workflowId} (issue ${issueId}).\n`);
+        return { exitCode: null, signal: "SIGTERM", timedOut: false, errorMessage: `Paperclip controller lease lost; the Temporal workflow ${workflowId} was left running` };
       }
       await fetch(`${base}/v1/runs/${encodeURIComponent(workflowId)}/cancel`, { method: "POST", headers, signal: AbortSignal.timeout(3000) }).catch(() => {});
       return { exitCode: null, signal: "SIGTERM", timedOut: false, errorMessage: "Paperclip execution cancelled; Temporal cancellation requested" };

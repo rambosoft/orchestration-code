@@ -21,7 +21,15 @@
     "stack:down": "docker compose down",
     "reset:demo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-demo.ps1",
     "runs": "tsx src/cli.ts runs",
-    "setup": "npm ci"
+    "setup": "npm ci",
+    "doctor": "node dist/src/cli.js doctor",
+    "cleanup": "node dist/src/cli.js cleanup",
+    "drain": "node dist/src/cli.js drain",
+    "deploy:worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-worker.ps1",
+    "e2e": "node dist/src/e2e.js",
+    "check:chars": "node scripts/check-control-chars.mjs",
+    "scan:secrets": "tsx scripts/scan-secrets.ts",
+    "ci:linux": "sh scripts/ci-linux.sh"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.14.3",
@@ -29,6 +37,7 @@
     "@temporalio/client": "1.24.0",
     "@temporalio/worker": "1.24.0",
     "@temporalio/workflow": "1.24.0",
+    "playwright-core": "1.64.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
