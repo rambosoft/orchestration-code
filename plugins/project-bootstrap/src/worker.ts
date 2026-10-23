@@ -4,12 +4,13 @@ import { bridgeCall, pickRun, readBridgeSettings, type BridgeConfig, type RunRow
 
 // The worker is a thin, authenticated proxy to the orchestrator bridge: it holds no logic of its own, so a Paperclip upgrade can only affect the slots and the SDK
 // calls below. The bridge token is a secret reference, resolved at call time and never stored or logged.
+// The bridge call uses the worker's own fetch, not ctx.http.fetch: the host's SSRF guard (plugin-host-services.js) rejects every private address, so http://orchestrator:3101 could never pass. See ADR 0009.
 async function bridgeFor(ctx: PluginContext, companyId: string): Promise<{ config: BridgeConfig; call: <T>(method: "GET" | "POST", route: string, body?: unknown) => Promise<T> }> {
   if (!companyId) throw new Error("companyId is required");
   const settings = readBridgeSettings(await ctx.config.get(companyId));
   const token = await ctx.secrets.resolve(settings.tokenRef as never, { companyId });
   const config: BridgeConfig = { url: settings.url, token };
-  return { config, call: <T,>(method: "GET" | "POST", route: string, body?: unknown) => bridgeCall<T>(config, (url, init) => ctx.http.fetch(url, init), method, route, body) };
+  return { config, call: <T,>(method: "GET" | "POST", route: string, body?: unknown) => bridgeCall<T>(config, (url, init) => fetch(url, init), method, route, body) };
 }
 const text = (value: unknown) => typeof value === "string" ? value : "";
 
