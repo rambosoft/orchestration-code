@@ -6,7 +6,7 @@ export type Parent = { issueId: string; branch: string; headSha: string; prUrl: 
 /** `parent` starts the chain on an already published branch instead of the target branch. */
 export type E2eSpec = { projectId: string; parent?: Parent; tasks: E2eTask[] };
 export type StageSummary = { stage: string; provider: string; ok: boolean; seconds: number; inputTokens?: number; outputTokens?: number };
-export type TaskOutcome = { taskId: string; attempt: number; workflowId: string; status: "completed" | "failed" | "rejected" | "error"; message: string; stopReason?: string; publish?: PublishResult; stages: StageSummary[]; totalSeconds: number };
+export type TaskOutcome = { taskId: string; attempt: number; workflowId: string; status: RunResult["status"] | "error"; message: string; stopReason?: string; publish?: PublishResult; stages: StageSummary[]; totalSeconds: number };
 
 const num = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) ? value : undefined;
 

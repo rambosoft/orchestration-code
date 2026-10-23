@@ -86,14 +86,14 @@ export async function collectWorktree(input: { runId: string; projectRoot: strin
 }
 
 /** Commit, push, and create/update a draft PR. All commands are safe to retry. */
-export async function publishWorktree(input: { repository: RepositoryContext; worktree: string; taskId: string; prompt: string }, runner = runCommand): Promise<PublishResult> {
+export async function publishWorktree(input: { repository: RepositoryContext; worktree: string; taskId: string; prompt: string; /** "document": a read-only research or architecture run that only adds a report. Default: code. */ kind?: "implementation" | "document" }, runner = runCommand): Promise<PublishResult> {
   const { repository: repo, worktree } = input;
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
   if (status) await git(["add", "--all"], worktree, runner);
   // Inspect everything that would be published, including commits the agent made itself.
   const violations = await findPublishViolations(worktree, repo.baseSha, runner);
   if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
-  if (status) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
+  if (status) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", input.kind === "document" ? `docs(${input.taskId}): orchestrated report` : `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
   const headSha = await git(["rev-parse", "HEAD"], worktree, runner);
   if (headSha === repo.baseSha) throw new Error("publish gate failed: no changes were committed");
   await git(["push", "--set-upstream", repo.remote, repo.branch], worktree, runner);
@@ -111,7 +111,7 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
     if (parsed.isDraft === false) await runner("gh", ["pr", "ready", repo.branch, "--undo"], worktree);
     pr = { url: parsed.url, baseRefName: parsed.baseRefName };
   } else {
-    const body = `Paperclip task: ${input.taskId}\n\nAutomated review and deterministic quality gates passed.\n\n${input.prompt.slice(0, 6000)}`;
+    const body = `Paperclip task: ${input.taskId}\n\n${input.kind === "document" ? "Read-only exploration: this pull request only adds the report document; no code was changed." : "Automated review and deterministic quality gates passed."}\n\n${input.prompt.slice(0, 6000)}`;
     const created = await runner("gh", ["pr", "create", "--draft", "--base", repo.prBaseBranch, "--head", repo.branch, "--title", title, "--body", body], worktree);
     const url = created.match(/https:\/\/\S+/)?.[0];
     if (!url) throw new Error(`gh pr create did not return a PR URL: ${created.slice(0, 500)}`);

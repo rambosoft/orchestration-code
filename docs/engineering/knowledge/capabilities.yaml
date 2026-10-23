@@ -16,3 +16,6 @@ capabilities:
   - {id: stacked-prs-sync, status: claimed, evidence: "syncMergedStack mocked tests; uses force-with-lease"}
   - {id: budgets-cost-limits, status: broken, evidence: "none exist"}
   - {id: multi-stack-profiles, status: broken, evidence: "node/npm only"}
+  - {id: task-types-bug-flow, status: verified, evidence: "B-040: test/typed-flows.test.ts (fake provider, Temporal time-skipping env, real verifyReproduction against a temp git repo); not run with real Codex or Claude"}
+  - {id: task-types-research-architecture, status: verified, evidence: "B-040: test/typed-flows.test.ts (workflow with mocked activities, context pack on a temp repo); document PR publish is mocked, not run against GitHub"}
+  - {id: task-type-routing-from-paperclip-labels, status: claimed, evidence: "B-040: resolver unit-tested; the adapter forwards issue.labels names, which Paperclip's issue API returns (packages/shared Issue.labels); not exercised against a live Paperclip"}

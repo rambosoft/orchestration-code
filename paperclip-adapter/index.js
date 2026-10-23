@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const type = "temporal_orchestrator";
 export const label = "Temporal Orchestrator";
 export const models = [{ id: "workflow", label: "Temporal workflow (stage providers selected by project manifest)" }];
-export const agentConfigurationDoc = `# Temporal Orchestrator\n\nConfigure bridgeUrl, bridgeToken, and profile. The adapter selects the project from the assigned Paperclip issue and submits it to Temporal; each project must have a matching orchestrator manifest and workspace mounts. A configured projectId is an optional fallback only for legacy unscoped issues. Stage-level provider and model routes are controlled by each project's manifest. OpenSpec is enabled by default per project; add a standalone “OpenSpec: off” or “OpenSpec: on” line in a task to override it. Provider credentials remain on the Windows Temporal worker.`;
+export const agentConfigurationDoc = `# Temporal Orchestrator\n\nConfigure bridgeUrl, bridgeToken, and profile. The adapter selects the project from the assigned Paperclip issue and submits it to Temporal; each project must have a matching orchestrator manifest and workspace mounts. A configured projectId is an optional fallback only for legacy unscoped issues. Stage-level provider and model routes are controlled by each project's manifest. The task type comes from an issue label (type:bug, type:research, type:architecture, type:task or a bare bug/spike label), else a standalone “Type: bug” line in the task, else the agent profile; bugs are diagnosed and reproduced before the fix, research and architecture tasks only produce a report (draft PR plus comment). OpenSpec is enabled by default per project; add a standalone “OpenSpec: off” or “OpenSpec: on” line in a task to override it. Provider credentials remain on the Windows Temporal worker.`;
 
 export function resolveProjectId(issue, configuredProjectId) {
   const issueProjectId = typeof issue?.projectId === "string" ? issue.projectId.trim() : "";
@@ -20,6 +20,11 @@ export function parseOpenSpecTaskMarker(text) {
   const removed = new Set(directives.map(item => item.index));
   const clean = lines.filter((_line, index) => !removed.has(index)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return { text: clean, ...(directives.length ? { openSpec: values.has(true) } : {}) };
+}
+
+export function issueLabelNames(issue) {
+  const rows = Array.isArray(issue?.labels) ? issue.labels : [];
+  return rows.map(label => String(typeof label === "string" ? label : label?.name ?? "").trim()).filter(Boolean).slice(0, 50);
 }
 
 async function addIssueComment(ctx, issueId, body) {
@@ -138,6 +143,8 @@ export function createServerAdapter() {
         ...(taskControl.openSpec !== undefined ? { openSpec: taskControl.openSpec } : {}),
         ...(ctx.config.requireApproval != null ? { approval: Boolean(ctx.config.requireApproval) } : {}),
         ...(taskTitle ? { taskTitle: String(taskTitle) } : {}),
+        // Label names only: the bridge owns the mapping from labels to a task type (src/task-types.ts), so there is a single definition of it.
+        labels: issueLabelNames(issue),
         blockers: blockerRows.map(blocker => ({ id: String(blocker.id ?? blocker.identifier ?? "unknown"), status: String(blocker.status ?? "unknown") })),
         parentPublications,
       };
@@ -178,24 +185,28 @@ export function createServerAdapter() {
         if (stage && stage !== lastStage) { lastStage = stage; await ctx.onLog("stdout", `Temporal stage started: ${stage}\n`); }
       if (["COMPLETED", "FAILED", "CANCELED", "CANCELLED", "TERMINATED", "TIMED_OUT"].includes(state.status)) {
           const result = state.result;
-          const stageSummaries = (result?.stages ?? []).map(item => `${item.stage}: ${item.summary}`).join("\n");
+          // Research and architecture runs carry a rendered report; the stage summaries of those runs are raw JSON answers and are left out.
+          const stageSummaries = result?.report?.markdown ? `### ${result.report.title}\n\n${String(result.report.markdown).slice(0, 30000)}` : (result?.stages ?? []).map(item => `${item.stage}: ${item.summary}`).join("\n");
           const artifacts = result?.artifactRefs?.length ? `\nArtifacts: ${result.artifactRefs.map(ref => `\`${ref}\``).join(", ")}` : "\nNo artifacts were recorded.";
           const publication = result?.publish ? `\n\nBranch: \`${result.publish.branch}\`\nBase SHA: \`${result.publish.baseSha}\`\nHead SHA: \`${result.publish.headSha}\`\nDraft PR: ${result.publish.prUrl} (base \`${result.publish.prBaseBranch}\`)\nDone means gates passed and the draft PR was created; it does not mean merged.` : "";
           const metadata = result?.publish ? `\n<!-- orchestration-publish ${JSON.stringify(result.publish)} -->` : "";
           const failureText = String(result?.message ?? state.status);
-          const recovery = result?.status === "completed" ? "" : `\n\n### Recovery guidance\nThis run did not complete and must not be treated as reviewed, verified, or published. Preserve the failed run and its artifacts. Diagnose the failed stage and correct its cause first. Confirm the provider process has stopped and inspect the preserved worktree before retrying. Use Paperclip's linked Retry/recovery action so the successor run is associated with this failure. If Paperclip reports \`execution_reconciliation_required\`, do not launch a duplicate or force the issue to \`todo\`: reconcile the stopped execution and preserved changes through the active recovery action. If no recovery action exists, keep the issue blocked and ask a board operator to repair/create the recovery record before retrying. ${/timed out/i.test(failureText) ? "This was a timeout; check the failure artifact's configured timeout and duration, and increase only the affected project's stage timeout if the work is progressing normally." : ""}`;
+          const needsInfo = result?.status === "needs_info";
+          const recovery = result?.status === "completed" ? "" : needsInfo ? "\n\n### Action needed\nThe bug could not be reproduced or traced to a defect, so no code was changed. Add the missing details (steps, data, environment, expected versus actual behaviour) or reproduce it manually and describe the result, then move the task back to todo." :`\n\n### Recovery guidance\nThis run did not complete and must not be treated as reviewed, verified, or published. Preserve the failed run and its artifacts. Diagnose the failed stage and correct its cause first. Confirm the provider process has stopped and inspect the preserved worktree before retrying. Use Paperclip's linked Retry/recovery action so the successor run is associated with this failure. If Paperclip reports \`execution_reconciliation_required\`, do not launch a duplicate or force the issue to \`todo\`: reconcile the stopped execution and preserved changes through the active recovery action. If no recovery action exists, keep the issue blocked and ask a board operator to repair/create the recovery record before retrying. ${/timed out/i.test(failureText) ? "This was a timeout; check the failure artifact's configured timeout and duration, and increase only the affected project's stage timeout if the work is progressing normally." : ""}`;
           const report = `Temporal workflow \`${workflowId}\` finished with status **${result?.status ?? state.status}**. ${failureText}${stageSummaries ? `\n\n${stageSummaries}` : ""}${publication}${artifacts}${recovery}${metadata}`;
           await ctx.onLog("stdout", `${report}\n`);
           const published = result?.status === "completed" && (request.profile === "research" || result.publish?.prUrl && result.publish?.headSha);
           let paperclipUpdateOk = true;
-          if (published) {
+          // A bug that needs more information blocks the issue with the question as a comment; that is a normal outcome, not a failed run.
+          const targetStatus = published ? "done" : needsInfo ? "blocked" : null;
+          if (targetStatus) {
             const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
             if (token) {
               const paperclipApiUrl = String(ctx.config.paperclipApiUrl ?? "http://paperclip:3100").replace(/\/$/, "");
               const response = await fetch(`${paperclipApiUrl}/api/issues/${encodeURIComponent(issueId)}`, {
                 method: "PATCH",
                 headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-paperclip-run-id": ctx.runId },
-                body: JSON.stringify({ status: "done", comment: report }),
+                body: JSON.stringify({ status: targetStatus, comment: report }),
                 signal: ctx.signal,
               });
               if (!response.ok) {
@@ -211,7 +222,7 @@ export function createServerAdapter() {
           } else {
             await addIssueComment(ctx, issueId, report).catch(error => ctx.onLog("stderr", `Could not post result comment: ${String(error)}\n`));
           }
-          return { exitCode: published && paperclipUpdateOk ? 0 : 1, signal: null, timedOut: false, summary: result?.message ?? state.status, ...(!paperclipUpdateOk ? { errorMessage: "Workflow passed but Paperclip status/comment update failed; task requires recovery" } : {}) };
+          return { exitCode: targetStatus && paperclipUpdateOk ? 0 : 1, signal: null, timedOut: false, summary: result?.message ?? state.status, ...(!paperclipUpdateOk ? { errorMessage: "Workflow passed but Paperclip status/comment update failed; task requires recovery" } : {}) };
         }
         await new Promise(resolve => setTimeout(resolve, pollMs));
       }

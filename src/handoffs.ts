@@ -12,7 +12,7 @@ import { parseJsonLoose } from "./json-extract.js";
 // SPEC_SOFT_LIMIT_CHARS is accepted and recorded as a warning (see specSizeWarnings); only output-side budgets that have a
 // compress-or-fallback path (plan, brief, digest) are tight.
 export const SPEC_SOFT_LIMIT_CHARS = 10_000;
-export const HANDOFF_BUDGETS = { planningContext: 12_000, openSpecDigest: 5_000, analysis: 4_000, plan: 900, brief: 1700, reviewChecklist: 900 } as const;
+export const HANDOFF_BUDGETS = { planningContext: 12_000, openSpecDigest: 5_000, analysis: 4_000, diagnosis: 4_000, reproduction: 1_500, scope: 1_500, exploration: 6_000, plan: 900, brief: 1700, reviewChecklist: 900 } as const;
 
 /** Warnings, not failures, for specification text beyond the soft limit: a very large change is usually better split. */
 export function specSizeWarnings(changeContext: string, digestJson = ""): string[] {

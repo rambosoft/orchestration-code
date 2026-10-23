@@ -14,3 +14,8 @@
 - LOC-38 (difficulty curve, run 4) completed through Paperclip: all stages, analysis doc, draft PR rambosoft/dino-runner#5, one size warning shown (spec 10298 chars). It survived the worker being down ~38 min (Temporal held the workflow).
 - FM-037 mitigated (adapter detaches on lease loss; deployed via Paperclip restart). Open: reconcile command not built.
 - B-033 added `dev drain` and `scripts/deploy-worker.ps1`.
+
+## 2026-10-23 update (task types, B-040)
+- Done: task-type registry and label routing, bug flow (parallel diagnose and reproduce with cross-fed hints, verified reproduction, regression gate, `needs_info`), research and architecture flow (bounded context pack, report as draft doc PR and issue comment). ADR 0008. Replay fixture unchanged.
+- Verified: unit and workflow tests with the fake provider (typed-flows, task-types suites) and the existing suites. Not verified: a real Codex or Claude run of the new flows, a live Paperclip label reaching the bridge, a real GitHub document PR.
+- Next: deploy (build, restart worker, `docker compose up -d --build orchestrator`, Paperclip adapter restart), create a `type:bug` and a `type:research` issue on a test project and read the comments; then decide on the refactor type.
