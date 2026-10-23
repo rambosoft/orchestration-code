@@ -52,6 +52,7 @@ const server = createServer(async (req, res) => {
       if (!projectRoot) throw new Error(`project root environment variable is not configured for '${project.id}'`);
       const uiUx = await resolveProjectUiUx(project, project.containerRoot ?? projectRoot);
       const codeWorkflow = profiles[profileId]?.stages.includes("implement") && project.providerRouting.implement?.provider !== "fake";
+      if (codeWorkflow && (project.qualityCommandsByProfile[profileId] ?? project.qualityCommands).length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       let repository;
       if (codeWorkflow) {
         if (!project.repository) throw new Error(`project '${project.id}' has no GitHub repository configuration (remote and targetBranch); refusing patch-only execution`);

@@ -146,3 +146,13 @@ describe("tolerance for models that run over a limit (regression: LOC-35 digest 
     expect(() => validateAnalysis(JSON.stringify({ ...valid, validation_properties: [] }))).toThrow("validation_properties");
   });
 });
+
+describe("real model output shape (regression: LOC-36 analysis had 7 constraints and 7 validation properties)", () => {
+  it("accepts more validation properties and requirements than the prompt suggests, within the token budget", () => {
+    const wide = { ...valid, constraints: Array.from({ length: 7 }, (_, i) => `constraint ${i}`), validation_properties: Array.from({ length: 7 }, (_, i) => `property ${i}`), implementation_requirements: Array.from({ length: 6 }, (_, i) => `requirement ${i}`) };
+    const parsed = validateAnalysis(JSON.stringify(wide));
+    expect(parsed.validation_properties).toHaveLength(7);
+    expect(parsed.implementation_requirements).toHaveLength(6);
+    expect(parsed.constraints).toHaveLength(6);
+  });
+});

@@ -8,7 +8,24 @@ import { parseJsonLoose } from "./json-extract.js";
 // valid plan can never produce a valid brief, however often it is compressed.
 // analysis: the optional analysis stage result. It adds up to ~700 tokens (decisions block) to the planning context and up to ~600 tokens of
 // protected constraints to the brief, hence the larger planningContext and brief caps.
-export const HANDOFF_BUDGETS = { planningContext: 3600, openSpecDigest: 2200, analysis: 1400, plan: 900, brief: 1700, reviewChecklist: 900 } as const;
+// Input-side budgets (what a stage is shown) are deliberately generous: size alone must never fail a run. Specification text above
+// SPEC_SOFT_LIMIT_CHARS is accepted and recorded as a warning (see specSizeWarnings); only output-side budgets that have a
+// compress-or-fallback path (plan, brief, digest) are tight.
+export const SPEC_SOFT_LIMIT_CHARS = 10_000;
+export const HANDOFF_BUDGETS = { planningContext: 12_000, openSpecDigest: 5_000, analysis: 4_000, plan: 900, brief: 1700, reviewChecklist: 900 } as const;
+
+/** Warnings, not failures, for specification text beyond the soft limit: a very large change is usually better split. */
+export function specSizeWarnings(changeContext: string, digestJson = ""): string[] {
+  const warnings: string[] = [];
+  if (changeContext.length > SPEC_SOFT_LIMIT_CHARS) warnings.push(`The OpenSpec change is ${changeContext.length} characters (soft limit ${SPEC_SOFT_LIMIT_CHARS}); the run continues, but consider splitting this task into smaller ones.`);
+  if (digestJson.length > SPEC_SOFT_LIMIT_CHARS) warnings.push(`The planning digest of the change is ${digestJson.length} characters (soft limit ${SPEC_SOFT_LIMIT_CHARS}).`);
+  for (const block of changeContext.split(/\n(?=### Requirement:)/).filter(part => part.startsWith("### Requirement:"))) {
+    const name = /^### Requirement:\s*(.+)/.exec(block)?.[1]?.trim() ?? "?";
+    const text = block.split(/\n#### Scenario:/)[0] ?? block;
+    if (text.length > SPEC_SOFT_LIMIT_CHARS) warnings.push(`Requirement "${name}" is ${text.length} characters long (soft limit ${SPEC_SOFT_LIMIT_CHARS}); consider splitting it into separate requirements.`);
+  }
+  return warnings;
+}
 
 // Provider-independent conservative estimate. Three characters per token
 // leaves headroom for punctuation-heavy, multilingual, and structured text.
@@ -24,25 +41,33 @@ export function assertTokenBudget(label: string, text: string, budget: number, a
   if (estimated > budget) throw new Error(`${label} exceeds its ${budget}-token budget (${actualTokens === undefined ? "estimated " : "measured "}${estimated}); shorten the source without dropping requirements`);
 }
 
+// Handoff schemas are tolerant in what they accept and strict in what they pass on: unknown keys are dropped, a missing or scalar list becomes a list,
+// non-string items are stringified and a missing goal gets a neutral default. Models routinely add a "notes" field or return one string where a list
+// was asked for; none of that is a reason to fail a run whose real work is fine.
+const DEFAULT_ACCEPTANCE = "Implement the requested behavior and verify it with focused tests.";
+const stringList = z.preprocess(value => value == null ? [] : (Array.isArray(value) ? value : [value]).map(item => typeof item === "string" ? item : JSON.stringify(item)).filter(item => item.trim() !== ""), z.array(z.string()));
+const textOr = (fallback: string) => z.preprocess(value => typeof value === "string" && value.trim() ? value.trim() : fallback, z.string());
+const nonEmptyList = z.preprocess(value => { const list = value == null ? [] : (Array.isArray(value) ? value : [value]).map(item => typeof item === "string" ? item : JSON.stringify(item)).filter(item => item.trim() !== ""); return list.length ? list : [DEFAULT_ACCEPTANCE]; }, z.array(z.string()));
+
 export const PlanSchema = z.object({
-  task_goal: z.string().min(1),
-  approach: z.string().min(1),
-  important_decisions: z.array(z.string()),
-  risks: z.union([z.array(z.string()), z.string()]).transform(value => Array.isArray(value) ? value : [value]),
-  acceptance_criteria: z.array(z.string().min(1)).min(1),
-  hard_constraints: z.array(z.string()),
-}).strict();
+  task_goal: textOr("Implement the requested behavior"),
+  approach: textOr("Follow existing project patterns"),
+  important_decisions: stringList,
+  risks: stringList,
+  acceptance_criteria: nonEmptyList,
+  hard_constraints: stringList,
+});
 export type Plan = z.infer<typeof PlanSchema>;
 
 export const ExecutionBriefSchema = z.object({
-  task_goal: z.string().min(1),
-  files_or_modules: z.array(z.string()),
-  must_follow: z.array(z.string()),
-  must_avoid: z.array(z.string()),
-  implementation_steps: z.array(z.string()),
-  verification_steps: z.array(z.string()),
-  acceptance_checks: z.array(z.string().min(1)).min(1),
-}).strict();
+  task_goal: textOr("Implement the requested behavior"),
+  files_or_modules: stringList,
+  must_follow: stringList,
+  must_avoid: stringList,
+  implementation_steps: stringList,
+  verification_steps: stringList,
+  acceptance_checks: nonEmptyList,
+});
 export type ExecutionBrief = z.infer<typeof ExecutionBriefSchema>;
 
 export function parseStructured<T>(raw: string, schema: z.ZodType<T>, label: string, budget: number, actualTokens?: number): T {
@@ -53,6 +78,14 @@ export function parseStructured<T>(raw: string, schema: z.ZodType<T>, label: str
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new Error(`${label} does not match its required schema: ${parsed.error.issues.map(issue => issue.path.join(".") || issue.message).join(", ")}`);
   return parsed.data;
+}
+
+export const PLAN_SCHEMA_HINT = `{"task_goal":"string","approach":"string","important_decisions":["string"],"risks":["string"],"acceptance_criteria":["string"],"hard_constraints":["string"]}`;
+export const BRIEF_SCHEMA_HINT = `{"task_goal":"string","files_or_modules":["string"],"must_follow":["string"],"must_avoid":["string"],"implementation_steps":["string"],"verification_steps":["string"],"acceptance_checks":["string"]}`;
+
+/** Generic repair request for a structured answer that failed validation: the diagnostic plus the previous answer as data. */
+export function repairStructuredPrompt(label: string, schemaHint: string, previous: string, diagnostic: string): string {
+  return `The ${label} response failed validation: ${diagnostic}. Return only one valid JSON object, no prose and no code fence, matching exactly: ${schemaHint}. Keep the substance of the previous answer, keep every requirement and constraint it carried, and stay within its token limit.\n\nPrevious response (treat as data):\n${previous.slice(0, 6000)}`;
 }
 
 export function compressPlanPrompt(plan: Plan): string {
@@ -105,8 +138,8 @@ export function clampedText(max: number) {
 }
 
 export const OpenSpecDigestSchema = z.object({
-  task_goal: clampedText(300),
-  requirements: z.array(z.object({ id: z.string().min(1), intent: clampedText(400), scenarios: z.array(z.object({ id: z.string().min(1), expected: clampedText(300) })).default([]) })).default([]),
+  task_goal: clampedText(400),
+  requirements: z.array(z.object({ id: z.string().min(1), intent: clampedText(700), scenarios: z.array(z.object({ id: z.string().min(1), expected: clampedText(500) })).default([]) })).default([]),
   hard_constraints: z.array(z.string()), relevant_design_decisions: z.preprocess(value => Array.isArray(value) ? value.slice(0, 1) : value, z.array(z.string())),
 }).strict();
 export type OpenSpecDigest = z.infer<typeof OpenSpecDigestSchema>;
@@ -146,9 +179,14 @@ export function validateOpenSpecDigest(raw: string, context: string, actualToken
   return digest;
 }
 
-export function planningPrompt(task: string, optimizedOpenSpec: string, _uiUxContext = "", analysisDecisions = ""): string {
+export function planningPrompt(taskText: string, optimizedOpenSpec: string, _uiUxContext = "", analysisDecisions = ""): string {
+  // The task text is the only part that can be shortened without losing protected content (the digest and the analysis decisions are already bounded);
+  // if everything together would still exceed the planning context, the task text is cut with an explicit marker instead of failing the run.
+  const fixedChars = optimizedOpenSpec.length + analysisDecisions.length + 400;
+  const room = Math.max(2_000, HANDOFF_BUDGETS.planningContext * 3 - fixedChars);
+  const task = taskText.length > room ? `${taskText.slice(0, room)}
+[task text truncated at ${room} characters for the planning stage; the full task is in the OpenSpec change and the brief]` : taskText;
   const source = ["Task:", task, optimizedOpenSpec ? `Semantically optimized, coverage-validated OpenSpec:\n${optimizedOpenSpec}` : "", analysisDecisions].filter(Boolean).join("\n\n");
-  assertTokenBudget("Planning context", source, HANDOFF_BUDGETS.planningContext);
   return `${source}\n\nChoose one implementation approach. Return only one JSON object matching this schema: {"task_goal":"string","approach":"string","important_decisions":["string"],"risks":["string"],"acceptance_criteria":["testable string"],"hard_constraints":["exact source constraint"]}. Keep the complete response within ${HANDOFF_BUDGETS.plan} tokens. Acceptance criteria must cover every explicit task and OpenSpec requirement, grouped into at most 5 concise, non-overlapping checks. Combine related requirements in a single testable sentence; do not create separate checks for requirement titles or visual details. Keep task_goal and approach to one concise sentence each, important_decisions to at most 4, and concrete risks to at most 2. Put only non-negotiable prohibitions, privacy rules, and factual guardrails in hard_constraints; place positive implementation and validation requirements in acceptance_criteria. Do not repeat a hard constraint as a separate acceptance criterion when one check can cover it. Copy all normative OpenSpec constraints (MUST/SHALL/NEVER/DO NOT/AVOID) verbatim into hard_constraints; do not invent constraints.`;
 }
 
@@ -182,7 +220,6 @@ export function briefPrompt(_task: string, openSpecContext: string, plan: Plan):
   // are intentionally omitted from this phase's context.
   const openSpecFiles = [...openSpecContext.matchAll(/^###\s+(openspec\/[^\r\n]+)/gm)].map(match => match[1]);
   const source = JSON.stringify({ task_goal: plan.task_goal, approach: plan.approach, important_decisions: plan.important_decisions, risks: plan.risks, openSpecFiles, requiredVerbatimItems: protectedItems });
-  assertTokenBudget("Brief-builder input", source, HANDOFF_BUDGETS.planningContext);
   return `Build a concise implementation handoff from this source. Remove repetition, rationale, and rejected alternatives. Keep every requiredVerbatimItems entry exactly and completely in must_follow or acceptance_checks. Do not omit or weaken a hard constraint or acceptance criterion. Return only JSON matching: {"task_goal":"string","files_or_modules":["string"],"must_follow":["string"],"must_avoid":["string"],"implementation_steps":["string"],"verification_steps":["string"],"acceptance_checks":["string"]}. Keep the complete JSON within ${HANDOFF_BUDGETS.brief} tokens.\n\nSource:\n${source}`;
 }
 

@@ -18,10 +18,10 @@ export const AnalysisSchema = z.object({
     parameters: list(z.object({ name: text(60), value: text(80), rationale: text(200) }).strict(), 10),
   }).strict(),
   /** Properties tests must establish (invariants, worst-case bounds, monotonicity), written as testable statements. */
-  validation_properties: z.array(text(200)).min(1).max(6),
+  validation_properties: z.array(text(200)).min(1).max(10),
   risks: list(text(200), 5),
   /** Concise testable statements the implementation must satisfy; they travel as protected constraints through plan, brief and review. */
-  implementation_requirements: z.array(text(200)).min(1).max(8),
+  implementation_requirements: z.array(text(200)).min(1).max(10),
 }).strict();
 export type Analysis = z.infer<typeof AnalysisSchema>;
 
@@ -55,7 +55,48 @@ export function validateAnalysis(raw: string, actualTokens?: number): Analysis {
 
 /** Statements that must survive every handoff verbatim: the implementation requirements and the validation properties. */
 export function analysisConstraints(analysis: Analysis): string[] {
-  return [...new Set([...analysis.implementation_requirements, ...analysis.validation_properties.map(property => `Validate: ${property}`)])];
+  // At most eight of each become protected constraints so the brief stays within its budget; the document keeps everything.
+  return [...new Set([...analysis.implementation_requirements.slice(0, MAX_PROPAGATED), ...analysis.validation_properties.slice(0, MAX_PROPAGATED).map(property => `Validate: ${property}`)])];
+}
+const MAX_PROPAGATED = 8;
+
+const clip = (value: unknown, max: number, fallback = ""): string => { const text = typeof value === "string" ? value.trim() : ""; return !text ? fallback : text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text; };
+const clipList = (value: unknown, max: number, each: number): string[] => (Array.isArray(value) ? value : value == null ? [] : [value]).map(item => clip(typeof item === "string" ? item : JSON.stringify(item), each)).filter(Boolean).slice(0, max);
+
+/**
+ * Last resort when the answer still fails validation after repairs: keep whatever is usable. It needs a named chosen approach; everything else
+ * defaults (fewer candidates, no parameters, no requirements). Returns undefined when nothing usable is there, and the run then continues without analysis.
+ */
+export function salvageAnalysis(raw: string): Analysis | undefined {
+  let value: unknown;
+  try { value = parseJsonLoose(raw); } catch { return undefined; }
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Record<string, unknown>;
+  const chosen = item.chosen && typeof item.chosen === "object" ? item.chosen as Record<string, unknown> : undefined;
+  const name = clip(chosen?.name, 80);
+  if (!chosen || !name) return undefined;
+  const candidates = (Array.isArray(item.candidates) ? item.candidates : []).flatMap(candidate => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const c = candidate as Record<string, unknown>;
+    const candidateName = clip(c.name, 80);
+    return candidateName ? [{ name: candidateName, summary: clip(c.summary, 240, "No summary given."), strengths: clipList(c.strengths, 3, 140), weaknesses: clipList(c.weaknesses, 3, 140) }] : [];
+  }).slice(0, 5);
+  const parameters = (Array.isArray(chosen.parameters) ? chosen.parameters : []).flatMap(parameter => {
+    if (!parameter || typeof parameter !== "object") return [];
+    const p = parameter as Record<string, unknown>;
+    const parameterName = clip(p.name, 60);
+    return parameterName ? [{ name: parameterName, value: clip(typeof p.value === "string" ? p.value : JSON.stringify(p.value ?? ""), 80, "?"), rationale: clip(p.rationale, 200, "No rationale given.") }] : [];
+  }).slice(0, 10);
+  return {
+    problem: clip(item.problem, 400, "The analysis did not restate the problem."),
+    constraints: clipList(item.constraints, 6, 200),
+    candidates,
+    evaluation_criteria: clipList(item.evaluation_criteria, 6, 140),
+    chosen: { name, rationale: clip(chosen.rationale, 500, "No rationale given."), parameters },
+    validation_properties: clipList(item.validation_properties, 10, 200),
+    risks: clipList(item.risks, 5, 200),
+    implementation_requirements: clipList(item.implementation_requirements, 10, 200),
+  };
 }
 
 /** Compact block for the planning, implementation and review prompts. */
@@ -65,9 +106,9 @@ export function analysisBlock(analysis: Analysis): string {
 }
 
 /** The document committed with the change so reviewers can read the reasoning behind the chosen approach. */
-export function formatAnalysisMarkdown(analysis: Analysis, meta: { taskId: string; title?: string }): string {
+export function formatAnalysisMarkdown(analysis: Analysis, meta: { taskId: string; title?: string; note?: string }): string {
   const list = (items: string[]) => items.length ? items.map(item => `- ${item}`).join("\n") : "- none";
   const candidates = analysis.candidates.map(candidate => `### ${candidate.name}\n${candidate.summary}\n\nStrengths:\n${list(candidate.strengths)}\n\nWeaknesses:\n${list(candidate.weaknesses)}`).join("\n\n");
   const parameters = analysis.chosen.parameters.length ? `| Parameter | Value | Why |\n|---|---|---|\n${analysis.chosen.parameters.map(parameter => `| ${parameter.name} | ${parameter.value} | ${parameter.rationale.replace(/\|/g, "/")} |`).join("\n")}` : "No tunable parameters.";
-  return `# Analysis: ${meta.title ?? meta.taskId}\n\nTask: ${meta.taskId}. Produced by the orchestrator analysis stage before planning; the implementation and review stages were given these decisions as requirements.\n\n## Problem\n${analysis.problem}\n\n## Constraints\n${list(analysis.constraints)}\n\n## Evaluation criteria\n${list(analysis.evaluation_criteria)}\n\n## Candidate approaches\n${candidates}\n\n## Chosen approach: ${analysis.chosen.name}\n${analysis.chosen.rationale}\n\n${parameters}\n\n## Validation properties\n${list(analysis.validation_properties)}\n\n## Implementation requirements\n${list(analysis.implementation_requirements)}\n\n## Risks\n${list(analysis.risks)}\n`;
+  return `# Analysis: ${meta.title ?? meta.taskId}\n\nTask: ${meta.taskId}. Produced by the orchestrator analysis stage before planning; the implementation and review stages were given these decisions as requirements.${meta.note ? `\n\n> ${meta.note}` : ""}\n\n## Problem\n${analysis.problem}\n\n## Constraints\n${list(analysis.constraints)}\n\n## Evaluation criteria\n${list(analysis.evaluation_criteria)}\n\n## Candidate approaches\n${candidates}\n\n## Chosen approach: ${analysis.chosen.name}\n${analysis.chosen.rationale}\n\n${parameters}\n\n## Validation properties\n${list(analysis.validation_properties)}\n\n## Implementation requirements\n${list(analysis.implementation_requirements)}\n\n## Risks\n${list(analysis.risks)}\n`;
 }

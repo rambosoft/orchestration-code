@@ -4,6 +4,7 @@ import path from "node:path";
 import { StageOutputSchema, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { getProvider } from "./providers.js";
+import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
@@ -80,8 +81,11 @@ export function runCheck(executable: string, args: string[], cwd: string, maxOut
   });
 }
 
-export function reviewPromptWithDiff(prompt: string, diff: string): string {
-  return `${prompt}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, 40_000)}`;
+export const REVIEW_DIFF_LIMIT = 60_000;
+/** The reviewer always sees the list of changed files; a truncated diff says so and tells the reviewer to read the rest itself. */
+export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles = ""): string {
+  const truncated = diff.length > REVIEW_DIFF_LIMIT;
+  return `${prompt}${changedFiles ? `\n\nChanged files:\n${changedFiles}` : ""}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, REVIEW_DIFF_LIMIT)}${truncated ? `\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters: inspect the remaining changes yourself with git diff and by reading the files before you decide]` : ""}`;
 }
 
 /** Install locked npm dependencies in a fresh isolated worktree before agents or quality checks use them. */
@@ -175,9 +179,10 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     // Give every real reviewer the implementation itself, including newly
     // created files, rather than asking it to review only the task summary.
     await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
-    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, 40_000);
+    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, REVIEW_DIFF_LIMIT + 1);
+    const changed = await runCheck("git", ["diff", "--stat", "--stat-width=140", "HEAD"], input.projectRoot, 6_000);
     if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
-    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output);
+    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
   }
   // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
   const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
@@ -207,7 +212,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
   }
   const parsed = StageOutputSchema.safeParse(result);
   if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
-  const providerOutput = parsed.data;
+  // CLI reviewers (codex, claude) return prose or JSON text; without this the verdict was never enforced and blocking findings passed the gate.
+  const providerOutput = input.stage === "review" ? applyReviewAssessment(parsed.data) : parsed.data;
   const out: StageOutput = input.stage === "verify" && input.provider !== "fake"
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };

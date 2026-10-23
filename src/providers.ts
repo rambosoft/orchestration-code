@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { ReviewAssessmentSchema, type ReviewAssessment, type StageInput, type StageOutput } from "./contracts.js";
+import { type StageInput, type StageOutput } from "./contracts.js";
+import { parseReviewAssessment, reviewOutcome } from "./review.js";
 import { resolveRtkStatus } from "./rtk.js";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
@@ -20,23 +21,6 @@ function redact(text: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
     .replace(/\b(?:sk|AIza)[-_A-Za-z0-9]{20,}\b/g, "[REDACTED CREDENTIAL]")
     .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
-}
-function parseReviewAssessment(text: string): ReviewAssessment {
-  const candidates = [text, text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? "", text.match(/\{[\s\S]*\}/)?.[0] ?? ""];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      const parsed = ReviewAssessmentSchema.safeParse(JSON.parse(candidate));
-      if (parsed.success) return parsed.data;
-    } catch { /* try the next supported response form */ }
-  }
-  const verdict = /(?:^|\n)\s*(?:\*\*)?VERDICT:\s*(PASS|NEEDS_CHANGES)(?:\*\*)?/i.exec(text)?.[1]?.toLowerCase();
-  if (verdict === "pass" || verdict === "needs_changes") {
-    const details = text.replace(/(?:^|\n)\s*(?:\*\*)?VERDICT:\s*(?:PASS|NEEDS_CHANGES)(?:\*\*)?/i, "").trim();
-    const findings = verdict === "needs_changes" ? [{ severity: "high" as const, category: "functional" as const, title: details.slice(0, 180) || "Review identified a blocking defect", evidence: details || text, fixableInCode: true }] : [];
-    return { verdict, findings, notes: [] };
-  }
-  throw new Error("review provider returned an invalid structured assessment; expected verdict, findings, and notes JSON");
 }
 export class FakeProvider implements AgentProvider {
   readonly id = "fake";
@@ -82,7 +66,7 @@ export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], e
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
 export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string): string[] {
   const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
-  return ["-p", "--permission-mode", stage === "implement" ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 10),
+  return ["-p", "--permission-mode", stage === "implement" ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
     ...(stage === "implement" ? ["--allowedTools=Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)"] : []),
     ...(model ? ["--model", model] : []), "--output-format", "json", prompt];
 }
@@ -124,14 +108,20 @@ export function cliProviderEnvironment(environment: NodeJS.ProcessEnv = process.
   return childEnv(environment, PROVIDER_CREDENTIALS);
 }
 
+/** Real tasks are not small: implementation gets 30 minutes by default, analysis and review 15, planning 10. A manifest providerTimeouts entry overrides these. */
+export function defaultProviderTimeoutMs(stage: StageInput["stage"]): number {
+  const minutes: Record<StageInput["stage"], number> = { implement: 30, openspec: 15, analyze: 15, review: 15, research: 15, plan: 10, spec_optimize: 5, brief: 5, verify: 5 };
+  return minutes[stage] * 60_000;
+}
+
 export function cliInstruction(stage: StageInput["stage"], prompt: string, rtkActive: boolean): string {
   return `${stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands unrelated to the task. Work only in this isolated project worktree.${rtkActive ? " RTK command-output filtering is enabled; if a compact result omits needed detail, rerun that command with `rtk bypass <command>`." : ""} Task: ${prompt}`;
 }
 
 export class CliProvider implements AgentProvider {
-  constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs = 180_000) {}
+  constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs?: number) {}
   async run(input: StageInput): Promise<StageOutput> {
-    const spec = specs[this.id]; const started = Date.now(); const timeoutMs = input.providerTimeoutMs ?? this.defaultTimeoutMs;
+    const spec = specs[this.id]; const started = Date.now(); const timeoutMs = input.providerTimeoutMs ?? this.defaultTimeoutMs ?? defaultProviderTimeoutMs(input.stage);
     const rtk = this.id === "codex" && input.stage === "implement"
       ? await resolveRtkStatus({ plugins: input.plugins, stage: input.stage, provider: this.id, projectRoot: input.projectRoot })
       : { active: false as const, reason: "unsupported-stage-or-provider" as const };
@@ -229,11 +219,10 @@ export class OpenRouterProvider implements AgentProvider {
     if (!summary.trim()) throw new Error("OpenRouter returned no text content");
     const safeSummary = capSummary(redact(summary).replaceAll(this.apiKey, "[REDACTED]"));
     const review = input.stage === "review" ? parseReviewAssessment(safeSummary) : undefined;
-    const repairFindings = review?.findings ?? [];
-    const blocking = repairFindings.some(f => ["critical", "high"].includes(f.severity) && f.fixableInCode && !["environment", "approval"].includes(f.category));
-    const findings = repairFindings.map(f => `[${f.severity}/${f.category}] ${f.title}: ${f.evidence}`);
+    if (input.stage === "review" && !review) return { ok: false, summary: safeSummary, findings: ["Review output could not be read as an assessment"], artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata: { model: payload.model ?? input.model, ...(payload.usage ? { usage: payload.usage } : {}), reviewUnparseable: true } };
+    const outcome = review ? reviewOutcome(review) : undefined;
     const notes = review?.notes.map(f => `[${f.severity}/${f.category}] ${f.title}: ${f.evidence}`) ?? [];
-    return { ok: input.stage === "review" ? !blocking && !repairFindings.some(f => f.category === "environment" || f.category === "approval" || !f.fixableInCode) : true, summary: safeSummary, findings, review, artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata: { model: payload.model ?? input.model, ...(payload.usage ? { usage: payload.usage } : {}), ...(review ? { review: { blockingCount: repairFindings.filter(f => ["critical", "high"].includes(f.severity) && f.fixableInCode).length, noteCount: notes.length } } : {}) } };
+    return { ok: outcome ? outcome.ok : true, summary: safeSummary, findings: outcome?.findings ?? [], ...(review ? { review } : {}), artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata: { model: payload.model ?? input.model, ...(payload.usage ? { usage: payload.usage } : {}), ...(review ? { review: { blockingCount: review.findings.filter(f => ["critical", "high"].includes(f.severity) && f.fixableInCode).length, noteCount: notes.length } } : {}) } };
   }
 }
 

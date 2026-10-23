@@ -9,6 +9,7 @@ export { makeOpenSpecChangeId, openSpecProposalPrompt, parseOpenSpecTaskPrompt, 
 export const OPEN_SPEC_VERSION = "1.14.3";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
+import { parseJsonLoose } from "./json-extract.js";
 import { findDeltaProblems } from "./openspec-delta.js";
 const require = createRequire(import.meta.url);
 const packageEntry = require.resolve("@fission-ai/openspec");
@@ -44,6 +45,27 @@ export const runOpenSpecCommand: OpenSpecCommandRunner = (args, cwd) => new Prom
 function parseJsonOutput<T>(result: CliResult, command: string): T {
   try { return JSON.parse(result.stdout) as T; }
   catch { throw new Error(`OpenSpec ${command} returned invalid JSON: ${result.stdout.slice(0, 1000)}`); }
+}
+
+/** Style-only findings that OpenSpec reports as warnings (and strict mode turns into failures); they must not block good work. */
+// Every size or style rule in OpenSpec's validator: long or brief requirement/why/purpose/delta text, "consider splitting", and the placeholder purpose
+// that `openspec archive` itself writes for a new capability. None of them says the specification is wrong.
+const COSMETIC_VALIDATION = /very long|should not exceed|too brief|too short|consider splitting|placeholder rather than|\b\d{3,}\s+characters\b|recommended length/i;
+
+/**
+ * Run an OpenSpec validation command. A failure consisting only of cosmetic warnings (for example a long requirement text) is accepted;
+ * structural problems such as requirements that would be ignored still fail with the validator output.
+ */
+export async function runValidation(runner: OpenSpecCommandRunner, args: string[], root: string): Promise<CliResult> {
+  try { return await runner(args, root); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    let report: ValidationReport | undefined;
+    try { report = parseJsonLoose(message) as ValidationReport; } catch { report = undefined; }
+    const issues = report?.items?.flatMap(item => item.issues ?? []) ?? [];
+    if (report && issues.length > 0 && issues.every(issue => COSMETIC_VALIDATION.test(issue.message ?? ""))) return { stdout: JSON.stringify({ items: [], summary: { totals: { failed: 0 } } }), stderr: `cosmetic warnings ignored: ${issues.map(issue => issue.message).join("; ").slice(0, 400)}` };
+    throw error;
+  }
 }
 
 function assertSupportedNode(): void {
@@ -128,7 +150,8 @@ export async function validateOpenSpec(input: { changeId: string; projectRoot: s
   const deltaFiles = changedFiles.filter(file => file.startsWith(`openspec/changes/${input.changeId}/specs/`));
   if (!skipSpecs && deltaFiles.length === 0) throw new Error(`OpenSpec proposal '${input.changeId}' has no specification delta; set skip_specs only for a change that truly does not alter behavior`);
 
-  const validationResult = await runner(["validate", input.changeId, "--strict", "--no-interactive", "--json"], root);
+  const validationResult = await runValidation(runner, ["validate", input.changeId, "--strict", "--no-interactive", "--json"], root);
+  const ignoredWarnings = validationResult.stderr.startsWith("cosmetic warnings ignored") ? [validationResult.stderr] : [];
   const validation = parseJsonOutput<ValidationReport>(validationResult, "validate");
   const invalid = validation.items?.filter(item => item.valid === false) ?? [];
   if ((validation.summary?.totals?.failed ?? invalid.length) > 0 || invalid.length > 0) {
@@ -154,7 +177,7 @@ export async function validateOpenSpec(input: { changeId: string; projectRoot: s
   await mkdir(input.artifactsDir, { recursive: true });
   const artifactRef = path.join(input.artifactsDir, `openspec-${input.changeId}-context.md`);
   await writeFile(artifactRef, context, "utf8");
-  return { context, artifactRef, version: OPEN_SPEC_VERSION };
+  return { context, artifactRef, version: OPEN_SPEC_VERSION, ...(ignoredWarnings.length ? { warnings: ignoredWarnings } : {}) };
 }
 
 type OpenSpecList = { changes?: Array<{ name?: string; status?: string; archived?: boolean; path?: string }> };
@@ -178,7 +201,7 @@ export async function archiveOpenSpec(input: { changeId: string; projectRoot: st
     if (result.archive?.change !== input.changeId || !result.archive.path) throw new Error(`OpenSpec archive returned no confirmed archive path for '${input.changeId}'`);
     archivedPath = result.archive.path;
   }
-  await runner(["validate", "--specs", "--strict", "--no-interactive", "--json"], root);
+  await runValidation(runner, ["validate", "--specs", "--strict", "--no-interactive", "--json"], root);
   await mkdir(input.artifactsDir, { recursive: true });
   const artifactRef = path.join(input.artifactsDir, `openspec-${input.changeId}-archive.json`);
   await writeFile(artifactRef, JSON.stringify({ changeId: input.changeId, archivedPath }, null, 2), "utf8");

@@ -37,8 +37,8 @@ describe("manifest and profiles", () => {
     expect(ProjectManifestSchema.safeParse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation" }).success).toBe(true);
     expect(ProjectManifestSchema.safeParse({ id: "BAD ID", name: "Demo", root: "./demo", defaultProfile: "unknown" }).success).toBe(false);
     const legacy = ProjectManifestSchema.parse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation", policy: { maxRepairAttempts: 3 } });
-    expect(legacy.policy.maxReviewRounds).toBe(2);
-    expect(effectiveMaxReviewRounds({ maxReviewRounds: legacy.policy.maxReviewRounds, maxRepairAttempts: legacy.policy.maxRepairAttempts })).toBe(2);
+    expect(legacy.policy.maxReviewRounds).toBe(4);
+    expect(effectiveMaxReviewRounds({ maxReviewRounds: legacy.policy.maxReviewRounds, maxRepairAttempts: legacy.policy.maxRepairAttempts })).toBe(4);
     expect(ProjectManifestSchema.parse({ id: "demo-typescript", name: "Demo", root: "./demo", defaultProfile: "implementation" }).policy.maxReviewRounds).toBe(2);
     expect(effectiveMaxReviewRounds({ maxRepairAttempts: 0 })).toBe(1);
     expect(effectiveMaxReviewRounds({})).toBe(2);
