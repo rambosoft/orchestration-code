@@ -11,6 +11,7 @@ import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
 import { indexManifests } from "./manifest-index.js";
+import { resolveTaskType, taskTypes } from "./task-types.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
@@ -28,7 +29,7 @@ try {
   if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
 const projects = indexManifests(manifests);
-const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
+const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), taskType: z.string().optional(), labels: z.array(z.string().max(120)).max(50).default([]), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   if (!tokenMatches(req.headers.authorization, token)) { res.writeHead(401); res.end(JSON.stringify({ error: "unauthorized" })); return; }
@@ -44,7 +45,12 @@ const server = createServer(async (req, res) => {
       const parsedPrompt = parseTaskDirectives(payload.prompt);
       if (parsedPrompt.error) throw new Error(parsedPrompt.error);
       if (payload.profile && payload.profile !== project.defaultProfile && !["implementation", "bugfix", "research", "refactor"].includes(payload.profile)) throw new Error("unknown profile");
-      const profileId = payload.profile ?? project.defaultProfile;
+      // Task type (ADR 0008): API field > Paperclip labels > "Type:" line > agent profile. Without one the original pipeline for the profile runs.
+      const requestedProfile = payload.profile ?? project.defaultProfile;
+      const resolved = resolveTaskType({ ...(payload.taskType !== undefined ? { apiType: payload.taskType } : {}), labels: payload.labels, ...(parsedPrompt.taskType ? { directive: parsedPrompt.taskType } : {}), profile: requestedProfile });
+      if (resolved.error) throw new Error(resolved.error);
+      const taskType = resolved.type ? taskTypes[resolved.type] : undefined;
+      const profileId = taskType?.profile ?? requestedProfile;
       const unresolved = payload.blockers.filter(blocker => blocker.status !== "done");
       if (unresolved.length) throw new Error(`task is blocked by unresolved Paperclip dependencies: ${unresolved.map(item => item.id).join(", ")}`);
       const artifactsRoot = process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data");
@@ -52,9 +58,13 @@ const server = createServer(async (req, res) => {
       if (!projectRoot) throw new Error(`project root environment variable is not configured for '${project.id}'`);
       const uiUx = await resolveProjectUiUx(project, project.containerRoot ?? projectRoot);
       const codeWorkflow = profiles[profileId]?.stages.includes("implement") && project.providerRouting.implement?.provider !== "fake";
-      if (codeWorkflow && (project.qualityCommandsByProfile[profileId] ?? project.qualityCommands).length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
+      // Quality commands are looked up by task type, then delivery profile, then the agent's profile name (older manifests key by "bugfix").
+      const qualityCommands = [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands;
+      if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
+      // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
+      const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";
       let repository;
-      if (codeWorkflow) {
+      if (codeWorkflow || readsRepository) {
         if (!project.repository) throw new Error(`project '${project.id}' has no GitHub repository configuration (remote and targetBranch); refusing patch-only execution`);
         if (!project.containerRoot) throw new Error(`project '${project.id}' has no containerRoot bind mount configured for Git admission`);
         const gitRoot = path.resolve(project.containerRoot);
@@ -78,7 +88,7 @@ const server = createServer(async (req, res) => {
         } else if (payload.blockers.length) throw new Error("resolved dependency metadata is missing; refusing to start a dependent task on an unrelated base");
         repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch, baseSha, prBaseBranch, taskTitle: payload.taskTitle ?? payload.taskId, requiredSourcePaths: project.repository.requiredSourcePaths };
       }
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands: project.qualityCommandsByProfile[profileId] ?? project.qualityCommands });
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
     const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject))?$/);

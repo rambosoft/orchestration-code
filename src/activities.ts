@@ -1,7 +1,9 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { reproductionCommandProblem, TEST_PATH, type ReproVerification } from "./bug.js";
+import { buildContextPack as buildPack, type ContextPack } from "./context-pack.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { StageOutputSchema, type StageInput, type StageOutput } from "./contracts.js";
+import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
@@ -252,3 +254,64 @@ async function writeAnalysisDocumentImpl(input: { worktree: string; docsDir: str
   return file;
 }
 export const writeAnalysisDocument = heartbeating(writeAnalysisDocumentImpl);
+
+/** Write a report (research, architecture) into the worktree so publishing commits it. The name is derived from the task id. */
+async function writeDocumentImpl(input: { worktree: string; dir: string; name: string; markdown: string }): Promise<string> {
+  const root = path.resolve(input.worktree);
+  const dir = path.resolve(root, input.dir);
+  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error(`document directory '${input.dir}' must stay inside the task worktree`);
+  const file = path.join(dir, `${input.name.replace(/[^A-Za-z0-9._-]+/g, "-")}.md`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, input.markdown, "utf8");
+  return file;
+}
+export const writeDocument = heartbeating(writeDocumentImpl);
+
+/** The bounded, redacted repository extract an exploration is answered from (ADR 0008). */
+async function buildContextPackImpl(input: { worktree: string; terms: string[]; paths: string[]; maxChars?: number }): Promise<ContextPack> {
+  return buildPack({ root: input.worktree, terms: input.terms, paths: input.paths, ...(input.maxChars ? { maxChars: input.maxChars } : {}) });
+}
+export const buildContextPack = heartbeating(buildContextPackImpl);
+
+/** Paths in `git status --porcelain -z` output; a rename or copy entry is followed by its source path, which is skipped. */
+export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean }> {
+  const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean }> = [];
+  for (let index = 0; index < parts.length; index++) {
+    const entry = parts[index]!;
+    if (entry.length < 4) continue;
+    changed.push({ file: entry.slice(3), untracked: entry.startsWith("??") });
+    if (/^[RC]/.test(entry) || entry[1] === "R" || entry[1] === "C") index++;
+  }
+  return changed;
+}
+
+/**
+ * Do not trust the model's claim that the bug is reproduced: undo any change outside the tests, re-run its command and require a failure that carries
+ * the signature it announced. A test that passes, or fails for another reason (setup, syntax), proves nothing about the reported defect.
+ */
+async function verifyReproductionImpl(input: { worktree: string; command: Pick<QualityCommand, "executable" | "args" | "cwd">; expectedFailure: string; testFiles: string[] }): Promise<ReproVerification> {
+  const problem = reproductionCommandProblem(input.command);
+  if (problem) return { reproduced: false, exitCode: null, evidence: `the reproduction command is not allowed: ${problem}` };
+  const root = path.resolve(input.worktree);
+  const declared = new Set(input.testFiles.map(file => file.replace(/\\/g, "/").replace(/^\.\//, "")));
+  const status = await runCheck("git", ["status", "--porcelain", "-z", "--untracked-files=all"], root, 200_000);
+  const reverted: string[] = [];
+  for (const { file, untracked } of changedPaths(status.output)) {
+    const normalized = file.replace(/\\/g, "/");
+    if (TEST_PATH.test(normalized) || declared.has(normalized)) continue;
+    const target = path.resolve(root, file);
+    if (target !== root && !target.startsWith(root + path.sep)) continue;
+    if (untracked) await rm(target, { force: true, recursive: true }); else await runCheck("git", ["checkout", "HEAD", "--", file], root);
+    reverted.push(normalized);
+  }
+  const cwd = path.resolve(root, input.command.cwd ?? ".");
+  const result = await runCheck(input.command.executable, input.command.args, cwd, 6000);
+  const output = [result.output, result.stderr].filter(Boolean).join("\n");
+  const excerpt = output.replace(/\s+/g, " ").trim().slice(0, 700);
+  const base = reverted.length ? { revertedFiles: reverted } : {};
+  if (result.code === 0) return { reproduced: false, exitCode: 0, evidence: `the reproduction test passed, so it does not show the defect${reverted.length ? ` (changes outside the tests were undone: ${reverted.join(", ")})` : ""}`, ...base };
+  const squash = (value: string) => value.replace(/\s+/g, " ").toLowerCase();
+  if (!squash(output).includes(squash(input.expectedFailure))) return { reproduced: false, exitCode: result.code, evidence: `the command failed, but not with the announced signature "${input.expectedFailure.slice(0, 120)}", so it may fail for an unrelated reason: ${excerpt}`, ...base };
+  return { reproduced: true, exitCode: result.code, evidence: excerpt, ...base };
+}
+export const verifyReproduction = heartbeating(verifyReproductionImpl);

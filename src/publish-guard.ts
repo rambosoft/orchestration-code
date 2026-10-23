@@ -1,6 +1,8 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { runCommand, type CommandRunner } from "./command.js";
+import { SECRET_CONTENT } from "./redact.js";
+export { SECRET_CONTENT };
 
 const MAX_FILE_BYTES = 5_000_000;
 export const SENSITIVE_PATH = [
@@ -10,14 +12,6 @@ export const SENSITIVE_PATH = [
   /(^|\/)(\.envrc|\.netrc|\.npmrc|credentials\.json)$/i,
   /(^|\/)node_modules\//,
 ];
-export const SECRET_CONTENT = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}/,
-  /\bsk-[A-Za-z0-9_-]{20,}/,
-  /\bAKIA[0-9A-Z]{16}\b/,
-  /\b(?:api[_-]?key|secret|token|password)["']?\s*[:=]\s*["'][A-Za-z0-9/+_-]{16,}["']/i,
-];
-
 /** Inspect staged changes before they are committed and pushed. Returns path-level violations; never echoes secret content. */
 export async function findPublishViolations(worktree: string, baseRef: string, runner: CommandRunner = runCommand): Promise<string[]> {
   const names = (await runner("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=AMR", baseRef], worktree)).split("\0").filter(Boolean);

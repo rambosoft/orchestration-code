@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research"]);
+import type { TaskTypeId } from "./task-types.js";
+
+export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore"]);
 export type StageName = z.infer<typeof StageNameSchema>;
 export const ProviderIdSchema = z.enum(["fake", "claude", "codex", "gemini", "openrouter"]);
 export const UiUxSkillIdSchema = z.enum(["ui-ux-pro-max", "frontend-design", "vercel-composition-patterns", "vercel-react-native-skills"]);
@@ -47,6 +49,7 @@ export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export const ReviewAssessmentSchema = z.object({ verdict: z.enum(["pass", "needs_changes"]), findings: z.array(ReviewFindingSchema).default([]), notes: z.array(ReviewFindingSchema).default([]) });
 export type ReviewAssessment = z.infer<typeof ReviewAssessmentSchema>;
 
+const RelativeDirSchema = z.string().min(1).refine(dir => !dir.startsWith("/") && !/^[A-Za-z]:/.test(dir) && !dir.split(/[\\/]/).includes(".."), "a document directory must be a relative path inside the repository");
 export const ProjectManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/),
   /** Readable alternative ids (the id itself is usually the Paperclip project UUID). */
@@ -71,8 +74,10 @@ export const ProjectManifestSchema = z.object({
   // Optional analysis stage (approach comparison, chosen parameters, validation properties). A task can override with an "Analysis: on|off" line.
   analysis: z.object({
     enabled: z.boolean().default(false),
-    docsDir: z.string().min(1).refine(dir => !dir.startsWith("/") && !/^[A-Za-z]:/.test(dir) && !dir.split(/[\\/]/).includes(".."), "docsDir must be a relative path inside the repository").default("docs/analysis"),
+    docsDir: RelativeDirSchema.default("docs/analysis"),
   }).default({ enabled: false, docsDir: "docs/analysis" }),
+  // Where research and architecture reports are committed (draft PR). Bug diagnoses go to analysis.docsDir.
+  documents: z.object({ researchDir: RelativeDirSchema.default("docs/research"), architectureDir: RelativeDirSchema.default("docs/architecture") }).default({ researchDir: "docs/research", architectureDir: "docs/architecture" }),
   uiUx: z.object({
     enabled: z.boolean().optional(),
     autoSelect: z.boolean().optional(),
@@ -98,6 +103,7 @@ export type ParentPublication = { issueId: string; branch: string; headSha: stri
 export type OpenSpecRunInfo = { changeId: string; version: string; contextArtifact: string; archivedPath?: string };
 export type OpenSpecPrepared = { changeId: string; version: string; artifactRef: string };
 export type OpenSpecContext = { context: string; artifactRef: string; version: string; /** Style-only validator findings that were ignored. */ warnings?: string[] };
-export type RunInput = { runId: string; taskId: string; taskRevision?: string; attempt?: number; blockerIds?: string[]; parentPublications?: ParentPublication[]; projectId: string; profile: string; prompt: string; openSpec?: boolean; /** Run the analysis stage before planning. */ analysis?: boolean; /** Repository-relative folder for the committed analysis document. */ analysisDocsDir?: string; uiUx?: UiUxConfig; uiUxFrameworks?: string[]; visual?: VisualConfig; provider?: ProviderRoute["provider"]; providerRouting?: Partial<Record<StageName, ProviderRoute>>; providerTimeouts?: Partial<Record<StageName, number>>; projectRoot: string; artifactsDir: string; repository?: RepositoryContext; approval?: boolean; /** Wait limit for a human decision; default 24h. */ approvalTimeoutMs?: number; maxReviewRounds?: number; /** @deprecated Use maxReviewRounds; legacy repair counts are capped at two total review rounds. */ maxRepairAttempts?: number; maxParallelism?: number; injectReviewFailure?: boolean; repeatReviewFailure?: boolean; injectActivityTimeout?: boolean; plugins?: PluginRequirement[]; qualityCommands?: QualityCommand[] };
+export type RunInput = { runId: string; taskId: string; taskRevision?: string; attempt?: number; blockerIds?: string[]; parentPublications?: ParentPublication[]; projectId: string; profile: string; prompt: string; openSpec?: boolean; /** Run the analysis stage before planning. */ analysis?: boolean; /** Repository-relative folder for the committed analysis document. */ analysisDocsDir?: string; uiUx?: UiUxConfig; uiUxFrameworks?: string[]; visual?: VisualConfig; provider?: ProviderRoute["provider"]; providerRouting?: Partial<Record<StageName, ProviderRoute>>; providerTimeouts?: Partial<Record<StageName, number>>; projectRoot: string; artifactsDir: string; repository?: RepositoryContext; approval?: boolean; /** Wait limit for a human decision; default 24h. */ approvalTimeoutMs?: number; maxReviewRounds?: number; /** @deprecated Use maxReviewRounds; legacy repair counts are capped at two total review rounds. */ maxRepairAttempts?: number; maxParallelism?: number; injectReviewFailure?: boolean; repeatReviewFailure?: boolean; injectActivityTimeout?: boolean; plugins?: PluginRequirement[]; qualityCommands?: QualityCommand[]; /** Absent: the original pipeline for `profile`. Set: the typed flow of src/task-types.ts (bug investigation, research and architecture reports). */ taskType?: TaskTypeId; /** Repository-relative folder for the committed research or architecture report. */ documentsDir?: string };
 export type PublishResult = { branch: string; baseSha: string; headSha: string; prUrl: string; prBaseBranch: string };
-export type RunResult = { runId: string; status: "completed" | "failed" | "rejected"; stages: StageOutput[]; artifactRefs: string[]; message: string; metadata?: { review: { maxReviewRounds: number; reviewCount: number; repairCount: number; findingsFixed: number; reviewRuns: Array<{ round: number; provider: string; durationMs: number; verdict: "pass" | "needs_changes" | "unstructured"; blockingFindingCount: number; nonBlockingNoteCount: number; usage?: unknown }>; nonBlockingNotes: ReviewFinding[]; unresolvedFindings: ReviewFinding[]; stopReason?: string }; openSpec?: OpenSpecRunInfo; /** Things that did not stop the run but deserve a look: deterministic fallbacks used, size warnings, skipped analysis. */ warnings?: Array<{ stage: string; message: string }> }; publish?: PublishResult };
+/** needs_info: a bug that could be neither reproduced nor traced; the message says what the reporter has to add. Not a failure of the orchestrator. */
+export type RunResult = { runId: string; status: "completed" | "failed" | "rejected" | "needs_info"; stages: StageOutput[]; artifactRefs: string[]; message: string; metadata?: { review: { maxReviewRounds: number; reviewCount: number; repairCount: number; findingsFixed: number; reviewRuns: Array<{ round: number; provider: string; durationMs: number; verdict: "pass" | "needs_changes" | "unstructured"; blockingFindingCount: number; nonBlockingNoteCount: number; usage?: unknown }>; nonBlockingNotes: ReviewFinding[]; unresolvedFindings: ReviewFinding[]; stopReason?: string }; openSpec?: OpenSpecRunInfo; /** Things that did not stop the run but deserve a look: deterministic fallbacks used, size warnings, skipped analysis. */ warnings?: Array<{ stage: string; message: string }>; taskType?: TaskTypeId }; publish?: PublishResult; /** Research and architecture runs: the report that is also committed as a document; the Paperclip adapter posts it as the issue comment. */ report?: { title: string; markdown: string } };

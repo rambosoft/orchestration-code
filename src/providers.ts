@@ -29,6 +29,21 @@ export class FakeProvider implements AgentProvider {
     if (input.prompt.includes("[INVALID_RESULT]")) return { ok: true, summary: "invalid", findings: [], artifactRefs: [], provider: "", durationMs: -1 };
     let summary = `[fake:${input.stage}] ${input.prompt.slice(0, 180)}`;
     if (input.stage === "analyze") summary = JSON.stringify({ problem: "Deterministic fake analysis problem", constraints: ["Keep the result playable"], candidates: [{ name: "Linear ramp", summary: "Increase linearly with time", strengths: ["Simple"], weaknesses: ["Can outgrow human reaction time"] }, { name: "Eased capped ramp", summary: "Ease towards a capped maximum", strengths: ["Smooth", "Bounded"], weaknesses: ["More tuning"] }], evaluation_criteria: ["Fairness at the hardest level", "Smoothness of the increase"], chosen: { name: "Eased capped ramp", rationale: "Smooth and bounded, so the hardest stage stays playable", parameters: [{ name: "maxSpeed", value: "600 px/s", rationale: "Reachable with the existing jump" }] }, validation_properties: ["Every gap stays jumpable at maximum speed"], risks: ["Tuning needs playtesting"], implementation_requirements: ["Speed never exceeds maxSpeed"] });
+    if (input.stage === "diagnose") {
+      // [INJECT_NO_HYPOTHESIS] finds no defect; [INJECT_DIAGNOSE_ON_REPRO] only finds it once the prompt carries a reproduction (cross-feeding).
+      const none = input.prompt.includes("[INJECT_NO_HYPOTHESIS]") || (input.prompt.includes("[INJECT_DIAGNOSE_ON_REPRO]") && !input.prompt.includes("HINTS from reproduction"));
+      summary = JSON.stringify(none ? { summary: "No defect found in the code around the report.", hypotheses: [], reproduction_scenarios: [], fix_options: [], validation_properties: [], implementation_requirements: [] } : { summary: "The cache key ignores the locale, so the first rendered locale is served to everyone.", hypotheses: [{ id: "H1", kind: "root_cause", title: "Cache key omits locale", mechanism: "getKey() builds the key from the id only", evidence: ["src/cache.ts:12 - key is built from id without locale"], observable_failure: "A German user sees English text after an English request", confidence: "high" }], reproduction_scenarios: ["Request the same id in two locales in sequence"], fix_options: [{ name: "Include locale in the key", kind: "root_cause", summary: "Build the key from id and locale", tradeoffs: ["Slightly more cache entries"] }, { name: "Clear cache on locale change", kind: "workaround", summary: "Flush all entries when the locale differs", tradeoffs: ["Hides the key defect and thrashes the cache"] }], chosen_fix: { option: "Include locale in the key", rationale: "Removes the wrong assumption where the key is built", addresses: ["H1"] }, validation_properties: ["Two locales for one id never share an entry"], implementation_requirements: ["The cache key includes the locale"] });
+    }
+    if (input.stage === "reproduce") {
+      // [INJECT_NO_REPRO] never reproduces; [INJECT_REPRO_ON_HINT] reproduces only after the prompt carries hypotheses from the code analysis.
+      const fails = input.prompt.includes("[INJECT_NO_REPRO]") || (input.prompt.includes("[INJECT_REPRO_ON_HINT]") && !input.prompt.includes("HINTS from code analysis"));
+      summary = JSON.stringify(fails ? { outcome: "not_reproduced", summary: "Could not trigger the defect.", test_files: [], attempts: ["Requested the same id twice"], blockers: ["Needs production data"] } : { outcome: "reproduced", summary: "A test fails with the wrong locale.", test_files: ["test/repro.test.ts"], command: { executable: "npm", args: ["test", "--", "test/repro.test.ts"] }, expected_failure: "FAKE_REPRO_FAIL", attempts: [], blockers: [] });
+    }
+    if (input.stage === "scope") summary = JSON.stringify({ restated: "Understand how requests are routed.", questions: ["Where are requests routed?", "What decides the handler?"], search_terms: ["route", "handler"], paths_of_interest: ["src"], out_of_scope: ["Deployment"] });
+    if (input.stage === "explore") {
+      const architecture = input.prompt.includes("EXPLORE stage (architecture)");
+      summary = input.prompt.includes("[INJECT_UNSTRUCTURED_REPORT]") ? "I looked around and the routing seems to live in one module; here is a long story without structure." : JSON.stringify({ summary: "Routing is table driven.", findings: [{ question: "Where are requests routed?", answer: "In the route table", evidence: ["src/router.ts:10 - table lookup"], confidence: "high" }], ...(architecture ? { options: [{ name: "Keep the table", summary: "Leave routing as is", pros: ["No change"], cons: ["Grows"] }, { name: "Plugin registry", summary: "Register routes from modules", pros: ["Modular"], cons: ["More moving parts"] }], decision: "Keep the table for now", recommendation: "Revisit when the table passes fifty routes", consequences: ["No migration"] } : { recommendation: "No change needed" }), risks: [], open_questions: ["Is the table generated?"], follow_up_tasks: [{ title: "Document the routing table", type: "task", rationale: "It is the entry point" }] });
+    }
     if (input.stage === "plan" && input.prompt.includes("Compress this plan")) {
       let prior: Record<string, unknown> = {};
       try { prior = JSON.parse(/Plan to compress:\n([\s\S]*)$/.exec(input.prompt)?.[1] ?? "{}"); } catch { /* deterministic invalid-input fixture */ }
@@ -61,19 +76,20 @@ const pinnedCodexCli = require.resolve("@openai/codex/bin/codex.js");
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 /** Model precedence: manifest route (input.model), CODEX_MODEL, pinned default. */
 export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"], model: string = process.env.CODEX_MODEL ?? DEFAULT_CODEX_MODEL, images: string[] = []): string[] {
-  return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" ? "workspace-write" : "read-only", "-"];
+  return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" || stage === "reproduce" ? "workspace-write" : "read-only", "-"];
 }
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
 export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string): string[] {
   const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
-  return ["-p", "--permission-mode", stage === "implement" ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
-    ...(stage === "implement" ? ["--allowedTools=Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)"] : []),
+  const writes = stage === "implement" || stage === "reproduce";
+  return ["-p", "--permission-mode", writes ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
+    ...(writes ? ["--allowedTools=Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)"] : []),
     ...(model ? ["--model", model] : []), "--output-format", "json", prompt];
 }
 const specs: Record<string, ProviderSpec> = {
   claude: { executable: "claude", args: (p, stage, _effort, model) => claudeExecutionArgs(p, stage, process.env, model) },
   codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
-  gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
+  gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" || stage === "reproduce" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
 
 export function parseCodexTelemetry(output: string): { summary?: string; telemetry: { eventCounts: Record<string, number>; itemCounts: Record<string, number>; turnCount: number; usage?: unknown } } {
@@ -110,7 +126,7 @@ export function cliProviderEnvironment(environment: NodeJS.ProcessEnv = process.
 
 /** Real tasks are not small: implementation gets 30 minutes by default, analysis and review 15, planning 10. A manifest providerTimeouts entry overrides these. */
 export function defaultProviderTimeoutMs(stage: StageInput["stage"]): number {
-  const minutes: Record<StageInput["stage"], number> = { implement: 30, openspec: 15, analyze: 15, review: 15, research: 15, plan: 10, spec_optimize: 5, brief: 5, verify: 5 };
+  const minutes: Record<StageInput["stage"], number> = { implement: 30, openspec: 15, analyze: 15, review: 15, research: 15, plan: 10, spec_optimize: 5, brief: 5, verify: 5, diagnose: 15, reproduce: 20, scope: 5, explore: 20 };
   return minutes[stage] * 60_000;
 }
 

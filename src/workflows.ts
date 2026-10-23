@@ -8,10 +8,13 @@ import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fa
 import { isBlockingFinding, isExternalBlocker, reviewRepairPrompt } from "./review.js";
 import { analysisBlock, analysisConstraints, analysisPrompt as makeAnalysisPrompt, formatAnalysisMarkdown, repairAnalysisPrompt, salvageAnalysis, validateAnalysis, type Analysis } from "./analysis.js";
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
+import { taskTypes } from "./task-types.js";
+import { diagnosePrompt, diagnosisBlock, diagnosisConstraints, formatDiagnosisMarkdown, hintFromDiagnosis, hintFromReproduction, needsInfoMessage, regressionGate, repairDiagnosisPrompt, repairReproductionPrompt, reproducePrompt, salvageDiagnosis, validateDiagnosis, validateReproduction, type BugOutcome, type Diagnosis, type ReproVerification, type Reproduction } from "./bug.js";
+import { deterministicScope, explorePrompt, formatReportMarkdown, rawReport, repairReportPrompt, repairScopePrompt, scopePrompt, validateReport, validateScope, type Report, type ReportKind, type Scope } from "./research.js";
 import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
@@ -113,7 +116,9 @@ Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"
 }
 
 export async function projectWorkflow(input: RunInput): Promise<RunResult> {
-  const profile = profiles[input.profile];
+  const taskType = input.taskType ? taskTypes[input.taskType] : undefined;
+  const investigating = taskType?.flow === "investigation";
+  const profile = profiles[taskType?.profile ?? input.profile];
   if (!profile) return { runId: input.runId, status: "failed", stages: [], artifactRefs: [], message: `unknown profile '${input.profile}'` };
   const uiUxContext = profile.stages.includes("implement") ? uiUxGuidance({ prompt: input.prompt, frameworks: input.uiUxFrameworks, config: input.uiUx ?? DEFAULT_UI_UX_CONFIG }) : "";
   if (input.injectActivityTimeout) {
@@ -125,7 +130,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   let workspace = input.projectRoot;
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
   if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
-  if (profile.stages.includes("implement") && input.repository) {
+  if (investigating && stageRoute(input, "explore").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "Research and architecture reports are published as a draft PR document; configure a clean GitHub repository, target branch, and remote before dispatch." };
+  if ((profile.stages.includes("implement") || investigating) && input.repository) {
     try {
       await checkDependencies({ blockerIds: input.blockerIds ?? [], parentPublications: input.parentPublications ?? [], repository: input.repository, projectRoot: input.projectRoot });
       workspace = await prepareWorktree({ runId: input.runId, projectRoot: input.projectRoot, baseSha: input.repository.baseSha, branch: input.repository.branch, requiredSourcePaths: input.repository.requiredSourcePaths });
@@ -146,7 +152,9 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     reviewRuns.push({ round, provider: output.provider, durationMs: output.durationMs, verdict: output.review?.verdict ?? (output.ok ? "pass" : "unstructured"), blockingFindingCount: blockingCount, nonBlockingNoteCount: output.review?.notes.length ?? 0, ...(output.metadata?.usage !== undefined ? { usage: output.metadata.usage } : {}) });
   };
   let openSpecInfo: NonNullable<RunResult["metadata"]>["openSpec"];
-  const resultMetadata = () => ({ review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
+  let gateCommands = input.qualityCommands ?? [];
+  let investigationConstraints: string[] = [];
+  const resultMetadata = () => ({ ...(taskType ? { taskType: taskType.id } : {}), review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
   // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
   const withWarnings = (message: string): string => warnings.length ? `${message} (${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(warning => `${warning.stage}: ${warning.message}`).join(" | ").slice(0, 1200)})` : message;
   const finish = (status: RunResult["status"], message: string): RunResult => ({ runId: input.runId, status, stages, artifactRefs, message, metadata: resultMetadata() });
@@ -164,8 +172,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
-    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, input.qualityCommands, uiUxContext, analysisDecisions) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
-    const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? input.qualityCommands ?? [], verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
+    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
+    const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
     const output = await executeStage(args);
     // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
@@ -245,7 +253,60 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return finish("failed", `OpenSpec stage failed before planning: ${failureDetails(error)}`);
     }
   }
-  if (input.analysis && profile.stages.includes("implement") && patched("analysis-stage")) {
+  let bugOutcome: BugOutcome | undefined;
+  if (taskType?.flow === "bug") {
+    // ADR 0008. Diagnose (read-only: real defects with evidence, plus a root-cause fix design) and reproduce (tests only) run side by side and feed each other
+    // when only one succeeds. The run stops for a human only when neither produced anything.
+    currentStage = "diagnose";
+    const bugReport = planningTaskGoal || workflowPrompt;
+    try {
+      let lastDiagnosis = "";
+      const diagnose = (hint = "") => structuredStage<Diagnosis | null>({
+        stage: "diagnose",
+        prompt: diagnosePrompt(bugReport, hint),
+        parse: output => { lastDiagnosis = output.summary; return validateDiagnosis(output.summary, stageCompletionTokens(output)); },
+        repairPrompt: (previous, diagnostic) => repairDiagnosisPrompt(bugReport, previous.summary, diagnostic),
+        repairs: 1,
+        // Keep the grounded hypotheses of an answer whose fix design is invalid; when nothing is usable the other half (reproduction) carries on.
+        fallback: () => salvageDiagnosis(lastDiagnosis) ?? null,
+      });
+      const reproduce = async (hint = ""): Promise<{ reproduction: Reproduction | null; verification?: ReproVerification }> => {
+        const attempt = await structuredStage<Reproduction | null>({
+          stage: "reproduce",
+          prompt: reproducePrompt(bugReport, hint),
+          parse: output => validateReproduction(output.summary, stageCompletionTokens(output)),
+          repairPrompt: (previous, diagnostic) => repairReproductionPrompt(previous.summary, diagnostic),
+          repairs: 1,
+          fallback: () => null,
+        });
+        const reproduction = attempt.value;
+        if (!reproduction || reproduction.outcome !== "reproduced" || !reproduction.command) return { reproduction };
+        // The model's claim is not evidence: the orchestrator re-runs the command and requires the announced failure.
+        const verification = await verifyReproduction({ worktree: workspace, command: reproduction.command, expectedFailure: reproduction.expected_failure ?? "", testFiles: reproduction.test_files });
+        attempt.output.metadata = { ...attempt.output.metadata, reproductionVerified: verification.reproduced, reproductionEvidence: verification.evidence.slice(0, 400) };
+        return { reproduction, verification };
+      };
+      let [diagnosed, reproduced] = await Promise.all([diagnose(), reproduce()]);
+      const defectFound = () => (diagnosed.value?.hypotheses.length ?? 0) > 0;
+      const isReproduced = () => reproduced.verification?.reproduced === true;
+      if (!isReproduced() && defectFound()) reproduced = await reproduce(hintFromDiagnosis(diagnosed.value!));
+      else if (isReproduced() && !defectFound()) diagnosed = await diagnose(hintFromReproduction(reproduced.reproduction!, reproduced.verification!));
+      bugOutcome = { diagnosis: diagnosed.value, reproduction: reproduced.reproduction, ...(reproduced.verification ? { verification: reproduced.verification } : {}) };
+      if (!defectFound() && !isReproduced()) { stopReason = "bug_needs_info"; return finish("needs_info", needsInfoMessage(bugOutcome)); }
+      if (!isReproduced()) warnings.push({ stage: "reproduce", message: "the bug could not be reproduced; the fix rests on code analysis and must add its own regression test" });
+      if (!defectFound()) warnings.push({ stage: "diagnose", message: "code analysis found no defect; the fix rests on the reproduction alone" });
+      analysisDecisions = diagnosisBlock(bugOutcome);
+      investigationConstraints = diagnosisConstraints(bugOutcome);
+      const gate = regressionGate(bugOutcome);
+      if (gate) gateCommands = [...gateCommands, gate];
+      completedStages.push("diagnose", "reproduce");
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "bug_investigation_failed";
+      return finish("failed", `bug investigation failed before planning: ${failureDetails(error)}`);
+    }
+  }
+  if (input.analysis && profile.stages.includes("implement") && patched("analysis-stage") && taskType?.flow !== "bug") {
     // Optional analysis: compare approaches and fix the parameters before planning. Runs once with one bounded repair pass; its decisions
     // travel as protected constraints through plan, brief, implementation and review, and the full text is committed as a document.
     currentStage = "analyze";
@@ -274,6 +335,61 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return finish("failed", `analysis output rejected: ${failureDetails(error)}`);
     }
   }
+  if (investigating) {
+    // ADR 0008: research and architecture explore read-only from a bounded context pack and end in a validated report, committed as a document (draft PR).
+    const kind: ReportKind = input.taskType === "architecture" ? "architecture" : "research";
+    const request = workflowPrompt;
+    let report: NonNullable<RunResult["report"]> | undefined;
+    try {
+      currentStage = "scope";
+      const scoped = await structuredStage<Scope>({
+        stage: "scope",
+        prompt: scopePrompt(request, kind),
+        parse: output => { return validateScope(output.summary, stageCompletionTokens(output)); },
+        repairPrompt: (previous, diagnostic) => repairScopePrompt(request, previous.summary, diagnostic),
+        repairs: 1,
+        fallback: () => deterministicScope(request),
+      });
+      completedStages.push("scope");
+      currentStage = "context";
+      const pack = await buildContextPack({ worktree: workspace, terms: scoped.value.search_terms, paths: scoped.value.paths_of_interest });
+      if (pack.truncated) warnings.push({ stage: "context", message: "the repository context pack hit its size limit; the exploration saw a bounded extract" });
+      completedStages.push("context");
+      currentStage = "explore";
+      let lastReport = "";
+      const explored = await structuredStage<Report>({
+        stage: "explore",
+        prompt: explorePrompt(request, scoped.value, pack.text, kind),
+        parse: output => { lastReport = output.summary; return validateReport(output.summary, kind, stageCompletionTokens(output)); },
+        repairPrompt: (previous, diagnostic) => repairReportPrompt(request, previous.summary, diagnostic),
+        repairs: 1,
+        // The text of an unreadable answer is kept, marked as unstructured, rather than throwing a finished exploration away.
+        fallback: () => rawReport(lastReport, scoped.value),
+      });
+      completedStages.push("explore");
+      currentStage = "report";
+      const title = input.repository?.taskTitle ?? input.taskId;
+      const markdown = formatReportMarkdown(explored.value, scoped.value, { taskId: input.taskId, title, kind, filesConsulted: pack.files, ...(explored.degraded ? { note: "The exploration answer was not in the expected format; the report is incomplete." } : {}) });
+      report = { title, markdown };
+      if (workspace !== input.projectRoot) artifactRefs.push(await writeDocument({ worktree: workspace, dir: input.documentsDir ?? (kind === "architecture" ? "docs/architecture" : "docs/research"), name: input.taskId, markdown }));
+      else warnings.push({ stage: "report", message: "no isolated worktree, so the report was not committed; it is only in the issue comment" });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "exploration_failed";
+      return finish("failed", `${currentStage ?? "exploration"} stage failed: ${failureDetails(error)}`);
+    }
+    currentStage = null; completedStages.push("report");
+    if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
+    if (input.repository && workspace !== input.projectRoot) {
+      try {
+        const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt, kind: "document" });
+        return { ...finish("completed", withWarnings("report produced; draft PR published")), publish, report };
+      } catch (error) {
+        stopReason = "publish_failed"; return { ...finish("failed", `publish failed; task requires recovery: ${failureDetails(error)}`), report };
+      }
+    }
+    return { ...finish("completed", withWarnings("report produced")), report };
+  }
   for (const stage of profile.stages) {
     currentStage = stage;
     if (stage === "implement" && input.approval) {
@@ -286,7 +402,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       if (stage === "plan") {
         const specConstraints = optimizedOpenSpec ? ((JSON.parse(optimizedOpenSpec) as { hard_constraints?: string[] }).hard_constraints ?? []) : extractHardConstraints(openSpecContext);
         // Source requirements, task constraints and analysis decisions are authoritative: they are restored into the plan whatever the model wrote.
-        const protectedConstraints = [...new Set([...specConstraints, ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])];
+        const protectedConstraints = [...new Set([...specConstraints, ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : []), ...investigationConstraints])];
         const digest = optimizedOpenSpec ? JSON.parse(optimizedOpenSpec) as OpenSpecDigest : undefined;
         let oversizedPlan: Plan | undefined;
         const planned = await structuredStage<Plan>({
@@ -372,7 +488,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         if (!blocking.length) break;
         if (reviewCount >= maxRounds) { unresolvedFindings.push(...blocking); stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
-        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, input.qualityCommands, uiUxContext, analysisDecisions) }); }
+        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
         try {
           const verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
@@ -428,6 +544,15 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       if (isCancellation(error)) throw error;
       stopReason = "analysis_document_failed";
       return finish("failed", `analysis document could not be written: ${failureDetails(error)}`);
+    }
+  }
+  if (bugOutcome && workspace !== input.projectRoot) {
+    try {
+      artifactRefs.push(await writeAnalysisDocument({ worktree: workspace, docsDir: input.analysisDocsDir ?? "docs/analysis", taskId: `${input.taskId}-diagnosis`, markdown: formatDiagnosisMarkdown(bugOutcome, { taskId: input.taskId, ...(input.repository?.taskTitle ? { title: input.repository.taskTitle } : {}) }) }));
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      stopReason = "diagnosis_document_failed";
+      return finish("failed", `diagnosis document could not be written: ${failureDetails(error)}`);
     }
   }
   if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
