@@ -44,7 +44,7 @@
     "@temporalio/testing": "1.24.0",
     "@types/node": "22.15.30",
     "tsx": "4.20.6",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vitest": "4.1.11"
   }
 }
