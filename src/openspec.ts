@@ -10,7 +10,7 @@ export const OPEN_SPEC_VERSION = "1.14.3";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
 import { parseJsonLoose } from "./json-extract.js";
-import { findDeltaProblems } from "./openspec-delta.js";
+import { findDeltaProblems, repairDeltaFiles } from "./openspec-delta.js";
 const require = createRequire(import.meta.url);
 const packageEntry = require.resolve("@fission-ai/openspec");
 export const openSpecCliPath = path.resolve(path.dirname(packageEntry), "..", "bin", "openspec.js");
@@ -150,6 +150,8 @@ export async function validateOpenSpec(input: { changeId: string; projectRoot: s
   const deltaFiles = changedFiles.filter(file => file.startsWith(`openspec/changes/${input.changeId}/specs/`));
   if (!skipSpecs && deltaFiles.length === 0) throw new Error(`OpenSpec proposal '${input.changeId}' has no specification delta; set skip_specs only for a change that truly does not alter behavior`);
 
+  // Operations that contradict the main spec (MODIFIED of a new requirement and the like) are corrected mechanically before validation; each correction becomes a warning.
+  const deltaRepairs = skipSpecs ? [] : await repairDeltaFiles(root, input.changeId, deltaFiles);
   const validationResult = await runValidation(runner, ["validate", input.changeId, "--strict", "--no-interactive", "--json"], root);
   const ignoredWarnings = validationResult.stderr.startsWith("cosmetic warnings ignored") ? [validationResult.stderr] : [];
   const validation = parseJsonOutput<ValidationReport>(validationResult, "validate");
@@ -177,7 +179,7 @@ export async function validateOpenSpec(input: { changeId: string; projectRoot: s
   await mkdir(input.artifactsDir, { recursive: true });
   const artifactRef = path.join(input.artifactsDir, `openspec-${input.changeId}-context.md`);
   await writeFile(artifactRef, context, "utf8");
-  return { context, artifactRef, version: OPEN_SPEC_VERSION, ...(ignoredWarnings.length ? { warnings: ignoredWarnings } : {}) };
+  return { context, artifactRef, version: OPEN_SPEC_VERSION, ...(ignoredWarnings.length || deltaRepairs.length ? { warnings: [...ignoredWarnings, ...deltaRepairs] } : {}) };
 }
 
 type OpenSpecList = { changes?: Array<{ name?: string; status?: string; archived?: boolean; path?: string }> };
