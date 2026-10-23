@@ -5,6 +5,7 @@ import { cancelRun, inspectRun, listRuns, signalApproval, startRun } from "./cli
 import { syncMergedStack } from "./workspaces.js";
 import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
+import { formatDrain, waitForDrain } from "./drain.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
@@ -71,6 +72,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | cleanup [--days N] [--all] [--dry-run] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

@@ -24,6 +24,8 @@
     "setup": "npm ci",
     "doctor": "node dist/src/cli.js doctor",
     "cleanup": "node dist/src/cli.js cleanup",
+    "drain": "node dist/src/cli.js drain",
+    "deploy:worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-worker.ps1",
     "e2e": "node dist/src/e2e.js",
     "check:chars": "node scripts/check-control-chars.mjs",
     "scan:secrets": "tsx scripts/scan-secrets.ts",
