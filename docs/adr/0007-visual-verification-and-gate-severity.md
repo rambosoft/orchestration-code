@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (plan agreed with the user on 2026-10-23; not yet implemented). Extends ADR 0006; supersedes nothing.
+Accepted and implemented 2026-10-23 (B-038). Extends ADR 0006; supersedes nothing. Live evidence: a real capture of dino-runner and a Codex read of the screenshot; a full Paperclip run with the gate is still to be observed.
 
 ## Context
 

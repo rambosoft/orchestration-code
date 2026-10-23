@@ -27,7 +27,7 @@ async function startProjectRun(projectFile: string, taskId: string, revision: st
     repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch: taskBranch(taskId, revision), baseSha: admitted.baseSha, prBaseBranch: project.repository.targetBranch, taskTitle: taskId };
   }
   return startRun({ taskId, taskRevision: revision, projectId: project.id, profile: project.defaultProfile, prompt: parsedPrompt.prompt,
-    openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.openSpec), analysis: parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks,
+    openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.openSpec), analysis: parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual,
     projectRoot, repository, artifactsDir: path.join(data, "artifacts", taskId),
     provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, plugins: project.plugins,
     qualityCommands: project.qualityCommandsByProfile[project.defaultProfile] ?? project.qualityCommands,

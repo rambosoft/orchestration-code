@@ -4,6 +4,7 @@ import { NODE_EXECUTABLE } from "./node-path.js";
 import { runCommand, type CommandRunner } from "./command.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { concurrencyError, temporalAddressError } from "./env-validation.js";
+import { findBrowser } from "./visual.js";
 
 export type DoctorCheck = { name: string; ok: boolean; severity: "error" | "warn"; detail: string };
 export type DoctorDeps = {
@@ -15,6 +16,9 @@ export type DoctorDeps = {
   readManifestProviders: () => Promise<Map<string, string[]>>;
   /** A warning text when the compiled worker is older than the sources (a stale worker silently runs old code), else undefined. */
   buildStaleness: () => Promise<string | undefined>;
+  /** Ids of projects whose manifest enables screenshot review, and the Chromium the worker would use for them (ADR 0007). */
+  visualProjects?: () => Promise<string[]>;
+  findBrowser?: () => string | undefined;
 };
 
 const pass = (name: string, detail: string): DoctorCheck => ({ name, ok: true, severity: "error", detail });
@@ -26,6 +30,19 @@ export function parseNodeVersion(version: string): [number, number] {
 }
 
 /** Which providers do the project manifests route stages to? Maps provider id to the projects using it. */
+export async function manifestsWithVisual(sources: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const source of sources) {
+    let files: string[];
+    try { files = (await readdir(source)).filter(name => name.endsWith(".json")).map(name => path.join(source, name)); }
+    catch { files = source.endsWith(".json") ? [source] : []; }
+    for (const file of files) {
+      try { const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(file, "utf8"))); if (manifest.visual?.enabled) ids.push(manifest.id); } catch { /* reported by the bridge at startup */ }
+    }
+  }
+  return ids;
+}
+
 export async function manifestProviders(sources: string[]): Promise<Map<string, string[]>> {
   const used = new Map<string, string[]>();
   for (const source of sources) {
@@ -110,6 +127,12 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     if (check) checks.push(check);
   }
 
+  const visualProjects = await (deps.visualProjects?.() ?? Promise.resolve([] as string[]));
+  if (visualProjects.length) {
+    const browser = deps.findBrowser?.();
+    checks.push(browser ? pass("visual:browser", `${browser} (used by ${visualProjects.join(", ")})`) : fail("visual:browser", `no Chromium found, so screenshot review is skipped with a warning (${visualProjects.join(", ")}); run "npx playwright install chromium" or set ORCHESTRATOR_BROWSER_PATH`, "warn"));
+  }
+
   const worktrees = await deps.listDir(path.join(path.resolve(deps.env.ORCHESTRATOR_DATA_DIR ?? "data"), "worktrees")).catch(() => [] as string[]);
   checks.push(worktrees.length > 20 ? fail("worktrees", `${worktrees.length} task worktrees on disk; run "dev cleanup"`, "warn") : pass("worktrees", `${worktrees.length} on disk`));
   const stale = await deps.buildStaleness();
@@ -150,4 +173,6 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
     } catch { return 'dist/src/worker.js is missing; run "npm run build"'; }
   },
   readManifestProviders: () => manifestProviders([env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects"), env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json"]),
+  visualProjects: () => manifestsWithVisual([env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects"), env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json"]),
+  findBrowser: () => findBrowser(env),
 });

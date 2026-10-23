@@ -6,12 +6,11 @@ import { pluginRegistry } from "./plugins.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
-import { NODE_EXECUTABLE } from "./node-path.js";
-import { activitySignal, heartbeating, killOnAbort } from "./process-control.js";
+import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
+import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
@@ -69,11 +68,7 @@ async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublic
 
 export function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000, signal: AbortSignal | undefined = activitySignal()): Promise<{ code: number | null; output: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    // npm is exposed as npm.ps1/npm.cmd on Windows, neither of which spawn()
-    // can execute reliably without a shell. Invoke the bundled JS CLI instead.
-    const npmCli = path.join(path.dirname(NODE_EXECUTABLE), "node_modules", "npm", "bin", "npm-cli.js");
-    const command = process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? NODE_EXECUTABLE : executable;
-    const commandArgs = command === NODE_EXECUTABLE && executable === "npm" ? [npmCli, ...args] : args;
+    const { command, args: commandArgs } = toolCommand(executable, args);
     const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
     child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
@@ -141,6 +136,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
   await mkdir(artifactsDir, { recursive: true });
   const qualityRefs: string[] = [];
   let qualityChecks: Array<{ executable: string; args: string[]; exitCode: number | null; durationMs: number; output: string; stderr: string }> | undefined;
+  const qualityWarnings: string[] = []; const visualWarnings: string[] = []; const visualImages: string[] = [];
   if (input.stage === "verify") {
     const checks = input.qualityCommands ?? [];
     if (checks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
@@ -153,7 +149,9 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       const checkStartedAt = Date.now();
       const result = await runCheck(check.executable, check.args, path.resolve(input.projectRoot, check.cwd ?? "."));
       results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: result.output, stderr: result.stderr });
-      if (result.code !== 0) {
+      if (result.code !== 0 && check.severity === "warn") {
+        qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
+      } else if (result.code !== 0) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
@@ -166,7 +164,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     qualityChecks = results;
   }
   if (input.verificationOnly) {
-    const output: StageOutput = { stage: input.stage, ok: true, summary: "Deterministic quality checks passed before focused review.", findings: [], artifactRefs: qualityRefs, provider: "quality-gate", durationMs: Date.now() - activityStartedAt, metadata: { deterministicQuality: { passed: true, checks: qualityChecks ?? [] }, verificationOnly: true, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+    const output: StageOutput = { stage: input.stage, ok: true, summary: "Deterministic quality checks passed before focused review.", findings: [], artifactRefs: qualityRefs, provider: "quality-gate", durationMs: Date.now() - activityStartedAt, metadata: { deterministicQuality: { passed: true, checks: qualityChecks ?? [] }, ...(qualityWarnings.length ? { warnings: qualityWarnings } : {}), verificationOnly: true, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     const file = path.join(artifactsDir, `verify-${input.attempt}.json`);
     await writeFile(file, JSON.stringify({ ...output, runId: input.runId, taskId: input.taskId }, null, 2));
     await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: output.provider, ok: true, providerDurationMs: 0, activityDurationMs: output.durationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), verificationOnly: true, ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
@@ -184,6 +182,14 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
     stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
   }
+  if (input.stage === "review" && input.visual?.enabled) {
+    // Screenshots are evidence for the reviewer. Problems only warn unless the project requires visual verification.
+    const shots = await captureScreenshots(input.visual, { cwd: input.projectRoot, outDir: path.join(artifactsDir, `visual-${input.attempt}`), signal: activitySignal() });
+    visualWarnings.push(...shots.warnings); visualImages.push(...shots.images);
+    if (shots.images.length) { stageInput.prompt += visualReviewSection(shots.images); stageInput.images = shots.images; }
+    else if (input.visual.required) throw ApplicationFailure.nonRetryable(`visual verification is required but no screenshots were captured: ${shots.warnings.join("; ")}`, "VisualVerificationError");
+  }
+  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
   // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
   const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
   const stageFile = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
@@ -218,9 +224,9 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
   const file = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
-  await writeFile(file, JSON.stringify({ ...out, stage: input.stage, runId: input.runId, taskId: input.taskId, inputHash }, null, 2), { flag: "w" });
+  await writeFile(file, JSON.stringify({ ...out, metadata: withVisual(out.metadata), stage: input.stage, runId: input.runId, taskId: input.taskId, inputHash }, null, 2), { flag: "w" });
   await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
-  return { ...out, stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, file] };
+  return { ...out, metadata: withVisual(out.metadata), stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, ...visualImages, file] };
 }
 async function timeoutProbeImpl(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
 

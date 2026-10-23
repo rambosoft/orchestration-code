@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import type { RunResult, StageInput, StageOutput } from "../src/contracts.js";
+import { VisualConfigSchema, type RunResult, type StageInput, type StageOutput, type VisualConfig } from "../src/contracts.js";
 import { deterministicDigest } from "../src/fallbacks.js";
 import { changeOnlyContext } from "../src/handoffs.js";
 import { FakeProvider } from "../src/providers.js";
@@ -64,6 +64,8 @@ beforeAll(async () => {
         const scripted = state.reviewScript?.[nth - 1] ?? state.reviewScript?.[state.reviewScript.length - 1];
         out = ok(input, scripted === "block" ? BLOCKING : scripted === "pass" ? PASSING : JSON.stringify(out.review ?? { verdict: "pass", findings: [], notes: [] }));
       }
+      // The real activity reports screenshot trouble as metadata.warnings; emulate that when the workflow asks for visual verification.
+      if (input.stage === "review" && input.visual) out = { ...out, metadata: { ...out.metadata, warnings: ["visual capture skipped: no Chromium found"] } };
       if (state.defect && state.stage === input.stage && (state.mode === "always" || nth === 1)) out = { ...out, summary: state.defect(out.summary) };
       return input.stage === "review" ? applyReviewAssessment(out) : out;
     },
@@ -74,10 +76,10 @@ beforeAll(async () => {
 
 afterAll(async () => { worker.shutdown(); await running; await env.teardown(); await rm(tmp, { recursive: true, force: true }); });
 
-async function run(state: RunState, options: { openSpec?: boolean; analysis?: boolean; maxReviewRounds?: number } = {}): Promise<{ result: RunResult; state: RunState }> {
+async function run(state: RunState, options: { openSpec?: boolean; analysis?: boolean; maxReviewRounds?: number; visual?: VisualConfig } = {}): Promise<{ result: RunResult; state: RunState }> {
   const id = `chaos-${++sequence}`;
   runs.set(id, state);
-  const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "chaos", workflowId: id, args: [{ runId: id, taskId: "CH-1", projectId: "p", profile: "implementation", prompt: "Make the game get harder over time but stay fair. The change MUST NOT break existing controls.", openSpec: options.openSpec ?? false, analysis: options.analysis ?? false, maxReviewRounds: options.maxReviewRounds ?? 2, provider: "fake" as const, projectRoot: tmp, artifactsDir: path.join(tmp, "art"), repository: { remote: "origin", targetBranch: "main", branch: "codex/ch", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Chaos" }, approval: false, plugins: [], qualityCommands: [] }] });
+  const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "chaos", workflowId: id, args: [{ runId: id, taskId: "CH-1", projectId: "p", profile: "implementation", prompt: "Make the game get harder over time but stay fair. The change MUST NOT break existing controls.", openSpec: options.openSpec ?? false, analysis: options.analysis ?? false, maxReviewRounds: options.maxReviewRounds ?? 2, ...(options.visual ? { visual: options.visual } : {}), provider: "fake" as const, projectRoot: tmp, artifactsDir: path.join(tmp, "art"), repository: { remote: "origin", targetBranch: "main", branch: "codex/ch", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Chaos" }, approval: false, plugins: [], qualityCommands: [] }] });
   return { result, state };
 }
 
@@ -165,6 +167,26 @@ describe("infrastructure failures stay bounded", () => {
     expect(result.status).toBe("failed");
     expect(result.metadata?.review.stopReason).toBe("plan_output_invalid");
     expect(state.calls.filter(call => call.stage === "plan").length).toBeLessThanOrEqual(3);
+  }, 90_000);
+});
+
+describe("visual verification settings", () => {
+  const visual = VisualConfigSchema.parse({ command: { executable: "npm", args: ["run", "dev"] }, url: "http://localhost:5173/" });
+  it("reach only the review stage, and warnings from the review reach the final message exactly once", async () => {
+    const { result, state } = await run({ calls: [], reviewScript: ["block", "pass"] }, { visual });
+    expect(result.status, result.message).toBe("completed");
+    const reviews = state.calls.filter(call => call.stage === "review");
+    expect(reviews.length).toBe(2);
+    expect(reviews.every(call => call.visual?.url === "http://localhost:5173/")).toBe(true);
+    expect(state.calls.filter(call => call.stage !== "review").every(call => call.visual === undefined)).toBe(true);
+    expect(result.metadata?.warnings?.filter(w => w.message.includes("no Chromium found"))).toHaveLength(1);
+    expect(result.message).toContain("1 warning");
+  }, 90_000);
+  it("are absent for projects that do not configure them", async () => {
+    const { result, state } = await run({ calls: [] });
+    expect(result.status).toBe("completed");
+    expect(state.calls.every(call => call.visual === undefined)).toBe(true);
+    expect(result.metadata?.warnings ?? []).toEqual([]);
   }, 90_000);
 });
 

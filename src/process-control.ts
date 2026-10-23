@@ -1,5 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Context } from "@temporalio/activity";
+import { NODE_EXECUTABLE } from "./node-path.js";
+
+/** npm is exposed as npm.ps1/npm.cmd on Windows, neither of which spawn() can execute reliably without a shell; invoke the bundled JS CLI with the pinned node instead. */
+export function toolCommand(executable: string, args: string[]): { command: string; args: string[] } {
+  const npmCli = path.join(path.dirname(NODE_EXECUTABLE), "node_modules", "npm", "bin", "npm-cli.js");
+  return process.platform === "win32" && executable === "npm" && existsSync(npmCli) ? { command: NODE_EXECUTABLE, args: [npmCli, ...args] } : { command: executable, args };
+}
 
 /** Cancellation signal of the running Temporal activity, or undefined when called outside one (unit tests, CLI). */
 export function activitySignal(): AbortSignal | undefined {

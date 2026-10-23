@@ -73,5 +73,65 @@
     "maxReviewRounds": 2,
     "maxParallelism": 1,
     "requireApprovalBeforeMerge": false
+  },
+  "visual": {
+    "command": {
+      "executable": "npm",
+      "args": [
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5199",
+        "--strictPort"
+      ]
+    },
+    "url": "http://127.0.0.1:5199/",
+    "readyTimeoutMs": 60000,
+    "viewports": [
+      {
+        "name": "desktop",
+        "width": 900,
+        "height": 500
+      }
+    ],
+    "steps": [
+      {
+        "do": "shot",
+        "name": "initial"
+      },
+      {
+        "do": "wait",
+        "ms": 1200
+      },
+      {
+        "do": "shot",
+        "name": "running"
+      },
+      {
+        "do": "press",
+        "key": "Space"
+      },
+      {
+        "do": "wait",
+        "ms": 250
+      },
+      {
+        "do": "shot",
+        "name": "jump"
+      },
+      {
+        "do": "wait",
+        "ms": 1500
+      },
+      {
+        "do": "shot",
+        "name": "later"
+      }
+    ],
+    "maxImages": 6,
+    "required": false
   }
 }

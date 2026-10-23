@@ -68,3 +68,4 @@ Plan -> implement -> verify -> report. Backlog is `docs/engineering/BACKLOG.md`;
 - The review verdict is enforced for every provider (`applyReviewAssessment`); an unreadable review fails closed. Code tasks need quality commands.
 - Source files are LF. Scripted edits must throw when their anchor is missing; `npm run check:chars` runs in CI.
 - ADRs 0005 (analysis stage) and 0006 (recovery policy) explain the why.
+- Quality commands accept `severity: "warn"`; a manifest `visual` block makes the review activity attach screenshots of the running app (ADR 0007). New optional gates belong in the activity, not as a new workflow step, so the command sequence and replay fixture stay unchanged.

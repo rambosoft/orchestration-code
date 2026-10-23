@@ -55,13 +55,13 @@ export class FakeProvider implements AgentProvider {
   }
 }
 
-type ProviderSpec = { executable: string; args: (prompt: string, stage: StageInput["stage"], reasoningEffort?: StageInput["reasoningEffort"], model?: string) => string[]; env?: Record<string, string> };
+type ProviderSpec = { executable: string; args: (prompt: string, stage: StageInput["stage"], reasoningEffort?: StageInput["reasoningEffort"], model?: string, images?: string[]) => string[]; env?: Record<string, string> };
 const require = createRequire(import.meta.url);
 const pinnedCodexCli = require.resolve("@openai/codex/bin/codex.js");
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 /** Model precedence: manifest route (input.model), CODEX_MODEL, pinned default. */
-export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"], model: string = process.env.CODEX_MODEL ?? DEFAULT_CODEX_MODEL): string[] {
-  return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" ? "workspace-write" : "read-only", "-"];
+export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"], model: string = process.env.CODEX_MODEL ?? DEFAULT_CODEX_MODEL, images: string[] = []): string[] {
+  return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" ? "workspace-write" : "read-only", "-"];
 }
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
 export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string): string[] {
@@ -72,7 +72,7 @@ export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], 
 }
 const specs: Record<string, ProviderSpec> = {
   claude: { executable: "claude", args: (p, stage, _effort, model) => claudeExecutionArgs(p, stage, process.env, model) },
-  codex: { executable: NODE_EXECUTABLE, args: codexExecutionArgs },
+  codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
 
@@ -127,7 +127,7 @@ export class CliProvider implements AgentProvider {
       : { active: false as const, reason: "unsupported-stage-or-provider" as const };
     const instruction = cliInstruction(input.stage, input.prompt, rtk.active);
     return new Promise((resolve, reject) => {
-      const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort, input.model), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
+      const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort, input.model, input.images), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
       const stdout: Buffer[] = []; const stderr: Buffer[] = []; let size = 0; let timedOut = false;
       const signal = activitySignal(); const stopKill = killOnAbort(child, signal);
       const timer = setTimeout(() => { timedOut = true; killProcessTree(child); }, timeoutMs);

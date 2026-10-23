@@ -12,6 +12,29 @@ export const UiUxConfigSchema = z.object({
   exclude: z.array(UiUxSkillIdSchema),
 });
 export type UiUxConfig = z.infer<typeof UiUxConfigSchema>;
+const ToolExecutableSchema = z.enum(["node", "npm", "pnpm", "yarn"]);
+/** severity "warn": a failing command is reported as a warning and never stops the run (for example a first knip or jscpd report). Default "fail". */
+export const QualityCommandSchema = z.object({ executable: ToolExecutableSchema, args: z.array(z.string()), cwd: z.string().optional(), severity: z.enum(["fail", "warn"]).optional() });
+export type QualityCommand = z.infer<typeof QualityCommandSchema>;
+export const VisualStepSchema = z.discriminatedUnion("do", [
+  z.object({ do: z.literal("press"), key: z.string().min(1).max(32) }),
+  z.object({ do: z.literal("wait"), ms: z.number().int().min(0).max(10_000) }),
+  z.object({ do: z.literal("click"), selector: z.string().min(1).max(200) }),
+  z.object({ do: z.literal("shot"), name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/, "shot names are lowercase letters, digits and dashes") }),
+]);
+/** Optional screenshot capture of the running app for the reviewer (ADR 0007). The page must be served on this machine. */
+export const VisualConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  command: z.object({ executable: ToolExecutableSchema, args: z.array(z.string()), cwd: z.string().optional() }),
+  url: z.string().url().refine(value => /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(value), "visual.url must be an http://localhost, 127.0.0.1 or [::1] address"),
+  readyTimeoutMs: z.number().int().min(1000).max(300_000).default(60_000),
+  viewports: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,20}$/), width: z.number().int().min(200).max(3840), height: z.number().int().min(200).max(2160) })).min(1).max(3).default([{ name: "desktop", width: 1280, height: 720 }]),
+  steps: z.array(VisualStepSchema).min(1).max(40).default([{ do: "shot", name: "initial" }]),
+  maxImages: z.number().int().min(1).max(8).default(6),
+  /** true: a capture that cannot be produced fails the review instead of only warning. */
+  required: z.boolean().default(false),
+});
+export type VisualConfig = z.infer<typeof VisualConfigSchema>;
 export const ReviewFindingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "info"]),
   category: z.enum(["functional", "acceptance", "regression", "security", "accessibility", "tests", "environment", "approval", "polish", "other"]),
@@ -56,8 +79,9 @@ export const ProjectManifestSchema = z.object({
     include: z.array(UiUxSkillIdSchema).optional(),
     exclude: z.array(UiUxSkillIdSchema).optional(),
   }).optional(),
-  qualityCommands: z.array(z.object({ executable: z.enum(["node", "npm", "pnpm", "yarn"]), args: z.array(z.string()), cwd: z.string().optional() })).default([]),
-  qualityCommandsByProfile: z.record(z.string(), z.array(z.object({ executable: z.enum(["node", "npm", "pnpm", "yarn"]), args: z.array(z.string()), cwd: z.string().optional() }))).default({}),
+  visual: VisualConfigSchema.optional(),
+  qualityCommands: z.array(QualityCommandSchema).default([]),
+  qualityCommandsByProfile: z.record(z.string(), z.array(QualityCommandSchema)).default({}),
   repository: z.object({ remote: z.string().min(1).default("origin"), targetBranch: z.string().min(1), integratedBaseBranch: z.string().min(1).optional(), requiredSourcePaths: z.array(z.string().min(1)).default([]) }).optional(),
   plugins: z.array(z.object({ id: z.string(), version: z.string(), capabilities: z.array(z.string()).default([]), dependencies: z.array(z.string()).default([]), compatibility: z.object({ minCoreVersion: z.string().default("0.1.0"), maxCoreVersion: z.string().optional() }).default({ minCoreVersion: "0.1.0" }), required: z.boolean().default(false), enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}), permissions: z.array(z.string()).default([]), errorPolicy: z.object({ maxAttempts: z.number().int().min(1).max(5).default(2), timeoutMs: z.number().int().positive().max(600_000).default(60_000) }).default({ maxAttempts: 2, timeoutMs: 60_000 }) })).default([]),
   policy: z.object({ maxReviewRounds: z.number().int().min(1).max(4).optional(), maxRepairAttempts: z.number().int().min(0).max(3).optional(), maxParallelism: z.number().int().min(1).max(8).default(2), requireApprovalBeforeMerge: z.boolean().default(true) }).default({ maxParallelism: 2, requireApprovalBeforeMerge: true }).transform(policy => ({ ...policy, maxReviewRounds: policy.maxReviewRounds ?? (policy.maxRepairAttempts === undefined ? 2 : Math.max(1, Math.min(4, policy.maxRepairAttempts + 1))) })),
@@ -66,7 +90,7 @@ export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;
 
 export type ProviderRoute = { provider: "fake" | "claude" | "codex" | "gemini" | "openrouter"; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" };
 export type PluginRequirement = { id: string; version?: string; capabilities?: string[]; dependencies?: string[]; required: boolean; enabled: boolean; config?: Record<string, unknown>; permissions?: string[]; errorPolicy?: { maxAttempts: number; timeoutMs: number } };
-export type StageInput = { runId: string; taskId: string; projectId: string; profile: string; stage: StageName; prompt: string; attempt: number; activityAttempt?: number; provider: string; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"; providerTimeoutMs?: number; projectRoot: string; artifactsDir: string; plugins: PluginRequirement[]; qualityCommands?: Array<{ executable: "node" | "npm" | "pnpm" | "yarn"; args: string[]; cwd?: string }>; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; openSpecChangeId?: string };
+export type StageInput = { runId: string; taskId: string; projectId: string; profile: string; stage: StageName; prompt: string; attempt: number; activityAttempt?: number; provider: string; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"; providerTimeoutMs?: number; projectRoot: string; artifactsDir: string; plugins: PluginRequirement[]; qualityCommands?: QualityCommand[]; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; openSpecChangeId?: string; /** Review only: screenshot capture settings (ADR 0007). */ visual?: VisualConfig; /** Image files attached to the prompt by providers that accept images. */ images?: string[] };
 export type StageOutput = { stage?: StageName; ok: boolean; summary: string; findings: string[]; review?: ReviewAssessment; artifactRefs: string[]; provider: string; durationMs: number; metadata?: Record<string, unknown> };
 export const StageOutputSchema = z.object({ stage: StageNameSchema.optional(), ok: z.boolean(), summary: z.string(), findings: z.array(z.string()), review: ReviewAssessmentSchema.optional(), artifactRefs: z.array(z.string()), provider: z.string(), durationMs: z.number().nonnegative(), metadata: z.record(z.string(), z.unknown()).optional() });
 export type RepositoryContext = { remote: string; targetBranch: string; branch: string; baseSha: string; prBaseBranch: string; taskTitle: string; requiredSourcePaths?: string[] };
@@ -74,6 +98,6 @@ export type ParentPublication = { issueId: string; branch: string; headSha: stri
 export type OpenSpecRunInfo = { changeId: string; version: string; contextArtifact: string; archivedPath?: string };
 export type OpenSpecPrepared = { changeId: string; version: string; artifactRef: string };
 export type OpenSpecContext = { context: string; artifactRef: string; version: string; /** Style-only validator findings that were ignored. */ warnings?: string[] };
-export type RunInput = { runId: string; taskId: string; taskRevision?: string; attempt?: number; blockerIds?: string[]; parentPublications?: ParentPublication[]; projectId: string; profile: string; prompt: string; openSpec?: boolean; /** Run the analysis stage before planning. */ analysis?: boolean; /** Repository-relative folder for the committed analysis document. */ analysisDocsDir?: string; uiUx?: UiUxConfig; uiUxFrameworks?: string[]; provider?: ProviderRoute["provider"]; providerRouting?: Partial<Record<StageName, ProviderRoute>>; providerTimeouts?: Partial<Record<StageName, number>>; projectRoot: string; artifactsDir: string; repository?: RepositoryContext; approval?: boolean; /** Wait limit for a human decision; default 24h. */ approvalTimeoutMs?: number; maxReviewRounds?: number; /** @deprecated Use maxReviewRounds; legacy repair counts are capped at two total review rounds. */ maxRepairAttempts?: number; maxParallelism?: number; injectReviewFailure?: boolean; repeatReviewFailure?: boolean; injectActivityTimeout?: boolean; plugins?: PluginRequirement[]; qualityCommands?: Array<{ executable: "node" | "npm" | "pnpm" | "yarn"; args: string[]; cwd?: string }> };
+export type RunInput = { runId: string; taskId: string; taskRevision?: string; attempt?: number; blockerIds?: string[]; parentPublications?: ParentPublication[]; projectId: string; profile: string; prompt: string; openSpec?: boolean; /** Run the analysis stage before planning. */ analysis?: boolean; /** Repository-relative folder for the committed analysis document. */ analysisDocsDir?: string; uiUx?: UiUxConfig; uiUxFrameworks?: string[]; visual?: VisualConfig; provider?: ProviderRoute["provider"]; providerRouting?: Partial<Record<StageName, ProviderRoute>>; providerTimeouts?: Partial<Record<StageName, number>>; projectRoot: string; artifactsDir: string; repository?: RepositoryContext; approval?: boolean; /** Wait limit for a human decision; default 24h. */ approvalTimeoutMs?: number; maxReviewRounds?: number; /** @deprecated Use maxReviewRounds; legacy repair counts are capped at two total review rounds. */ maxRepairAttempts?: number; maxParallelism?: number; injectReviewFailure?: boolean; repeatReviewFailure?: boolean; injectActivityTimeout?: boolean; plugins?: PluginRequirement[]; qualityCommands?: QualityCommand[] };
 export type PublishResult = { branch: string; baseSha: string; headSha: string; prUrl: string; prBaseBranch: string };
 export type RunResult = { runId: string; status: "completed" | "failed" | "rejected"; stages: StageOutput[]; artifactRefs: string[]; message: string; metadata?: { review: { maxReviewRounds: number; reviewCount: number; repairCount: number; findingsFixed: number; reviewRuns: Array<{ round: number; provider: string; durationMs: number; verdict: "pass" | "needs_changes" | "unstructured"; blockingFindingCount: number; nonBlockingNoteCount: number; usage?: unknown }>; nonBlockingNotes: ReviewFinding[]; unresolvedFindings: ReviewFinding[]; stopReason?: string }; openSpec?: OpenSpecRunInfo; /** Things that did not stop the run but deserve a look: deterministic fallbacks used, size warnings, skipped analysis. */ warnings?: Array<{ stage: string; message: string }> }; publish?: PublishResult };

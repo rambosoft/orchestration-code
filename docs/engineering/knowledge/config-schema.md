@@ -17,3 +17,9 @@
 - Manifest `analysis`: `{ enabled: boolean (default false), docsDir: relative path (default docs/analysis) }`. A task line `Analysis: on|off` overrides `enabled` (parsed by `parseTaskDirectives`, together with `OpenSpec: on|off`). Route: `providerRouting.analyze`.
 - Manifest `aliases`: readable alternative ids; the id is normally the Paperclip project UUID. `GET /health` lists ids and aliases; the bridge resolves either.
 - New handoff budgets: `analysis` 1400 tokens, `planningContext` 3600, `brief` 1700 (hard ceiling 2550).
+
+## Quality gate severity and visual verification (2026-10-23, ADR 0007)
+- `qualityCommands[].severity`: `"fail"` (default, run stops) or `"warn"` (a failing command becomes a warning in the final message). Use `warn` to adopt knip or jscpd without blocking work; same executables as before (node, npm, pnpm, yarn).
+- Manifest `visual` (optional, default off): `{ enabled, command: {executable, args, cwd?}, url (http://localhost, 127.0.0.1 or [::1] only), readyTimeoutMs (default 60000), viewports [{name,width,height}] (1 to 3, default desktop 1280x720), steps (1 to 40 of press{key} | wait{ms<=10000} | click{selector} | shot{name}), maxImages (default 6, max 8), required (default false) }`.
+- Behaviour: during the review activity the app is started in the task worktree, screenshots are taken with `playwright-core` driving an already installed Chromium, and the images go to the reviewer (Codex via `--image=`; other providers get the file paths). Any capture problem is a warning; `required: true` fails the review instead. Screenshots live under the run artifacts, never in the repository.
+- Browser discovery: `ORCHESTRATOR_BROWSER_PATH`, then the newest Playwright download (`PLAYWRIGHT_BROWSERS_PATH` or the default cache), then system Edge or Chrome. `npm run doctor` reports `visual:browser` for projects that enable it.

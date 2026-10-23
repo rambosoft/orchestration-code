@@ -95,4 +95,17 @@ describe("running workflows", () => {
     const checks = await runDoctor(deps({ fetchJson: async (url) => url.endsWith("/health") ? { ok: true, projects: [] } : [] }));
     expect(checks.find(item => item.name === "running-workflows")?.ok).toBe(true);
   });
+
+  it("warns, not fails, when a project enables screenshot review but no browser is installed", async () => {
+    const missing = await runDoctor(deps({ visualProjects: async () => ["dino"], findBrowser: () => undefined }));
+    const check = missing.find(item => item.name === "visual:browser");
+    expect(check).toMatchObject({ ok: false, severity: "warn" });
+    expect(failures(missing)).toEqual([]);
+    const present = await runDoctor(deps({ visualProjects: async () => ["dino"], findBrowser: () => "C:\chrome.exe" }));
+    expect(present.find(item => item.name === "visual:browser")?.ok).toBe(true);
+  });
+  it("does not check for a browser when no project uses screenshots", async () => {
+    const checks = await runDoctor(deps({ visualProjects: async () => [], findBrowser: () => undefined }));
+    expect(checks.some(item => item.name === "visual:browser")).toBe(false);
+  });
 });

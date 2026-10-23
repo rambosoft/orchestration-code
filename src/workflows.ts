@@ -166,7 +166,12 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, input.qualityCommands, uiUxContext, analysisDecisions) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? input.qualityCommands ?? [], verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
-    const output = await executeStage(args); stages.push(output); artifactRefs.push(...output.artifactRefs); return output;
+    if (stage === "review" && input.visual) args.visual = input.visual;
+    const output = await executeStage(args);
+    // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
+    const reported = output.metadata?.warnings;
+    if (Array.isArray(reported)) for (const message of reported) if (typeof message === "string" && !warnings.some(item => item.stage === stage && item.message === message)) warnings.push({ stage, message });
+    stages.push(output); artifactRefs.push(...output.artifactRefs); return output;
   };
   // One recovery policy for every stage whose answer must be structured: validate, give the stage up to `repairs` repair attempts that carry the
   // validator's diagnostics, then use the deterministic fallback when there is one, and only otherwise fail with the last diagnostic. Infrastructure
