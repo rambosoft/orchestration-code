@@ -130,10 +130,10 @@ describe("structured stages never kill a run", () => {
 
 describe("bootstrap stages never kill a run", () => {
   const ids = { companyId: randomUUID(), projectId: randomUUID() };
-  async function bootstrap(state: RunState) {
+  async function bootstrap(state: RunState, extra: Record<string, string | boolean> = {}) {
     const id = `chaos-${++sequence}`;
     runs.set(id, state);
-    const options = { approval: "auto" };
+    const options = { approval: "auto", ...extra };
     const resolved = resolveOptions(options);
     const form = BootstrapFormSchema.parse({ name: "Shop Demo", description: "A small storefront prototype with landing and checkout pages.", options, paperclip: ids });
     return env.client.workflow.execute(projectWorkflow, { taskQueue: "chaos", workflowId: id, args: [{ runId: id, taskId: "BS-1", projectId: ids.projectId, profile: "bootstrap", prompt: "Set up", taskType: "bootstrap", provider: "fake", projectRoot: tmp, artifactsDir: tmp, approval: false, plugins: [], qualityCommands: [], bootstrap: { form, options: resolved.values, provenance: resolved.provenance }, providerRouting: DEFAULT_BOOTSTRAP_CONFIG.stages }] });
@@ -145,6 +145,18 @@ describe("bootstrap stages never kill a run", () => {
     expect(result.status, `${stage}/${defect}/${mode}: ${result.message}`).toBe("completed");
     expect(result.bootstrap?.issues.length).toBeGreaterThan(0);
     if (mode === "first") expect(result.metadata?.warnings ?? []).toEqual([]);
+  }, 90_000);
+  // The game design stage (docs/engineering/research/unity-game-support.md) is a structured stage like the others, so it gets the same treatment.
+  const gameCases: Case[] = Object.keys(DEFECTS).flatMap((defect): Case[] => [["always", "design", defect], ...(["truncated", "proseOnly", "empty"].includes(defect) ? [["first", "design", defect] as Case] : [])]);
+  it.each(gameCases)("%s answer from %s is %s: the game project is still created", async (mode, stage, defect) => {
+    const result = await bootstrap({ calls: [], stage, defect: DEFECTS[defect]!, mode }, { product_kind: "game" });
+    expect(result.status, `${stage}/${defect}/${mode}: ${result.message}`).toBe("completed");
+    expect(result.bootstrap?.issues.length).toBeGreaterThan(0);
+    if (mode === "first") expect(result.metadata?.warnings ?? []).toEqual([]);
+  }, 90_000);
+  it("records a warning when the game design fell back to the requester's own words", async () => {
+    const result = await bootstrap({ calls: [], stage: "design", defect: DEFECTS.proseOnly!, mode: "always" }, { product_kind: "game" });
+    expect(result.metadata?.warnings?.some(w => w.stage === "design" && w.message.includes("deterministic fallback"))).toBe(true);
   }, 90_000);
   it("records a warning when a deterministic fallback replaced an unusable plan", async () => {
     const result = await bootstrap({ calls: [], stage: "blueprint", defect: DEFECTS.proseOnly!, mode: "always" });

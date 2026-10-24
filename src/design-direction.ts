@@ -1,4 +1,5 @@
 import type { OptionValue } from "./bootstrap-options.js";
+import { GAME_BASE_BAR, GAME_TIER_BAR, isGame } from "./game.js";
 
 // UI/UX direction for generated projects (ADR 0010). Every client-facing surface of a bootstrapped product gets an explicit visual bar that scales with the chosen
 // maturity, so a project is never left with the stock look of its component library. Pure and deterministic: it is imported by the workflow bundle.
@@ -47,6 +48,7 @@ export function designBar(options: Options): string[] {
   if (!hasUserInterface(options)) return [];
   const direction = DIRECTION[String(options.design_direction)];
   const accessibility = options.accessibility === "wcag_aa" && designTier(options) !== "production" ? ["Accessibility was set to WCAG 2.2 AA: meet it, with contrast and focus checked on every page."] : [];
+  if (isGame(options)) return [...GAME_BASE_BAR, ...GAME_TIER_BAR[designTier(options)], ...accessibility, ...(direction ? [direction] : [])];
   return [...BASE_BAR, ...TIER_BAR[designTier(options)], ...accessibility, ...(direction ? [direction] : [])];
 }
 
@@ -100,9 +102,13 @@ ${list(charter.design_system ?? [], "- tokens and components are defined by the 
 ## Pages
 ${list((charter.page_directions ?? []).map(item => `${item.page}: ${item.direction}`), "- the plan names the pages; give each one a direction here when it is built")}
 
-## Checks before a UI task is done
+${isGame(options) ? `## Checks before a screen task is done
+- Run the PlayMode capture test and look at the screenshot of every screen the task built or changed (Logs/screenshots).
+- Nothing sits outside the safe area, touch targets are at least 48dp, text is legible and not conveyed by colour alone.
+- Every action has its motion, sound and haptic feedback, and reduced motion is respected.
+` : `## Checks before a UI task is done
 - Render the page at 360px and at desktop width and look at it.
 - Loading, empty, error and success states exist and look designed.
 - Keyboard focus is visible, contrast is sufficient, motion respects reduced-motion.
-`;
+`}`;
 }

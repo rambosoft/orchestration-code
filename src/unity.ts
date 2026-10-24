@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { VisualConfig } from "./contracts.js";
@@ -93,7 +94,7 @@ export function unityExitHint(check: CheckLike, code: number | null): string {
   return "";
 }
 
-function runUnity(args: string[], cwd: string, signal: AbortSignal | undefined, maxChars = 3000): Promise<UnityRun> {
+export function runUnity(args: string[], cwd: string, signal: AbortSignal | undefined, maxChars = 3000): Promise<UnityRun> {
   return new Promise((resolve, reject) => {
     const { command, args: commandArgs } = toolCommand("unity", args);
     const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal);
@@ -133,4 +134,12 @@ export async function captureUnityScreenshots(config: VisualConfig, options: { c
     warnings.push(`unity capture failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
   return { images, warnings };
+}
+
+export type UnityAgentContext = { /** The pinned checkout of Unity's official agent plugin (UNITY_AGENT_PLUGIN_DIR), passed to Claude with --plugin-dir. */ pluginDir?: string };
+/** Defined for a Unity project (it has ProjectSettings/ProjectVersion.txt): the agent may run the Unity CLI and gets Unity's official skills when a plugin checkout is configured. */
+export function unityAgentContext(projectRoot: string | undefined, env: NodeJS.ProcessEnv = process.env, exists: (file: string) => boolean = existsSync): UnityAgentContext | undefined {
+  if (!projectRoot || !exists(path.join(projectRoot, "ProjectSettings", "ProjectVersion.txt"))) return undefined;
+  const dir = env.UNITY_AGENT_PLUGIN_DIR;
+  return dir && exists(dir) ? { pluginDir: dir } : {};
 }

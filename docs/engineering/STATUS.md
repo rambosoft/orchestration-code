@@ -47,3 +47,9 @@
 
 ## 2026-10-24 update (Unity support, phase 2)
 - Done: B-051. Unity gates inside the verify activity: default timeouts, stale report removal, NUnit report must exist with tests and no failures, declared build output must exist, exit-code hints; `visual.engine: "unity"` runs the project's PlayMode capture test and copies `Logs/screenshots/*.png` to the review; hygiene script in `templates/unity-mobile-2d/scripts/`. Verified: typecheck, check:chars, 44 files and 565 tests. No workflow change.
+
+## 2026-10-24 update (Unity support, phases 3 and 4)
+- Done: B-052 (game design stage `design` between charter and blueprint: GameDesign schema with numbered rules R-001.., edge cases, screens, feel, test cases; validated, repaired once, fallback to the requester's own sentences; shown in the approval summary; written to docs/GAME_DESIGN.md and docs/RULES_SPEC.md; in the chaos table) and B-053 (options product_kind/engine/game_*, Unity stack decided without a model, game blueprint rules and visual bar, `unity-mobile-2d` template in templates/, scaffold that creates the project with the real Editor, copies the template, imports, proves EditMode tests and hygiene, Unity manifest with the unity-mobile stack, Claude may run the Unity CLI and loads the official plugin through UNITY_AGENT_PLUGIN_DIR).
+- Verified: typecheck, check:chars, build, 45 files and 601 tests; a REAL scaffold on this host (127 s, EditMode proof, hygiene, commit), then PlayMode (20 s, screenshot written) and an Android AAB (13.9 MB, 5 min 52 s) on the generated project.
+- Workflow impact: new `design` command only for game bootstrap runs (no existing sequence changed, replay fixture unchanged).
+- Next: B-054 (ADRs 0012/0013, doctor checks, plugin checkout), then B-055 (live 2048 project through Paperclip).

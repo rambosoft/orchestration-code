@@ -1,4 +1,4 @@
-# Backlog (single prioritized source of truth)
+| done | | src/game.ts, src/unity-scaffold.ts, templates/unity-mobile-2d || done | | src/game.ts, src/unity-scaffold.ts, templates/unity-mobile-2d |# Backlog (single prioritized source of truth)
 
 Score = (Impact x Severity + RiskReduction) / Effort(S=1,M=2,L=4). Tier first, score within tier. Status: todo / in-progress / done / deferred / rejected.
 

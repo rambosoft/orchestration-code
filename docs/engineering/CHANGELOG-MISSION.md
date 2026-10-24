@@ -32,3 +32,6 @@ One line per completed item: id, commit, evidence.
 
 ## 2026-10-24 Unity support phase 2 [B-051]
 - Added `src/unity.ts`, `visual.engine`/`unityFilter`, verify-activity Unity evidence checks and the hygiene script with tests.
+
+## 2026-10-24 Unity support phases 3 and 4 [B-052][B-053]
+- Added `src/game.ts` (game design stage, Unity stack, game bar and blueprint rules), `src/unity-scaffold.ts`, the `unity-mobile-2d` template, game options, Unity manifest and docs, the design stage in the bootstrap workflow, Claude Unity tooling, tests (`test/game.test.ts`, chaos table).

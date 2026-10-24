@@ -4,8 +4,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function checkUnityHygiene(root) {
-  const problems = [];
+// Rule traceability (every R-xxx of docs/RULES_SPEC.md named by a test) is a warning while the game is being built and a failure with --strict-rules, which the last task runs.
+export function checkUnityHygiene(root, { strictRules = false } = {}) {
+  const problems = []; const warnings = [];
   const p = (rule, message) => problems.push(`${rule}: ${message}`);
   const read = file => { try { return readFileSync(join(root, file), "utf8"); } catch { return undefined; } };
   const rel = file => relative(root, file).split(sep).join("/");
@@ -35,7 +36,7 @@ export function checkUnityHygiene(root) {
   if (editorSettings === undefined) p("settings", "ProjectSettings/EditorSettings.asset is missing");
   else {
     if (!/m_SerializationMode:\s*2\b/.test(editorSettings)) p("settings", "asset serialization must be Force Text (m_SerializationMode: 2)");
-    if (!/m_ExternalVersionControlSupport:\s*Visible Meta Files/.test(editorSettings)) p("settings", "version control mode must be Visible Meta Files");
+    if (/m_ExternalVersionControlSupport:\s*(?!Visible Meta Files)\S/.test(editorSettings)) p("settings", "version control mode must be Visible Meta Files (the default; Unity 6 omits the key when it is the default)");
   }
 
   // packages
@@ -73,14 +74,16 @@ export function checkUnityHygiene(root) {
   if (spec !== undefined) {
     const ids = [...new Set(spec.match(/\bR-\d{3}\b/g) ?? [])];
     const tests = files.filter(file => file.name.endsWith(".cs") && /(^|\/)Tests?\//.test(rel(file.full))).map(file => readFileSync(file.full, "utf8")).join("\n");
-    for (const id of ids) if (!tests.includes(id)) p("rule-trace", `${id} from docs/RULES_SPEC.md is not referenced by any test (add "Covers: ${id}" to the test that proves it)`);
+    for (const id of ids) if (!tests.includes(id)) (strictRules ? problems : warnings).push(`rule-trace: ${id} from docs/RULES_SPEC.md is not referenced by any test (add "Covers: ${id}" to the test that proves it)`);
   }
-  return { notUnity: false, problems };
+  return { notUnity: false, problems, warnings };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const { notUnity, problems } = checkUnityHygiene(process.argv[2] ?? process.cwd());
+  const args = process.argv.slice(2);
+  const { notUnity, problems, warnings } = checkUnityHygiene(args.find(arg => !arg.startsWith("--")) ?? process.cwd(), { strictRules: args.includes("--strict-rules") });
   if (notUnity) { console.error("not a Unity project (Assets/ or ProjectSettings/ProjectVersion.txt missing)"); process.exit(2); }
+  for (const line of warnings) console.log(`warning ${line}`);
   if (problems.length) { for (const line of problems) console.error(line); console.error(`${problems.length} hygiene problem(s)`); process.exit(1); }
   console.log("unity hygiene clean");
 }

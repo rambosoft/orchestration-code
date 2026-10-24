@@ -4,10 +4,11 @@ import type { ScaffoldTemplate } from "./bootstrap-templates.js";
 import { DEFAULT_DRIFT_RULES } from "./contract-text.js";
 import { renderDesignDirection } from "./design-direction.js";
 import { redactSecrets } from "./redact.js";
+import { renderGameDesign, renderRulesSpec, UNITY_PROJECT_RULES, type GameDesign } from "./game.js";
 
 // The documents a bootstrapped repository starts with: the contract that keeps the project on its idea, the AI-agent guides (Claude Code reads CLAUDE.md, Codex reads
 // AGENTS.md), the plan and the stack decision record. Pure string builders; the scaffold activity writes them.
-export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; repoUrl?: string; /** Global drift rules from bootstrap.global.json; the built-in rules when absent. */ driftRules?: string[] };
+export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; /** The game design (game projects only). */ design?: GameDesign; repoUrl?: string; /** Global drift rules from bootstrap.global.json; the built-in rules when absent. */ driftRules?: string[] };
 const list = (items: string[], empty = "- none stated") => items.length ? items.map(item => `- ${item}`).join("\n") : empty;
 const designed = (input: DocsInput) => renderDesignDirection(input.options, input.charter) !== null;
 const section = (title: string, items: string[], empty?: string) => `## ${title}\n${list(items, empty)}`;
@@ -49,7 +50,7 @@ Global rules, set by the orchestrator for every project; they come before this f
 ${list(input.driftRules ?? DEFAULT_DRIFT_RULES)}
 
 Project rules:
-- none yet
+${input.template?.ecosystem === "unity" ? list(UNITY_PROJECT_RULES) : "- none yet"}
 
 ## Configuration chosen at creation
 ${configurationTable(input)}
@@ -58,7 +59,9 @@ ${configurationTable(input)}
 
 export function renderAgentGuide(input: DocsInput): string {
   const { form, stack, template } = input;
-  const commands = template
+  const commands = template?.ecosystem === "unity"
+    ? "- Tests: `unity test --mode EditMode --output Logs/editmode-results.xml` and `unity test --mode PlayMode --output Logs/playmode-results.xml` (a project open in an Editor cannot be tested; the exit code 8 means tests failed, 6 means no verdict: read the CS#### lines)\n- Hygiene: `node scripts/check-unity-hygiene.mjs`\n- Android build: `unity build --target Android --execute-method Builder.Android -o Builds/game.aab`\n- Prefer the `unity-cli` skill for any Unity command; never edit scene, prefab or .meta YAML by hand."
+    : template
     ? `- Install: \`npm ci\`\n- Dev server: \`npm run dev\`\n- Test: \`npm test\`\n- Typecheck: \`npm run typecheck\`\n- Build: \`npm run build\``
     : "- No scaffold exists for this stack yet: the first task initialises the project. Record its install, test and build commands here when it does.";
   return `# ${form.name}
@@ -68,7 +71,7 @@ ${form.description.split(/\r?\n/).slice(0, 6).join(" ").slice(0, 600)} Stack: ${
 
 ## Read first
 - \`docs/PROJECT_CONTRACT.md\` is binding: goals, non-goals, boundaries, design rules and the definition of done.
-${designed(input) ? "- \`docs/DESIGN_DIRECTION.md\` is binding for every screen: the visual bar, design system and per-page direction. A screen with default or library-stock styling is not finished.\n" : ""}- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
+${designed(input) ? "- \`docs/DESIGN_DIRECTION.md\` is binding for every screen: the visual bar, design system and per-page direction. A screen with default or library-stock styling is not finished.\n" : ""}${input.design ? "- \`docs/GAME_DESIGN.md\` and \`docs/RULES_SPEC.md\` are binding: every rule has an id (R-001 ...), and a test that proves it says \`Covers: R-001\`.\n" : ""}- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
 
 ## Commands
 ${commands}
@@ -135,7 +138,7 @@ export function renderReadme(input: DocsInput): string {
 
 ${form.description}
 
-${template ? "## Run it\n\n```bash\nnpm install\nnpm run dev\n```\n" : "## Status\n\nThe project is planned but not scaffolded; see `docs/PLAN.md`.\n"}
+${template?.ecosystem === "unity" ? "## Run it\n\nOpen the folder with Unity 6 (see `ProjectSettings/ProjectVersion.txt`), or from the command line:\n\n```bash\nunity test --mode EditMode\nunity build --target Android --execute-method Builder.Android -o Builds/game.aab\n```\n" : template ? "## Run it\n\n```bash\nnpm install\nnpm run dev\n```\n" : "## Status\n\nThe project is planned but not scaffolded; see `docs/PLAN.md`.\n"}
 ## Documents
 - [Project contract](docs/PROJECT_CONTRACT.md)
 ${designed(input) ? "- [Design direction](docs/DESIGN_DIRECTION.md)\n" : ""}- [Plan](docs/PLAN.md)
@@ -151,6 +154,7 @@ export function renderDocs(input: DocsInput): Record<string, string> {
   };
   const design = renderDesignDirection(input.options, input.charter);
   if (design) files["docs/DESIGN_DIRECTION.md"] = design;
+  if (input.design) { files["docs/GAME_DESIGN.md"] = renderGameDesign(input.form.name, input.design); files["docs/RULES_SPEC.md"] = renderRulesSpec(input.form.name, input.design); }
   return Object.fromEntries(Object.entries(files).map(([file, content]) => [file, redactSecrets(content)]));
 }
 
@@ -171,7 +175,7 @@ ${list(charter.goals)}
 ## Boundaries
 ${list([...charter.non_goals.map(item => `Not: ${item}`), ...charter.boundaries])}
 
-## Milestones
+${input.design ? `## Game design\n${input.design.summary}\n\nRules (${input.design.rules.length}):\n${input.design.rules.map(rule => `- ${rule.id}: ${rule.statement}`).join("\n")}\n\nScreens: ${input.design.screens.map(screen => screen.name).join("; ")}\n\n` : ""}## Milestones
 ${blueprint.milestones.map((milestone, index) => `${index + 1}. **${milestone.title}** - ${milestone.goal}\n${milestone.tasks.map(task => `   - ${task.title}${task.depends_on.length ? ` (after ${task.depends_on.join(", ")})` : ""}`).join("\n")}`).join("\n")}
 ${charter.open_questions.length ? `\n## Open questions\n${list(charter.open_questions)}\n` : ""}${extra.warnings?.length ? `\n## Warnings\n${list(extra.warnings)}\n` : ""}`);
 }

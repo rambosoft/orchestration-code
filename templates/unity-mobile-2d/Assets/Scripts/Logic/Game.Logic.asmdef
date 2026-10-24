@@ -1,0 +1,7 @@
+{
+  "name": "Game.Logic",
+  "rootNamespace": "Game.Logic",
+  "references": [],
+  "noEngineReferences": true,
+  "autoReferenced": true
+}

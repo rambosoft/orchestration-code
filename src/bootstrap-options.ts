@@ -23,6 +23,11 @@ export const OPTION_CATALOG: OptionDefinition[] = [
     choice("mvp", "MVP", "Usable by real people; unit tests and CI"), choice("production", "Production grade", "Full checks, accessibility and review rigor")] },
   { id: "architecture", group: "product", label: "Application shape", help: "Leave on automatic to let the stack stage decide.", kind: "select", default: "auto", advanced: false, choices: [
     choice("auto", "Decide for me"), choice("frontend_only", "Frontend only", "No server; data is mocked or local"), choice("fullstack", "Frontend and backend"), choice("backend_only", "Backend only")] },
+  { id: "product_kind", group: "product", label: "What are you making?", help: "A game gets a game design stage (rules, edge cases, screens, feel) before the plan, a game engine and game-specific quality gates.", kind: "select", default: "app", advanced: false, choices: [choice("app", "Application"), choice("game", "Game")] },
+  { id: "engine", group: "product", label: "Game engine", help: "Games only. Automatic picks Unity for mobile and desktop games.", kind: "select", default: "auto", advanced: false, choices: [choice("auto", "Decide for me"), choice("unity", "Unity")] },
+  { id: "game_orientation", group: "experience", label: "Screen orientation", help: "Games only.", kind: "select", default: "portrait", advanced: true, choices: [choice("portrait", "Portrait"), choice("landscape", "Landscape"), choice("both", "Both")] },
+  { id: "game_art", group: "experience", label: "Art and audio source", help: "Games only. Procedural and free-licence assets need no paid services.", kind: "select", default: "procedural", advanced: true, choices: [choice("procedural", "Procedural and vector art, synthesized sound"), choice("free_assets", "Free-licence assets"), choice("generated", "AI-generated assets (needs keys)")] },
+  { id: "game_fps", group: "experience", label: "Target frame rate", help: "Games only. The frame budget the performance checks use.", kind: "select", default: "60", advanced: true, choices: [choice("30", "30 fps"), choice("60", "60 fps")] },
   { id: "stack", group: "product", label: "Preferred tech stack", help: "Free text, for example 'React, TypeScript, Vite'. Empty means the stack stage recommends the best fit and explains why.", kind: "text", default: "", advanced: false },
   { id: "audience", group: "product", label: "Who uses it?", help: "Shapes polish, security and support expectations.", kind: "select", default: "public_users", advanced: true, choices: [choice("personal", "Just me"), choice("internal_team", "An internal team"), choice("public_users", "Public users")] },
   { id: "constraints", group: "product", label: "Must follow", help: "Rules the project must obey (one per line): licences, libraries to use or avoid, compliance.", kind: "text", default: "", advanced: true },
@@ -96,8 +101,15 @@ export function resolveOptions(explicit: Record<string, unknown> = {}): Resolved
     if (provenance[id] === "user") warnings.push(`${why}; '${id}' was set to ${String(value)} instead of your choice`);
     values[id] = value; provenance[id] = "derived";
   };
+  // A game is built for a device: a game left on the web default moves to Android, and the engine resolves to Unity (the only engine with a scaffold).
+  if (values.product_kind === "game") {
+    if (["web", "cli", "api_backend"].includes(String(values.platform))) set("platform", "mobile_android", "games are built for mobile devices in this release");
+    set("engine", "unity", "Unity is the supported game engine");
+    set("architecture", "frontend_only", "a game runs on the device");
+    if (values.test_depth === "none" || values.test_depth === "smoke") set("test_depth", "unit", "game rules need tests");
+  }
   const platform = String(values.platform);
-  if (platform !== "web") set("visual_verification", false, "visual checks only work for web projects");
+  if (platform !== "web" && !(values.product_kind === "game" && values.engine === "unity")) set("visual_verification", false, "visual checks only work for web projects");
   if (platform === "cli" || platform === "api_backend") set("ui_ux", false, "this platform has no user interface");
   if (platform === "api_backend" && values.architecture !== "backend_only") set("architecture", "backend_only", "an API project has no frontend");
   if (platform === "api_backend" && provenance.accessibility !== "user") set("accessibility", "basic", "accessibility checks apply to user interfaces");

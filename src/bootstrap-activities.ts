@@ -11,12 +11,14 @@ import { runCommand, type CommandRunner } from "./command.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
+import { isGame, type GameDesign } from "./game.js";
+import { defaultUnityTools, scaffoldUnityProject, templateValues, type UnityTools } from "./unity-scaffold.js";
 
 // Host-side steps of a project bootstrap (ADR 0009). They run on the Windows worker, where the GitHub login lives; the bridge container never sees it.
 // Each step is a plain function with injectable dependencies so the tests run without npm, git remotes or a Paperclip server.
 export type NpmRunner = (args: string[], cwd: string) => Promise<{ code: number | null; output: string }>;
-export type ScaffoldDeps = { run: CommandRunner; npm: NpmRunner; env: NodeJS.ProcessEnv };
-export type ScaffoldRequest = { runId: string; run: BootstrapRunInput; stack: StackDecision; charter: Charter; blueprint: Blueprint };
+export type ScaffoldDeps = { run: CommandRunner; npm: NpmRunner; env: NodeJS.ProcessEnv; /** Unity Editor and CLI access for game projects; the real tools when absent. */ unity?: UnityTools };
+export type ScaffoldRequest = { runId: string; run: BootstrapRunInput; stack: StackDecision; charter: Charter; blueprint: Blueprint; /** Game projects: the approved game design, written to docs/GAME_DESIGN.md and docs/RULES_SPEC.md. */ design?: GameDesign };
 
 const npmRunner: NpmRunner = (args, cwd) => new Promise((resolve, reject) => {
   const { command, args: commandArgs } = toolCommand("npm", args);
@@ -80,21 +82,29 @@ export async function scaffoldProjectImpl(request: ScaffoldRequest, deps: Scaffo
   const manifestPath = path.join(manifestDir, `${form.paperclip.projectId}.json`);
   if (await exists(manifestPath)) return fail(`this Paperclip project is already bootstrapped (${manifestPath} exists)`);
   if (!(await isEmptyOrMissing(root))) return fail(`the folder ${root} already exists and is not empty; choose another repository name`);
-  const template = usableTemplate(request.stack.template_id, String(options.platform), request.stack.architecture);
+  const template = usableTemplate(request.stack.template_id, String(options.platform), request.stack.architecture, isGame(options));
+  const unityProject = template?.ecosystem === "unity";
   const warnings: string[] = [];
   const repoCreate = options.repo_create === true;
   let repoCreated = false;
   try {
-    await mkdir(root, { recursive: true });
-    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, charter: request.charter, blueprint: request.blueprint, driftRules: config.contract.rules, ...(template ? { template } : {}) }) };
-    if (template) {
+    // Unity creates its own project folder; every other stack starts from an empty folder made here.
+    if (!unityProject) await mkdir(root, { recursive: true });
+    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, charter: request.charter, blueprint: request.blueprint, driftRules: config.contract.rules, ...(request.design ? { design: request.design } : {}), ...(template ? { template } : {}) }) };
+    if (unityProject) {
+      if (options.ci === "basic") warnings.push("no CI workflow was added: a Unity build in GitHub Actions needs licence activation secrets");
+    } else if (template) {
       Object.assign(files, template.files({ name: form.name, slug, description: form.description }), { "package.json": packageJson(template, slug) });
       if (options.ci === "basic") files[".github/workflows/ci.yml"] = CI_WORKFLOW;
     } else files[".gitignore"] = "node_modules/\ndist/\nbuild/\n*.log\n.env\n.env.*\n!.env.example\ncoverage/\n";
-    for (const [file, content] of Object.entries(files)) { const target = inside(root, file); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content, "utf8"); }
-
-    let verified = false;
-    if (template) {
+    const writeRepositoryFiles = async () => { for (const [file, content] of Object.entries(files)) { const target = inside(root, file); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content, "utf8"); } };
+    let verified = false; let editorVersion: string | undefined;
+    if (unityProject) {
+      // Unity writes the project, the template and docs are copied on top, one import pass writes the .meta files, and EditMode tests plus hygiene prove it before the commit.
+      const result = await scaffoldUnityProject({ root, template: template!, values: templateValues(form.name, slug, options), tools: deps.unity ?? defaultUnityTools(deps.env), run: deps.run, env: deps.env, writeFiles: writeRepositoryFiles });
+      editorVersion = result.editorVersion; verified = true;
+    } else await writeRepositoryFiles();
+    if (unityProject) { /* proven above */ } else if (template) {
       // Current releases are installed (and locked) now rather than pinned in a template that would age; the project is then proven to build and test before anything is committed.
       for (const [label, args] of [["dependencies", ["install", ...template.dependencies]], ["dev dependencies", ["install", "--save-dev", ...template.devDependencies]]] as const) {
         const installed = await deps.npm([...args], root);
@@ -121,7 +131,7 @@ export async function scaffoldProjectImpl(request: ScaffoldRequest, deps: Scaffo
       repositoryUrl = await deps.run("gh", ["repo", "view", target, "--json", "url", "-q", ".url"], root).catch(() => undefined);
     } else warnings.push("no GitHub repository was created, so the orchestrator cannot publish pull requests for this project");
 
-    const manifest = ProjectManifestSchema.parse(buildManifest({ projectId: form.paperclip.projectId, form: { ...form, repoName: slug }, options, ...(template ? { template } : {}), hasRepository: repoCreate, config }));
+    const manifest = ProjectManifestSchema.parse(buildManifest({ projectId: form.paperclip.projectId, form: { ...form, repoName: slug }, options, ...(template ? { template } : {}), hasRepository: repoCreate, config, ...(editorVersion ? { editorVersion } : {}) }));
     await mkdir(manifestDir, { recursive: true });
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     return { projectRoot: root, ...(repositoryUrl ? { repositoryUrl } : {}), commit, manifestPath, template: template?.id ?? "none", verified, warnings };

@@ -51,7 +51,7 @@ describe("unity hygiene script", () => {
 
   it("checks settings, packages and gitignore", async () => {
     const root = await cleanProject();
-    await put(root, "ProjectSettings/EditorSettings.asset", "EditorSettings:\n  m_SerializationMode: 1\n");
+    await put(root, "ProjectSettings/EditorSettings.asset", "EditorSettings:\n  m_SerializationMode: 1\n  m_ExternalVersionControlSupport: Hidden Meta Files\n");
     await put(root, "Packages/manifest.json", "{\"dependencies\":{}}");
     await put(root, ".gitignore", "/Library/\n");
     expect(rules(checkUnityHygiene(root).problems)).toEqual(expect.arrayContaining(["settings", "packages", "gitignore"]));
@@ -88,8 +88,12 @@ describe("unity hygiene script", () => {
   it("traces every rule id of the rules spec to a test", async () => {
     const root = await cleanProject();
     await put(root, "docs/RULES_SPEC.md", "R-001 spawn\nR-002 merge once\n");
-    const problems = checkUnityHygiene(root).problems as string[];
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain("R-002");
+    const lenient = checkUnityHygiene(root);
+    expect(lenient.problems).toEqual([]);
+    expect(lenient.warnings).toHaveLength(1);
+    expect(lenient.warnings[0]).toContain("R-002");
+    const strict = checkUnityHygiene(root, { strictRules: true });
+    expect(strict.problems).toHaveLength(1);
+    expect(strict.problems[0]).toContain("R-002");
   });
 });

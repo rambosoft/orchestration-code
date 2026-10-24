@@ -7,12 +7,16 @@ export type TemplateContext = { name: string; slug: string; description: string 
 export type ScaffoldTemplate = {
   id: string; label: string; description: string;
   platforms: string[]; architectures: string[];
-  ecosystem: "node";
+  ecosystem: "node" | "unity";
   scripts: Record<string, string>; dependencies: string[]; devDependencies: string[];
   files: (context: TemplateContext) => Record<string, string>;
   /** Checks every code task is gated on. `test` is dropped when the project chose no automated tests. */
   checks: { build: QualityCommand; test: QualityCommand };
   visual?: VisualConfig;
+  /** unity: folder under templates/ whose files are copied (with {{NAME}}, {{SLUG}}, {{NAMESPACE}} replaced) after the project is created by the Editor. */
+  templateDir?: string;
+  /** unity: the manifest's stack block and the gates by maturity. The node checks above are not used for these. */
+  unity?: { executeMethods: string[]; gates: (maturity: string, testDepth: string) => QualityCommand[]; captureFilter: string };
 };
 
 const viteReactTs: ScaffoldTemplate = {
@@ -41,14 +45,36 @@ const viteReactTs: ScaffoldTemplate = {
   visual: { enabled: true, engine: "web", command: { executable: "npm", args: ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5199", "--strictPort"] }, url: "http://127.0.0.1:5199/", readyTimeoutMs: 60_000, viewports: [{ name: "desktop", width: 1280, height: 800 }, { name: "mobile", width: 390, height: 844 }], steps: [{ do: "shot", name: "initial" }], maxImages: 4, required: false },
 };
 
-export const TEMPLATES: Record<string, ScaffoldTemplate> = { [viteReactTs.id]: viteReactTs };
+const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
+  const unity = (args: string[], severity?: "warn"): QualityCommand => ({ executable: "unity", args, ...(severity ? { severity } : {}) });
+  const gates: QualityCommand[] = [{ executable: "node", args: ["scripts/check-unity-hygiene.mjs"] }, unity(["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"])];
+  if (testDepth !== "none" && testDepth !== "smoke") gates.push(unity(["test", "--mode", "PlayMode", "--output", "Logs/playmode-results.xml"]));
+  if (maturity === "production") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"]));
+  else if (maturity === "mvp") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"], "warn"));
+  return gates;
+};
+const unityMobile2d: ScaffoldTemplate = {
+  id: "unity-mobile-2d",
+  label: "Unity 6 2D mobile game",
+  description: "Unity 6 project for a 2D mobile game: an engine-free logic assembly with EditMode tests, a view layer, PlayMode tests with a screenshot capture harness, an Android build method and a hygiene check; built and tested headless with the Unity CLI.",
+  platforms: ["mobile_android", "mobile_ios", "mobile_cross", "desktop"], architectures: ["frontend_only"],
+  ecosystem: "unity", templateDir: "unity-mobile-2d",
+  scripts: {}, dependencies: [], devDependencies: [],
+  files: () => ({}),
+  checks: { build: { executable: "unity", args: ["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"] }, test: { executable: "unity", args: ["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"] } },
+  visual: { enabled: true, engine: "unity", unityFilter: "CaptureTests", readyTimeoutMs: 600_000, viewports: [{ name: "desktop", width: 1280, height: 720 }], steps: [{ do: "shot", name: "initial" }], maxImages: 8, required: false },
+  unity: { executeMethods: ["Builder.Android"], gates: unityGates, captureFilter: "CaptureTests" },
+};
+
+export const TEMPLATES: Record<string, ScaffoldTemplate> = { [viteReactTs.id]: viteReactTs, [unityMobile2d.id]: unityMobile2d };
 
 export function templateSummaries(): Array<{ id: string; label: string; description: string; platforms: string[]; architectures: string[] }> {
-  return Object.values(TEMPLATES).map(({ id, label, description, platforms, architectures }) => ({ id, label, description, platforms, architectures }));
+  // Game templates are chosen by the engine option, never offered to the stack stage of an application.
+  return Object.values(TEMPLATES).filter(template => template.ecosystem === "node").map(({ id, label, description, platforms, architectures }) => ({ id, label, description, platforms, architectures }));
 }
 
-/** Only a template that fits the platform and shape is usable; a model may name one that does not. */
-export function usableTemplate(id: string | undefined, platform: string, architecture: string): ScaffoldTemplate | undefined {
+/** Only a template that fits the platform and shape is usable; a model may name one that does not. A game template needs `game`. */
+export function usableTemplate(id: string | undefined, platform: string, architecture: string, game = false): ScaffoldTemplate | undefined {
   const template = id ? TEMPLATES[id] : undefined;
-  return template && template.platforms.includes(platform) && (architecture === "auto" || template.architectures.includes(architecture)) ? template : undefined;
+  return template && (template.ecosystem === "node" || game) && template.platforms.includes(platform) && (architecture === "auto" || template.architectures.includes(architecture)) ? template : undefined;
 }

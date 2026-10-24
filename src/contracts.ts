@@ -4,7 +4,7 @@ import type { TaskTypeId } from "./task-types.js";
 import { CORE_EXECUTABLES, STACK_PROFILE_IDS, stackCommandProblems } from "./stack-profiles.js";
 import type { BootstrapOutcome, BootstrapRunInput } from "./bootstrap.js";
 
-export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint"]);
+export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint", "design"]);
 export type StageName = z.infer<typeof StageNameSchema>;
 export const ProviderIdSchema = z.enum(["fake", "claude", "codex", "gemini", "openrouter"]);
 export const UiUxSkillIdSchema = z.enum(["ui-ux-pro-max", "frontend-design", "vercel-composition-patterns", "vercel-react-native-skills"]);
@@ -39,7 +39,7 @@ export const VisualConfigSchema = z.object({
   url: z.string().url().refine(value => /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(value), "visual.url must be an http://localhost, 127.0.0.1 or [::1] address").optional(),
   /** engine unity only: NUnit filter selecting the capture test, for example CaptureTests. */
   unityFilter: z.string().regex(/^[A-Za-z_][\w.]*$/, "a test or fixture name").optional(),
-  readyTimeoutMs: z.number().int().min(1000).max(300_000).default(60_000),
+  readyTimeoutMs: z.number().int().min(1000).max(1_800_000).default(60_000),
   viewports: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,20}$/), width: z.number().int().min(200).max(3840), height: z.number().int().min(200).max(2160) })).min(1).max(3).default([{ name: "desktop", width: 1280, height: 720 }]),
   steps: z.array(VisualStepSchema).min(1).max(40).default([{ do: "shot", name: "initial" }]),
   maxImages: z.number().int().min(1).max(8).default(6),

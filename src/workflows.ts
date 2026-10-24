@@ -10,6 +10,7 @@ import { analysisBlock, analysisConstraints, analysisPrompt as makeAnalysisPromp
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
 import { taskTypes } from "./task-types.js";
 import { diagnosePrompt, diagnosisBlock, diagnosisConstraints, formatDiagnosisMarkdown, hintFromDiagnosis, hintFromReproduction, needsInfoMessage, regressionGate, repairDiagnosisPrompt, repairReproductionPrompt, reproducePrompt, salvageDiagnosis, validateDiagnosis, validateReproduction, type BugOutcome, type Diagnosis, type ReproVerification, type Reproduction } from "./bug.js";
+import { deterministicGameDesign, gameDesignPrompt, isGame, isUnityGame, repairGameDesignPrompt, unityStackDecision, validateGameDesign, type GameDesign } from "./game.js";
 import { blueprintPrompt, buildIssuePlan, charterPrompt, deterministicBlueprint, deterministicCharter, deterministicStack, planLimits, repairBlueprintPrompt, repairCharterPrompt, repairStackPrompt, salvageBlueprint, stackPrompt, validateBlueprint, validateCharter, validateStack, type Blueprint, type BootstrapState, type Charter, type StackDecision } from "./bootstrap.js";
 import { renderPlanSummary } from "./bootstrap-docs.js";
 import { usableTemplate } from "./bootstrap-templates.js";
@@ -353,25 +354,34 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     // ADR 0009: stack, charter and blueprint (model stages, each validated and recoverable), a human approval gate, then the scaffold (repository, manifest) and the Paperclip issues.
     const run = input.bootstrap;
     if (!run) return finish("failed", "a bootstrap run needs its project form");
-    const state: { phase: BootstrapState["phase"]; stack?: StackDecision; charter?: Charter; blueprint?: Blueprint; summary?: string } = { phase: "planning" };
+    const state: { phase: BootstrapState["phase"]; stack?: StackDecision; charter?: Charter; design?: GameDesign; blueprint?: Blueprint; summary?: string } = { phase: "planning" };
     const warningLines = () => warnings.map(warning => `${warning.stage}: ${warning.message}`);
     setHandler(bootstrapStateQuery, () => ({ ...state, warnings: warningLines() }));
     try {
       workspace = await prepareBootstrapSandbox(input.runId);
       const platform = String(run.options.platform);
       currentStage = "stack";
-      const stack = (await structuredStage<StackDecision>({ stage: "stack", prompt: stackPrompt(run), parse: output => validateStack(output.summary, platform), repairPrompt: (previous, diagnostic) => repairStackPrompt(run, previous.summary, diagnostic), repairs: 1, fallback: () => deterministicStack(run) })).value;
+      // A Unity game does not ask a model for its stack: the engine is an option and the scaffold template is fixed (docs/engineering/research/unity-game-support.md).
+      const game = isGame(run.options);
+      const stack = game && isUnityGame(run.options) ? unityStackDecision() : (await structuredStage<StackDecision>({ stage: "stack", prompt: stackPrompt(run), parse: output => validateStack(output.summary, platform), repairPrompt: (previous, diagnostic) => repairStackPrompt(run, previous.summary, diagnostic), repairs: 1, fallback: () => deterministicStack(run) })).value;
       state.stack = stack; completedStages.push("stack");
-      const template = usableTemplate(stack.template_id, platform, stack.architecture);
+      const template = usableTemplate(stack.template_id, platform, stack.architecture, game);
       currentStage = "charter";
       const charter = (await structuredStage<Charter>({ stage: "charter", prompt: charterPrompt(run, stack), parse: output => validateCharter(output.summary), repairPrompt: (previous, diagnostic) => repairCharterPrompt(previous.summary, diagnostic), repairs: 1, fallback: () => deterministicCharter(run) })).value;
       state.charter = charter; completedStages.push("charter");
+      let design: GameDesign | undefined;
+      if (game) {
+        // The game design stage: numbered rules with edge cases, screens, feel and a test-case table, validated and recoverable like every other structured stage; the plan is built from it.
+        currentStage = "design";
+        design = (await structuredStage<GameDesign>({ stage: "design", prompt: gameDesignPrompt(run, `${charter.vision} Goals: ${charter.goals.join("; ")} Boundaries: ${[...charter.non_goals, ...charter.boundaries].join("; ") || "none"}`), parse: output => validateGameDesign(output.summary), repairPrompt: (previous, diagnostic) => repairGameDesignPrompt(previous.summary, diagnostic), repairs: 1, fallback: () => deterministicGameDesign(run.form) })).value;
+        state.design = design; completedStages.push("design");
+      }
       currentStage = "blueprint";
       const limits = planLimits(String(run.options.granularity));
       let lastBlueprint = "";
-      const blueprint = (await structuredStage<Blueprint>({ stage: "blueprint", prompt: blueprintPrompt(run, stack, charter, limits, template !== undefined), parse: output => { lastBlueprint = output.summary; return validateBlueprint(output.summary, limits); }, repairPrompt: (previous, diagnostic) => repairBlueprintPrompt(previous.summary, diagnostic, limits), repairs: 2, fallback: () => salvageBlueprint(lastBlueprint, limits) ?? deterministicBlueprint(run.form, template !== undefined) })).value;
+      const blueprint = (await structuredStage<Blueprint>({ stage: "blueprint", prompt: blueprintPrompt(run, stack, charter, limits, template !== undefined, design), parse: output => { lastBlueprint = output.summary; return validateBlueprint(output.summary, limits); }, repairPrompt: (previous, diagnostic) => repairBlueprintPrompt(previous.summary, diagnostic, limits), repairs: 2, fallback: () => salvageBlueprint(lastBlueprint, limits) ?? deterministicBlueprint(run.form, template !== undefined) })).value;
       state.blueprint = blueprint; completedStages.push("blueprint");
-      const docs = { form: run.form, options: run.options, provenance: run.provenance, stack, charter, blueprint, ...(template ? { template } : {}) };
+      const docs = { form: run.form, options: run.options, provenance: run.provenance, stack, charter, blueprint, ...(design ? { design } : {}), ...(template ? { template } : {}) };
       state.summary = renderPlanSummary(docs, { warnings: warningLines() });
       state.phase = "awaiting_approval";
       if (input.approval) {
@@ -381,7 +391,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         completedStages.push("approval");
       }
       state.phase = "creating"; currentStage = "scaffold";
-      const scaffold = await scaffoldProject({ runId: input.runId, run, stack, charter, blueprint });
+      const scaffold = await scaffoldProject({ runId: input.runId, run, stack, charter, blueprint, ...(design ? { design } : {}) });
       completedStages.push("scaffold");
       currentStage = "issues";
       // The agent can only build when there is a repository to publish to and checks to gate on; otherwise the tasks wait in the backlog.
