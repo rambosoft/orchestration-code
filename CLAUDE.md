@@ -60,6 +60,7 @@ Plan -> implement -> verify -> report. Backlog is `docs/engineering/BACKLOG.md`;
 ## Added by the hardening mission
 - Child processes use `childEnv()` (`src/env.ts`): never pass service tokens to model-run code.
 - Publishing goes through `findPublishViolations` (`src/publish-guard.ts`); bridge test flags need `ORCHESTRATOR_ALLOW_TEST_FLAGS=1`.
+- ADR 0011: `projectContract` (built by `src/contract.ts`) carries the global drift rules and the repository's contract into the plan, implement and review prompts; with `plan_mode=parallel` a task with several blockers is built on a worker-assembled `integration/<branch>` (`checkDependencies` returns it, the workflow reads it). Both are data on existing steps, so no `patched()` and an unchanged replay fixture.
 - Workflow edits that change the command sequence need `patched()` and a regenerated replay fixture (`UPDATE_REPLAY_FIXTURE=1 npx vitest run test/replay.test.ts`). See `docs/engineering/EXTENDING.md`.
 
 ## Robustness rules (from the audit)

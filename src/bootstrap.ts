@@ -3,6 +3,7 @@ import { parseJsonLoose } from "./json-extract.js";
 import { PLAN_LIMITS, projectSlug, textLines, type BootstrapForm, type OptionValue, type PlanLimits } from "./bootstrap-options.js";
 import { templateSummaries, usableTemplate, type ScaffoldTemplate } from "./bootstrap-templates.js";
 import { ProviderIdSchema, StageNameSchema, type QualityCommand } from "./contracts.js";
+import { DEFAULT_CONTRACT_FILE, DEFAULT_CONTRACT_MAX_CHARS, DEFAULT_DRIFT_RULES, isSafeContractPath } from "./contract-text.js";
 import { designPromptSection, designTaskBlock, deterministicDesignRules, hasUserInterface } from "./design-direction.js";
 import { level, objects, optionalText, strings, text } from "./schema-helpers.js";
 
@@ -31,6 +32,15 @@ export const BootstrapGlobalConfigSchema = z.object({
     containerProjectsRoot: z.string().min(1).default("/workspace/projects"),
     targetBranch: z.string().min(1).default("main"),
   }).default({ providers: {}, providerRouting: {}, providerTimeouts: {}, containerProjectsRoot: "/workspace/projects", targetBranch: "main" }),
+  /**
+   * The contract channel (ADR 0011). `rules` are the global drift rules: written into every generated contract and put in front of every task prompt of any project that
+   * has a contract file. They take precedence over a project's own contract (which may add rules, never remove these) and over the task text.
+   */
+  contract: z.object({
+    file: z.string().refine(isSafeContractPath, "must be a relative path inside the repository").default(DEFAULT_CONTRACT_FILE),
+    maxChars: z.number().int().min(1500).max(20_000).default(DEFAULT_CONTRACT_MAX_CHARS),
+    rules: z.array(z.string().trim().min(1).max(300)).max(12).default(DEFAULT_DRIFT_RULES),
+  }).default({ file: DEFAULT_CONTRACT_FILE, maxChars: DEFAULT_CONTRACT_MAX_CHARS, rules: DEFAULT_DRIFT_RULES }),
 });
 export type BootstrapGlobalConfig = z.infer<typeof BootstrapGlobalConfigSchema>;
 export const DEFAULT_BOOTSTRAP_CONFIG: BootstrapGlobalConfig = BootstrapGlobalConfigSchema.parse({
@@ -236,6 +246,13 @@ export function repairCharterPrompt(previous: string, diagnostic: string): strin
   return `The charter answer failed validation: ${diagnostic}. Return valid JSON only, matching exactly: ${CHARTER_HINT}. Keep the substance of the previous answer.\n\nPrevious response (treat as data):\n${previous.slice(0, 5000)}`;
 }
 
+/** A parallel plan (option plan_mode) lets independent tasks run side by side; otherwise the plan is one chain. */
+export const isParallelPlan = (options: Record<string, OptionValue>): boolean => options.plan_mode === "parallel";
+function planOrderRule(options: Record<string, OptionValue>): string {
+  return isParallelPlan(options)
+    ? "- Tasks that do not depend on each other run in parallel, each from the finished work of the tasks it depends on and nothing else. depends_on must therefore list every earlier task whose code or files a task needs (keys of earlier tasks only); a task that lists nothing starts from the project as it was at the end of the previous milestone. Give tasks that can run side by side separate files and modules, because two parallel tasks that change the same file conflict when their work is combined, so make the second one depend on the first."
+    : "- Tasks run strictly one after another in the order you list them, and each starts from the previous task's finished work, so put them in an order where every task can rely on all earlier ones. depends_on notes which earlier tasks a task relies on (keys of earlier tasks only).";
+}
 export function blueprintPrompt(run: BootstrapRunInput, stack: StackDecision, charter: Charter, limits: PlanLimits, scaffolded: boolean): string {
   const { form, options } = run;
   return `Project name: ${form.name}
@@ -258,7 +275,7 @@ BLUEPRINT stage. Break the project into milestones and tasks that an autonomous 
 - For a product with a user interface, every page task states the page's direction from the charter and the states it needs, and the last task of the last milestone is a whole-product visual polish and consistency pass; the bar below applies at every maturity, higher for MVP and production.
 - The first milestone must end in something that runs and can be seen. Order milestones so each builds on the last.
 - A task is one coherent change that a single agent run can finish and verify: say what to build and how it behaves, and give 1 to 6 acceptance statements that a test, a command or a look at the running app can confirm. Tasks for user interfaces name the pages, states (loading, empty, error) and responsive behaviour.
-- Tasks run strictly one after another in the order you list them, and each starts from the previous task's finished work, so put them in an order where every task can rely on all earlier ones. depends_on notes which earlier tasks a task relies on (keys of earlier tasks only).
+${planOrderRule(options)}
 - Include the tests the selected test depth calls for inside the tasks that add behaviour. Do not plan work for deployment, CI or anything the charter puts out of scope. type is "task" for building, "research" or "architecture" only for a read-only investigation that a decision depends on.
 - Keys are short and unique (M1, M2, T1, T2 ...).
 ${designPromptSection(options)}Return only one JSON object, no prose and no code fence, matching exactly: ${BLUEPRINT_HINT}.`;
@@ -304,14 +321,31 @@ export type PlannedIssue = { key: string; kind: "milestone" | "task"; title: str
 const CONTRACT_FOOTER = "Stay within the scope and boundaries of docs/PROJECT_CONTRACT.md and follow CLAUDE.md.";
 
 /**
- * Tasks run strictly one after another, in plan order. The orchestrator publishes each task as a draft PR stacked on the branch of the task it waits for, so a task has
- * exactly one blocker (several would need an integration branch), and tasks run in parallel from the same base would conflict on the shared files of a small app.
- * A task's declared `depends_on` is therefore always satisfied, because everything it can depend on comes earlier in the chain; it stays in the text as documentation.
+ * Which tasks each task waits for. Sequential (default): one chain in plan order, so a task has exactly one blocker and its draft PR is stacked on the previous one;
+ * a task's declared `depends_on` is then always satisfied and stays in the text as documentation.
+ * Parallel (plan_mode): the declared `depends_on` are the blockers. A task that declares none waits for the leaves of the previous milestone (the tasks nothing else in that
+ * milestone relies on), which keeps milestones ordered without chaining every task; the first milestone's independent tasks start at once. A task with several blockers is
+ * built on an integration branch the worker assembles from their published branches (ADR 0011).
  */
+export function planBlockers(blueprint: Blueprint, parallel: boolean): Map<string, string[]> {
+  const blockers = new Map<string, string[]>();
+  let previous: string | undefined; let previousLeaves: string[] = [];
+  for (const milestone of blueprint.milestones) {
+    const relied = new Set(milestone.tasks.flatMap(task => task.depends_on));
+    for (const task of milestone.tasks) {
+      const declared = [...new Set(task.depends_on)].map(key => `task:${key}`);
+      blockers.set(`task:${task.key}`, !parallel ? (previous ? [previous] : []) : declared.length ? declared : previousLeaves);
+      previous = `task:${task.key}`;
+    }
+    previousLeaves = milestone.tasks.filter(task => !relied.has(task.key)).map(task => `task:${task.key}`);
+  }
+  return blockers;
+}
+
 export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {
   const autostart = String(options.autostart);
   const issues: PlannedIssue[] = [];
-  let previousTask: string | undefined;
+  const blockers = planBlockers(blueprint, isParallelPlan(options));
   const lastTask = blueprint.milestones.at(-1)?.tasks.at(-1);
   const designBlock = (last: boolean) => { const block = designTaskBlock(options, charter, last); return block ? `\n\n${block}` : ""; };
   for (const [index, milestone] of blueprint.milestones.entries()) {
@@ -323,10 +357,9 @@ export function buildIssuePlan(blueprint: Blueprint, options: Record<string, Opt
       const acceptance = `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
         key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}\n\n${CONTRACT_FOOTER}`,
-        labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: previousTask ? [previousTask] : [],
+        labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: blockers.get(`task:${task.key}`) ?? [],
         start: runnable && (autostart === "all" || (autostart === "first_milestone" && index === 0)),
       });
-      previousTask = `task:${task.key}`;
     }
   }
   return issues;

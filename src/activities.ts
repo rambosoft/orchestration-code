@@ -14,7 +14,7 @@ import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
-import { resolveRemoteBranch, runCommand } from "./workspaces.js";
+import { buildIntegrationBase, resolveRemoteBranch, runCommand } from "./workspaces.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
 import type { OpenSpecPrepared, OpenSpecContext } from "./contracts.js";
 import { prepareWorktree as prepareWorktreeImpl, collectWorktree as collectWorktreeImpl, publishWorktree as publishWorktreeImpl } from "./workspaces.js";
@@ -46,8 +46,12 @@ async function archiveOpenSpecChangeImpl(input: { changeId: string; runId: strin
   catch (error) { throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), "OpenSpecArchiveError"); }
 }
 
-async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<void> {
-  if (!input.blockerIds.length) return;
+/**
+ * Rechecks the blockers just before the branch is created. Returns the base to build on only when the worker had to assemble it (several blockers and no configured
+ * integration branch, ADR 0011); the workflow then uses it instead of the placeholder admitted by the bridge. In every other case it returns nothing, as it always did.
+ */
+async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublications: ParentPublication[]; repository: RepositoryContext; projectRoot: string }): Promise<{ baseSha: string; prBaseBranch: string } | undefined> {
+  if (!input.blockerIds.length) return undefined;
   const token = process.env.PAPERCLIP_API_TOKEN;
   if (!token) throw new Error("PAPERCLIP_API_TOKEN is required on the Windows worker to recheck task blockers before branch creation");
   const base = (process.env.PAPERCLIP_API_URL ?? "http://127.0.0.1:3100").replace(/\/$/, "");
@@ -61,11 +65,15 @@ async function checkDependenciesImpl(input: { blockerIds: string[]; parentPublic
     const parent = input.parentPublications[0]!;
     const current = await resolveRemoteBranch(input.projectRoot, input.repository.remote, parent.branch);
     if (current !== parent.headSha || current !== input.repository.baseSha) throw new Error(`parent branch '${parent.branch}' changed after admission; human stack recovery is required`);
+  } else if (input.parentPublications.length > 1 && input.repository.integrateParents) {
+    const built = await buildIntegrationBase({ projectRoot: input.projectRoot, remote: input.repository.remote, branch: input.repository.branch, parents: input.parentPublications });
+    return { baseSha: built.baseSha, prBaseBranch: built.branch };
   } else if (input.parentPublications.length > 1) {
     const integrated = await resolveRemoteBranch(input.projectRoot, input.repository.remote, input.repository.prBaseBranch);
     if (integrated !== input.repository.baseSha) throw new Error(`integrated base '${input.repository.prBaseBranch}' changed after admission; human stack recovery is required`);
     for (const parent of input.parentPublications) await runCommand("git", ["merge-base", "--is-ancestor", parent.headSha, integrated], input.projectRoot).catch(() => { throw new Error(`integrated base no longer contains blocker ${parent.issueId}`); });
   }
+  return undefined;
 }
 
 export function runCheck(executable: string, args: string[], cwd: string, maxOutputChars = 5000, signal: AbortSignal | undefined = activitySignal()): Promise<{ code: number | null; output: string; stderr: string }> {

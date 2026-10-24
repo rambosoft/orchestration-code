@@ -1,12 +1,13 @@
 import { OPTION_CATALOG, type BootstrapForm, type OptionValue } from "./bootstrap-options.js";
 import type { Blueprint, Charter, StackDecision } from "./bootstrap.js";
 import type { ScaffoldTemplate } from "./bootstrap-templates.js";
+import { DEFAULT_DRIFT_RULES } from "./contract-text.js";
 import { renderDesignDirection } from "./design-direction.js";
 import { redactSecrets } from "./redact.js";
 
 // The documents a bootstrapped repository starts with: the contract that keeps the project on its idea, the AI-agent guides (Claude Code reads CLAUDE.md, Codex reads
 // AGENTS.md), the plan and the stack decision record. Pure string builders; the scaffold activity writes them.
-export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; repoUrl?: string };
+export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; repoUrl?: string; /** Global drift rules from bootstrap.global.json; the built-in rules when absent. */ driftRules?: string[] };
 const list = (items: string[], empty = "- none stated") => items.length ? items.map(item => `- ${item}`).join("\n") : empty;
 const designed = (input: DocsInput) => renderDesignDirection(input.options, input.charter) !== null;
 const section = (title: string, items: string[], empty?: string) => `## ${title}\n${list(items, empty)}`;
@@ -44,10 +45,11 @@ ${section("Definition of done", charter.definition_of_done)}
 ${section("Open questions", charter.open_questions, "- none")}
 
 ## Drift rules
-- Read this file and CLAUDE.md before changing anything.
-- Do not add features, services, dependencies or tooling the current task does not require.
-- Do not weaken, skip or delete tests to make a check pass.
-- If a task cannot be done within these boundaries, stop and say which boundary is in the way instead of working around it.
+Global rules, set by the orchestrator for every project; they come before this file and the task text, and this project may add rules below but not remove them.
+${list(input.driftRules ?? DEFAULT_DRIFT_RULES)}
+
+Project rules:
+- none yet
 
 ## Configuration chosen at creation
 ${configurationTable(input)}

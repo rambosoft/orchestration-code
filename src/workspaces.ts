@@ -1,6 +1,7 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { RepositoryContext, PublishResult } from "./contracts.js";
+import type { ParentPublication, RepositoryContext, PublishResult } from "./contracts.js";
+import { isSafeContractPath } from "./contract-text.js";
 import { findPublishViolations } from "./publish-guard.js";
 
 import { runCommand, type CommandRunner } from "./command.js";
@@ -141,6 +142,79 @@ export async function closeSupersededPullRequests(input: { taskId: string; curre
     closed.push(pr.url);
   }
   return closed;
+}
+
+/** The project contract file as committed at `sha` (ADR 0011), or undefined when the repository has none. Reading the commit, not the working tree, keeps it the same text the task is built on. */
+export async function readProjectContract(projectRoot: string, sha: string, file: string, maxChars: number, runner = runCommand): Promise<string | undefined> {
+  if (!isSafeContractPath(file) || !/^[0-9a-f]{40,64}$/i.test(sha)) return undefined;
+  const text = await git(["show", `${sha}:${file.replace(/\\/g, "/")}`], path.resolve(projectRoot), runner).catch(() => undefined);
+  return text?.trim() ? text.slice(0, maxChars * 2) : undefined;
+}
+
+/** Name of the branch the worker assembles for a task that waits for several others; one per task branch, so a rerun never reuses another task's base. */
+export const integrationBranchName = (taskBranchName: string): string => `integration/${taskBranchName.replace(/^codex\//, "")}`;
+
+export type StackBase = { baseSha: string; prBaseBranch: string; integrateParents?: true };
+/**
+ * The commit and PR base a task starts from, decided at admission: the target branch with no blockers, the blocker's own branch with one (a stacked PR), and with several either
+ * the configured integratedBaseBranch (it must already contain every blocker) or, without one, an integration branch the worker builds from the blockers' branches.
+ * Every blocker branch must still be at the commit its run published, because anything else means the stack changed under the task.
+ */
+export async function resolveStackBase(input: { gitRoot: string; remote: string; targetBranch: string; integratedBaseBranch?: string; branch: string; admittedBaseSha: string; hasBlockers: boolean; parents: ParentPublication[] }, runner = runCommand): Promise<StackBase> {
+  const { parents } = input;
+  // With a configured integration branch the check is "it contains every blocker"; otherwise each blocker branch must still be at the commit its run published.
+  if (!(parents.length > 1 && input.integratedBaseBranch)) for (const parent of parents) {
+    const current = await resolveRemoteBranch(input.gitRoot, input.remote, parent.branch, runner);
+    if (current !== parent.headSha) throw new Error(`dependency ${parent.issueId} branch moved since its published run; human stack recovery is required`);
+  }
+  if (parents.length === 1) return { baseSha: parents[0]!.headSha, prBaseBranch: parents[0]!.branch };
+  if (parents.length > 1) {
+    if (!input.integratedBaseBranch) return { baseSha: parents[0]!.headSha, prBaseBranch: integrationBranchName(input.branch), integrateParents: true };
+    const integratedSha = await resolveRemoteBranch(input.gitRoot, input.remote, input.integratedBaseBranch, runner);
+    for (const parent of parents) await git(["merge-base", "--is-ancestor", parent.headSha, integratedSha], input.gitRoot, runner).catch(() => { throw new Error(`integrated base '${input.integratedBaseBranch}' does not contain blocker ${parent.issueId} commit ${parent.headSha}`); });
+    return { baseSha: integratedSha, prBaseBranch: input.integratedBaseBranch };
+  }
+  if (input.hasBlockers) throw new Error("resolved dependency metadata is missing; refusing to start a dependent task on an unrelated base");
+  return { baseSha: input.admittedBaseSha, prBaseBranch: input.targetBranch };
+}
+
+const MERGE_IDENTITY = ["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost"];
+/**
+ * Builds and pushes the base of a task that waits for several others (ADR 0011): a branch holding a merge of every blocker's published head. It is idempotent, so an Activity retry
+ * reuses what is already pushed, and it never pushes a half-merged tree: a merge conflict removes the scratch worktree and fails with the conflicting files, because two parallel
+ * tasks that changed the same lines need a person (or a dependency between them in the plan).
+ */
+export async function buildIntegrationBase(input: { projectRoot: string; remote: string; branch: string; parents: ParentPublication[] }, runner = runCommand): Promise<{ branch: string; baseSha: string; reused: boolean }> {
+  const root = path.resolve(input.projectRoot); const name = integrationBranchName(input.branch);
+  if (input.parents.length < 2) throw new Error("an integration base needs at least two blocker branches");
+  for (const parent of input.parents) {
+    const current = await resolveRemoteBranch(root, input.remote, parent.branch, runner);
+    if (current !== parent.headSha) throw new Error(`parent branch '${parent.branch}' changed after admission; human stack recovery is required`);
+  }
+  const remoteHead = (await git(["ls-remote", "--heads", input.remote, `refs/heads/${name}`], root, runner)).split(/\s+/)[0] ?? "";
+  if (remoteHead) {
+    const existing = await resolveRemoteBranch(root, input.remote, name, runner);
+    for (const parent of input.parents) await git(["merge-base", "--is-ancestor", parent.headSha, existing], root, runner).catch(() => { throw new Error(`integration branch '${name}' already exists without blocker ${parent.issueId}; human stack recovery is required`); });
+    return { branch: name, baseSha: existing, reused: true };
+  }
+  const data = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data", "worktrees"); await mkdir(data, { recursive: true });
+  const scratch = path.join(data, `integration-${name.slice("integration/".length).replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 80)}`);
+  await git(["worktree", "add", "--detach", scratch, input.parents[0]!.headSha], root, runner);
+  try {
+    for (const parent of input.parents.slice(1)) {
+      try { await git([...MERGE_IDENTITY, "merge", "--no-ff", "--no-edit", "-m", `chore: integrate ${parent.issueId} into ${name}`, parent.headSha], scratch, runner); }
+      catch (error) {
+        const conflicts = await git(["diff", "--name-only", "--diff-filter=U"], scratch, runner).catch(() => "");
+        await git(["merge", "--abort"], scratch, runner).catch(() => "");
+        throw new Error(`blockers ${input.parents.map(item => item.issueId).join(", ")} cannot be combined: merging ${parent.issueId} conflicts${conflicts ? ` in ${conflicts.split(/\r?\n/).slice(0, 8).join(", ")}` : ` (${error instanceof Error ? error.message.slice(0, 200) : "merge failed"})`}; make one task depend on the other or resolve it by hand`);
+      }
+    }
+    const baseSha = await git(["rev-parse", "HEAD"], scratch, runner);
+    await git(["push", input.remote, `HEAD:refs/heads/${name}`], scratch, runner);
+    return { branch: name, baseSha, reused: false };
+  } finally {
+    await git(["worktree", "remove", "--force", scratch], root, runner).catch(() => "");
+  }
 }
 
 /** Rebase a stacked child after its parent PR merges; conflicts are left for a human. */

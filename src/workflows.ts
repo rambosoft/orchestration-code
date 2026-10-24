@@ -77,20 +77,20 @@ export function externalBlockers(output: StageOutput): ReviewFinding[] {
   return output.review?.findings.filter(isExternalBlocker) ?? [];
 }
 
-export function implementationPrompt(taskPrompt: string, repairFindings?: ReviewFinding[], qualityCommands: StageInput["qualityCommands"] = [], uiUxContext = "", analysisDecisions = ""): string {
+export function implementationPrompt(taskPrompt: string, repairFindings?: ReviewFinding[], qualityCommands: StageInput["qualityCommands"] = [], uiUxContext = "", analysisDecisions = "", contractContext = ""): string {
   const configuredChecks = qualityCommands.length
     ? `\nThe orchestration will run these configured deterministic checks as a publication gate after implementation/review${repairFindings?.length ? "; after repair it runs them before the follow-up review" : ""}:\n${qualityCommands.map(check => `- ${check.executable} ${check.args.join(" ")}${check.cwd ? ` (cwd: ${check.cwd})` : ""}`).join("\n")}`
     : "\nNo deterministic checks are configured; report this as a blocking delivery risk.";
   const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Deliver production-ready work: clean code that reads like its surroundings, and meaningful tests (regression coverage plus the edge cases and boundaries of the behaviour). Run the checks yourself before you finish: the project's full test suite and its build or typecheck (for example npm test and npm run build). Fix every failure; never leave a test broken, skipped, weakened or deleted, and never rely on the orchestration's gates to find problems for you. If you cannot run a check in this environment, say so plainly with the exact reason and do not claim it passed. Inspect the diff and report changed files and test results accurately. Do not decide on your own that a requirement is unnecessary or infeasible and ship a weaker variant: if you could not satisfy an acceptance check, say which one and why. End your answer with one line, "UNMET_ACCEPTANCE: none", or "UNMET_ACCEPTANCE:" followed by one line per unmet check; unmet checks are sent back for rework. The orchestration runs configured quality gates again afterwards.
 
 ${SIMPLICITY_POLICY}${configuredChecks}`;
-  const guidance = [uiUxContext, analysisDecisions].filter(Boolean).map(part => `\n\n${part}`).join("");
+  const guidance = [uiUxContext, analysisDecisions, contractContext].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
   const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}${finding.scenario ? `\n   Scenario: ${finding.scenario}` : ""}`).join("\n");
   return `${taskPrompt}${guidance}\n\n${deliveryContract}\n\nREPAIR: One bounded repair pass remains. Resolve each blocker below with the smallest complete fix; add or update a regression test. Run focused tests; the orchestration runs its quality gate before follow-up review. Report each resolution and any unresolved blocker with evidence.\n${repairList}`;
 }
 
-export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = "", analysisDecisions = ""): string {
+export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = "", analysisDecisions = "", contractContext = ""): string {
   let reviewChecklist = taskPrompt;
   try {
     const brief = JSON.parse(taskPrompt) as Partial<ExecutionBrief>;
@@ -115,7 +115,8 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
   const analysisReviewText = analysisDecisions ? `\n\n${analysisDecisions}\nReview against these analysis decisions: report a blocking finding if the implementation contradicts a chosen parameter or lacks a test for a validation property.` : "";
-  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
+  const contractReviewText = contractContext ? `\n\n${contractContext}\nReview against the contract: report a blocking finding only when the diff adds scope that the contract's non-goals or boundaries exclude, or breaks a drift rule, and the acceptance checks do not require it. Give the concrete scenario.` : "";
+  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}${contractReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
 
 Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","scenario":"a concrete input or state and the wrong result it produces","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Evidence standard: every critical/high finding must carry a scenario (for a test finding: a real defect the test would let through). If you cannot state one, it is a note, not a finding; remarks that code or tests could be stricter, more thorough or differently structured are notes. Do not execute commands. ${checkStatus}`;
   return prompt;
@@ -127,6 +128,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   const profile = profiles[taskType?.profile ?? input.profile];
   if (!profile) return { runId: input.runId, status: "failed", stages: [], artifactRefs: [], message: `unknown profile '${input.profile}'` };
   const uiUxContext = profile.stages.includes("implement") ? uiUxGuidance({ prompt: input.prompt, frameworks: input.uiUxFrameworks, config: input.uiUx ?? DEFAULT_UI_UX_CONFIG }) : "";
+  // The project contract (ADR 0011) is data on the input, so runs started before it existed replay unchanged. It reaches the plan, implement and review prompts of code tasks.
+  const contractContext = profile.stages.includes("implement") ? input.projectContract ?? "" : "";
   if (input.injectActivityTimeout) {
     try { await timeoutProbe(); } catch (error) { if (isCancellation(error)) throw error; return { runId: input.runId, status: "failed", stages: [], artifactRefs: [], message: `Activity timed out after bounded retries: ${failureDetails(error)}` }; }
   }
@@ -137,10 +140,14 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
   if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
   if (investigating && stageRoute(input, "explore").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "Research and architecture reports are published as a draft PR document; configure a clean GitHub repository, target branch, and remote before dispatch." };
+  // The repository the task is built and published on. It is the admitted one unless the worker assembled the base from several blockers (ADR 0011); runs recorded before that
+  // existed got no result from the check, so they keep the admitted base on replay.
+  let repository = input.repository;
   if ((profile.stages.includes("implement") || investigating) && input.repository) {
     try {
-      await checkDependencies({ blockerIds: input.blockerIds ?? [], parentPublications: input.parentPublications ?? [], repository: input.repository, projectRoot: input.projectRoot });
-      workspace = await prepareWorktree({ runId: input.runId, projectRoot: input.projectRoot, baseSha: input.repository.baseSha, branch: input.repository.branch, requiredSourcePaths: input.repository.requiredSourcePaths });
+      const assembled = await checkDependencies({ blockerIds: input.blockerIds ?? [], parentPublications: input.parentPublications ?? [], repository: input.repository, projectRoot: input.projectRoot });
+      repository = assembled ? { ...input.repository, baseSha: assembled.baseSha, prBaseBranch: assembled.prBaseBranch } : input.repository;
+      workspace = await prepareWorktree({ runId: input.runId, projectRoot: input.projectRoot, baseSha: repository.baseSha, branch: repository.branch, requiredSourcePaths: repository.requiredSourcePaths });
       currentStage = "dependencies";
       await prepareProjectDependencies(workspace);
       completedStages.push("dependencies");
@@ -179,7 +186,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
-    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
+    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
     const output = await executeStage(args);
@@ -442,9 +449,9 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
     currentStage = null; completedStages.push("report");
     if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
-    if (input.repository && workspace !== input.projectRoot) {
+    if (repository && workspace !== input.projectRoot) {
       try {
-        const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt, kind: "document" });
+        const publish = await publishWorktree({ repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt, kind: "document" });
         return { ...finish("completed", withWarnings("report produced; draft PR published")), publish, report };
       } catch (error) {
         stopReason = "publish_failed"; return { ...finish("failed", `publish failed; task requires recovery: ${failureDetails(error)}`), report };
@@ -469,7 +476,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         let oversizedPlan: Plan | undefined;
         const planned = await structuredStage<Plan>({
           stage: "plan",
-          prompt: makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions),
+          prompt: makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext),
           parse: planOutput => {
             const candidate: Plan = { ...parseStructured(planOutput.summary, PlanSchema, "Plan", Number.MAX_SAFE_INTEGER), hard_constraints: protectedConstraints };
             try { parseStructured(planOutput.summary, PlanSchema, "Plan", HANDOFF_BUDGETS.plan, stageCompletionTokens(planOutput)); }
@@ -511,7 +518,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       } else if (stage === "review" && profile.stages.includes("verify")) {
         const round = ++reviewCount;
         const [review, verification] = await Promise.all([
-          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions) }),
+          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
           execute("verify", { provider: "fake", verificationOnly: true }),
         ]);
         output = review;
@@ -522,7 +529,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         if (!deterministicVerification.ok || patched("skip-model-verify")) output = deterministicVerification;
         else output = await execute("verify", { deterministicChecksAlreadyPassed: true, qualityCommands: [] });
       } else {
-        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions) })
+        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })
           : await execute(stage);
       }
     }
@@ -555,14 +562,14 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
           if (patched("publish-with-open-findings")) { openFindings = blocking; stopReason = "review_findings_unresolved"; break; }
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
-        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions) }); }
+        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
         try {
           const verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
           deterministicVerification = verification;
           if (!verification.ok) { unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${verification.summary}`); }
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }
-        try { output = await readable(await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions) })); }
+        try { output = await readable(await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "follow_up_review_failed"; return finish("failed", `follow-up review failed: ${failureDetails(error)}`); }
         // A follow-up review may only keep blocking findings that restate a prior blocker or show a concrete scenario; the rest become notes.
         output = requireSubstantiatedBlockers(output, blocking);
@@ -625,9 +632,9 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
   }
   if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
-  if (input.repository && workspace !== input.projectRoot) {
+  if (repository && workspace !== input.projectRoot) {
     try {
-      const publish = await publishWorktree({ repository: input.repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt });
+      const publish = await publishWorktree({ repository, worktree: workspace, taskId: input.taskId, prompt: input.prompt });
       if (openFindings.length) {
         // A failed comment must not hide the published PR: the findings are also in the result and the Paperclip comment.
         try { await commentOnPullRequest({ worktree: workspace, prUrl: publish.prUrl, body: openFindingsComment(openFindings, { rounds: reviewCount }) }); }

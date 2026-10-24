@@ -86,7 +86,7 @@ export async function scaffoldProjectImpl(request: ScaffoldRequest, deps: Scaffo
   let repoCreated = false;
   try {
     await mkdir(root, { recursive: true });
-    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, charter: request.charter, blueprint: request.blueprint, ...(template ? { template } : {}) }) };
+    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, charter: request.charter, blueprint: request.blueprint, driftRules: config.contract.rules, ...(template ? { template } : {}) }) };
     if (template) {
       Object.assign(files, template.files({ name: form.name, slug, description: form.description }), { "package.json": packageJson(template, slug) });
       if (options.ci === "basic") files[".github/workflows/ci.yml"] = CI_WORKFLOW;

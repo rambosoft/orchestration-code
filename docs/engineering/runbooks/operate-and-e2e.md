@@ -44,6 +44,8 @@ Transient `spawn ... ENOENT` or auth errors: run `doctor`, fix, restart with the
 **Use.** Open "New AI project" (sidebar or top bar), describe the idea, pick maturity and platform (Advanced shows every option), press "Create and plan". The project's Bootstrap tab shows progress and the plan; "Approve and create" builds the repository, manifest and tasks. Without the browser: `npm run bootstrap:e2e -- examples/aurora-store.bootstrap.json --approve`.
 **If it fails.** The task comment says what exists. Before the repository was created the scaffold removes its own folder; after it, delete the GitHub repository and the folder named in the message and `projects/generated/<project id>.json`, then move the task back to todo. A project is bootstrapped once: a project whose manifest exists is refused.
 
+**Parallel plans (ADR 0011).** Advanced option "Task order: independent tasks in parallel" (`plan_mode=parallel`). Blockers then follow the plan's `depends_on`; a task waiting for several others is built on `integration/<its branch>`, which the worker assembles from their published branches (the draft PR targets it). If two blockers conflict, the task fails before any code runs with the conflicting files named (FM-045): add a dependency between those two tasks, or merge by hand and re-run. Parallel tasks only run side by side if the Paperclip agent takes more than one task at a time. The bridge re-reads `bootstrap.global.json` at every task start, so a change to the global `contract.rules` applies to the next task of every project that has `docs/PROJECT_CONTRACT.md` (its plan, implement and review prompts get the contract block). If an editor replaced the file instead of saving in place, Docker Desktop can keep showing the old file inside the container: check with `docker compose exec orchestrator cat /app/bootstrap.global.json` and recreate the orchestrator if it is stale.
+
 ## 7. After the machine was off, asleep or offline (reconcile)
 Temporal keeps running workflows and finishes them even when the laptop is off, but the Paperclip adapter that reports the result is gone, so Paperclip marks the task **blocked** ("requires reconciliation") although the work is done and the draft PR exists. Nothing is lost; the result only has to be reported:
 
@@ -53,3 +55,13 @@ npm run reconcile -- --apply           # reports it: a comment (with the PR and 
 npm run reconcile -- --apply --issue LOC-65 --days 7
 ```
 It handles blocked, in-progress and in-review tasks whose latest workflow ended within `--days` (default 3), skips results already reported and workflows still running, and never invents a result: a workflow that itself failed is listed with the advice to retry the task from Paperclip. **It also runs by itself every time the worker (re)starts** (`scripts/run-worker.ps1`), so after a reboot the board catches up without anyone doing anything. A task that comes back as `in_review` has an open review finding; accept the PR (move the task to done) or comment what to fix and re-run it.
+
+## 8. Recreate the Paperclip container on Windows (FM-042)
+`docker compose up -d paperclip` (and `--force-recreate`) can fail on Windows with `mount denied ... too many colons` while Compose carries volumes over from the old container, and the old container keeps running. Recreate it explicitly instead. Plan this between runs; Paperclip state lives in `data/paperclip`, not in the container.
+
+```bash
+docker compose stop -t 60 paperclip
+docker compose rm -f paperclip
+docker compose up -d --no-build paperclip
+```
+Run `docker compose build paperclip` first if `.runtime/paperclip` changed. Afterwards check `docker compose ps paperclip`, open http://localhost:3100, and restart the worker if `.env` changed. The bridge recreates normally with `docker compose up -d --build orchestrator`.
