@@ -45,3 +45,11 @@
 - Worker env used by the bootstrap steps: `ORCHESTRATOR_PROJECTS_ROOT` (where the project folder is created), `ORCHESTRATOR_PROJECTS_DIR` (manifest folder, default `projects`), `PAPERCLIP_API_URL` and `PAPERCLIP_API_TOKEN` (create the tasks), and the machine's `gh` login (create the repository).
 - Plugin settings (per company, in Paperclip): `bridgeUrl` (default `http://orchestrator:3101`) and `bridgeToken` (a Paperclip secret holding `ORCHESTRATOR_API_TOKEN`).
 - `RunResult.bootstrap` records the repository URL, local folder, commit, manifest path, template, whether the scaffold was verified, warnings and the created issues.
+
+## Stack profiles, Unity and games (2026-10-24, ADR 0012 and 0013)
+- Manifest `stack`: `{ profile: "node-web" | "unity-mobile" (default node-web), unity: { editorVersion (e.g. 6000.3.11f1), executeMethods: ["Class.Method"] (at most 10) } }`. Optional; absent means node-web. Quality commands may use executable `unity` only with `unity-mobile`, as `unity test|build|recompile` with the CLI's flags (no `--`, `--args`, `--editor-path`, `--allow-install`, `--accelerator`, `--proxy`; `--execute-method` only for a declared method). `visual.engine: "unity"` needs `unity-mobile` and `visual.unityFilter`.
+- Manifest `visual`: `engine` ("web" default | "unity"), `command` and `url` are required for web only, `unityFilter` for unity; `readyTimeoutMs` max is now 1,800,000 (Unity captures wait for an Editor run).
+- Stage name `design` (game design): usable in `providerRouting`, `providerTimeouts` and `bootstrap.global.json` `stages`; default timeout 15 minutes.
+- Options: `product_kind` (app|game), `engine` (auto|unity), `game_orientation`, `game_art`, `game_fps`. A game derives `platform` mobile_android (from web, cli or api), `engine` unity, `architecture` frontend_only and at least unit tests.
+- Env: `ORCHESTRATOR_WORKTREES_DIR` (short worktree folder), `UNITY_AGENT_PLUGIN_DIR` (checkout pinned by `npm run unity:plugin`), `UNITY_EDITOR_PATH`, `UNITY_EDITORS_ROOT`, `UNITY_IMPORT_TIMEOUT_SECONDS`, `ORCHESTRATOR_TEMPLATES_DIR`.
+- Templates live in `templates/<id>/` and are copied by the scaffold with `{{NAME}}`, `{{PACKAGE}}`, `{{ORIENTATION}}`, `{{FPS}}` replaced.

@@ -53,3 +53,7 @@
 - Verified: typecheck, check:chars, build, 45 files and 601 tests; a REAL scaffold on this host (127 s, EditMode proof, hygiene, commit), then PlayMode (20 s, screenshot written) and an Android AAB (13.9 MB, 5 min 52 s) on the generated project.
 - Workflow impact: new `design` command only for game bootstrap runs (no existing sequence changed, replay fixture unchanged).
 - Next: B-054 (ADRs 0012/0013, doctor checks, plugin checkout), then B-055 (live 2048 project through Paperclip).
+
+## 2026-10-24 update (Unity support, phase 5)
+- Done: B-054. ADR 0012 (stack profiles, Unity gates) and 0013 (game projects), doctor `unity:*` checks, `npm run unity:plugin` (pins Unity's official agent plugin at 3831ddb), `ORCHESTRATOR_WORKTREES_DIR`, failure modes FM-046..FM-049, config-schema and project-types updated. 46 files, 607 tests pass.
+- Next: B-055, the live 2048-like project: rebuild, restart worker and bridge, create it in Paperclip, approve the game design and plan, let the tasks run.

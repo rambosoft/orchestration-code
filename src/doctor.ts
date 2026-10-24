@@ -2,6 +2,7 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { NODE_EXECUTABLE } from "./node-path.js";
 import { runCommand, type CommandRunner } from "./command.js";
+import { worktreesDir } from "./env.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { concurrencyError, temporalAddressError } from "./env-validation.js";
 import { findBrowser } from "./visual.js";
@@ -21,8 +22,26 @@ export type DoctorDeps = {
   findBrowser?: () => string | undefined;
   /** The Project Bootstrap plugin (ADR 0009): whether it is built and which SDK version it is pinned to, against the Paperclip checkout it must match. Undefined when the plugin folder is absent. */
   pluginStatus?: () => Promise<PluginStatus | undefined>;
+  /** Ids of projects with the unity-mobile stack profile and what the worker has for building them (docs/engineering/research/unity-game-support.md). */
+  unityProjects?: () => Promise<string[]>;
+  unityStatus?: () => Promise<UnityStatus>;
 };
 export type PluginStatus = { built: boolean; sdkPin?: string; hostVersion?: string };
+export type UnityStatus = { cliVersion?: string; loggedIn: boolean; editors: Array<{ version: string; androidModule: boolean }>; pluginDir?: { path: string; exists: boolean } };
+
+/** One check per thing a Unity project needs on the worker; a missing licence is the one that stops a scaffold, so it is an error. */
+export function unityChecks(projects: string[], status: UnityStatus, required?: string): DoctorCheck[] {
+  const used = projects.join(", ");
+  const checks: DoctorCheck[] = [];
+  checks.push(status.cliVersion ? pass("unity:cli", `Unity CLI ${status.cliVersion} (used by ${used})`) : fail("unity:cli", `the unity command is not on PATH (needed by ${used}); install the Unity CLI`));
+  checks.push(status.loggedIn ? pass("unity:licence", "signed in; Editor batch runs can activate a licence") : fail("unity:licence", `not signed in to Unity: Editor batch runs fail with "No valid Unity Editor license found" (${used}); sign in once through Unity Hub or "unity auth"`));
+  const editor = required ? status.editors.find(item => item.version === required) : status.editors.find(item => item.version.startsWith("6000."));
+  checks.push(editor ? pass("unity:editor", `${editor.version}${required ? "" : " (newest 6000.x found)"}`) : fail("unity:editor", `${required ? `Unity ${required}` : "a Unity 6 Editor"} is not installed (needed by ${used})`));
+  if (editor) checks.push(editor.androidModule ? pass("unity:android", "the Android build module is installed") : fail("unity:android", `the Android module is not installed for ${editor.version}; Android builds fail`, "warn"));
+  if (status.pluginDir) checks.push(status.pluginDir.exists ? pass("unity:plugin", `Unity agent plugin at ${status.pluginDir.path}`) : fail("unity:plugin", `UNITY_AGENT_PLUGIN_DIR points at ${status.pluginDir.path}, which does not exist; Claude runs without Unity's official skills`, "warn"));
+  else checks.push(fail("unity:plugin", "UNITY_AGENT_PLUGIN_DIR is not set, so Claude runs without Unity's official skills; clone Unity-Technologies/unity-agent-plugin and set it", "warn"));
+  return checks;
+}
 
 /** The plugin SDK is pinned to the Paperclip release it was written against; a mismatch is what breaks a plugin after an upgrade, so it is checked here. */
 export function pluginProblem(status: PluginStatus): string | undefined {
@@ -49,6 +68,19 @@ export async function manifestsWithVisual(sources: string[]): Promise<string[]> 
     catch { files = source.endsWith(".json") ? [source] : []; }
     for (const file of files) {
       try { const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(file, "utf8"))); if (manifest.visual?.enabled) ids.push(manifest.id); } catch { /* reported by the bridge at startup */ }
+    }
+  }
+  return ids;
+}
+
+export async function manifestsWithUnity(sources: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const source of sources) {
+    let files: string[];
+    try { files = (await readdir(source)).filter(name => name.endsWith(".json")).map(name => path.join(source, name)); }
+    catch { files = source.endsWith(".json") ? [source] : []; }
+    for (const file of files) {
+      try { const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(file, "utf8"))); if (manifest.stack?.profile === "unity-mobile") ids.push(manifest.id); } catch { /* reported by the bridge at startup */ }
     }
   }
   return ids;
@@ -144,6 +176,9 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     checks.push(browser ? pass("visual:browser", `${browser} (used by ${visualProjects.join(", ")})`) : fail("visual:browser", `no Chromium found, so screenshot review is skipped with a warning (${visualProjects.join(", ")}); run "npx playwright install chromium" or set ORCHESTRATOR_BROWSER_PATH`, "warn"));
   }
 
+  const unityProjects = await (deps.unityProjects?.() ?? Promise.resolve([] as string[]));
+  if (unityProjects.length && deps.unityStatus) checks.push(...unityChecks(unityProjects, await deps.unityStatus().catch(() => ({ loggedIn: false, editors: [] } as UnityStatus))));
+
   const plugin = await (deps.pluginStatus?.() ?? Promise.resolve(undefined)).catch(() => undefined);
   if (plugin) {
     const problem = pluginProblem(plugin);
@@ -152,7 +187,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     checks.push(deps.env.PAPERCLIP_API_TOKEN ? pass("bootstrap:worker-env", "Paperclip token set") : fail("bootstrap:worker-env", "PAPERCLIP_API_TOKEN is not set in this shell; the worker needs it to create the project's tasks", "warn"));
   }
 
-  const worktrees = await deps.listDir(path.join(path.resolve(deps.env.ORCHESTRATOR_DATA_DIR ?? "data"), "worktrees")).catch(() => [] as string[]);
+  const worktrees = await deps.listDir(worktreesDir(deps.env.ORCHESTRATOR_DATA_DIR ?? "data", deps.env)).catch(() => [] as string[]);
   checks.push(worktrees.length > 20 ? fail("worktrees", `${worktrees.length} task worktrees on disk; run "dev cleanup"`, "warn") : pass("worktrees", `${worktrees.length} on disk`));
   const stale = await deps.buildStaleness();
   checks.push(stale ? fail("build", stale, "warn") : pass("build", "dist is up to date with src"));
@@ -199,6 +234,15 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
   },
   readManifestProviders: () => manifestProviders(manifestSources(env)),
   visualProjects: () => manifestsWithVisual(manifestSources(env)),
+  unityProjects: () => manifestsWithUnity(manifestSources(env)),
+  unityStatus: async () => {
+    const doctor = await runCommand("unity", ["doctor", "--no-banner", "--non-interactive"], process.cwd()).catch(() => "");
+    const field = (name: string) => new RegExp(`^${name}\\t(.*)$`, "m").exec(doctor)?.[1]?.trim();
+    const editors = [...doctor.matchAll(/^editor\.\d+\t(\S+)\t\S+\t(.+)$/gm)].map(match => ({ version: match[1]!, editor: match[2]!.trim() }));
+    const withModules = await Promise.all(editors.map(async item => ({ version: item.version, androidModule: await access(path.join(path.dirname(item.editor), "Data", "PlaybackEngines", "AndroidPlayer")).then(() => true, () => false) })));
+    const pluginPath = env.UNITY_AGENT_PLUGIN_DIR;
+    return { ...(field("cliVersion") ? { cliVersion: field("cliVersion")! } : {}), loggedIn: field("auth\\.loggedIn") === "true", editors: withModules, ...(pluginPath ? { pluginDir: { path: pluginPath, exists: await access(pluginPath).then(() => true, () => false) } } : {}) };
+  },
   pluginStatus: async () => {
     const folder = path.resolve("plugins", "project-bootstrap");
     let pin: string | undefined;

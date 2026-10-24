@@ -5,6 +5,7 @@ import { isSafeContractPath } from "./contract-text.js";
 import { findPublishViolations } from "./publish-guard.js";
 
 import { runCommand, type CommandRunner } from "./command.js";
+import { worktreesDir } from "./env.js";
 export { runCommand, type CommandRunner };
 const git = (args: string[], cwd: string, runner = runCommand) => runner("git", args, cwd);
 
@@ -53,7 +54,7 @@ export function taskBranch(taskId: string, revision = "1", attempt = 1): string 
 
 export async function prepareWorktree(input: { runId: string; projectRoot: string; baseSha: string; branch: string; requiredSourcePaths?: string[] }): Promise<string> {
   const root = path.resolve(input.projectRoot); const safeId = input.runId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 70);
-  const base = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data", "worktrees"); await mkdir(base, { recursive: true });
+  const base = worktreesDir(); await mkdir(base, { recursive: true });
   const dest = path.join(base, safeId);
   let destinationExists = true;
   try { await access(dest); } catch { destinationExists = false; }
@@ -197,7 +198,7 @@ export async function buildIntegrationBase(input: { projectRoot: string; remote:
     for (const parent of input.parents) await git(["merge-base", "--is-ancestor", parent.headSha, existing], root, runner).catch(() => { throw new Error(`integration branch '${name}' already exists without blocker ${parent.issueId}; human stack recovery is required`); });
     return { branch: name, baseSha: existing, reused: true };
   }
-  const data = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data", "worktrees"); await mkdir(data, { recursive: true });
+  const data = worktreesDir(); await mkdir(data, { recursive: true });
   const scratch = path.join(data, `integration-${name.slice("integration/".length).replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 80)}`);
   await git(["worktree", "add", "--detach", scratch, input.parents[0]!.headSha], root, runner);
   try {

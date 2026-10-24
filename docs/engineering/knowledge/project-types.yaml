@@ -2,6 +2,7 @@ schema_version: 1
 last_verified: 2026-10-22
 note: "Today profiles (src/profiles.ts) describe workflow SHAPE only (implementation|bugfix|refactor|research). Toolchain is per-project via manifest qualityCommands, restricted to node|npm|pnpm|yarn."
 supported:
+  - {id: unity-mobile-2d, evidence: "2026-10-24 real scaffold on the worker host, EditMode and PlayMode tests, Android AAB (ADR 0012, 0013); test/game.test.ts with fake Unity tools", status: verified-scaffold-and-gates, backlog: B-050..B-054}
   - {id: node-ts-npm, evidence: "demo project + calculator manifests; npm ci in worktree", status: verified-with-fake-provider}
 planned:
   - {id: python, needs: "executable allow-list incl. python/pytest/ruff; dependency prep (pip/uv)", backlog: B-021}
