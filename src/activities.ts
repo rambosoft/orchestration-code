@@ -7,7 +7,7 @@ import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutp
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { acceptanceProblem } from "./acceptance.js";
-import { clearUnityEvidence, readUnityTestSources, stopProjectEditors, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
+import { clearUnityEvidence, readUnityTestSources, stopProjectEditors, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -190,7 +190,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
-      if (isUnity) await clearUnityEvidence(check, checkCwd);
+      if (isUnity) { await waitForProjectUnlock(checkCwd); await clearUnityEvidence(check, checkCwd); }
       let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, isUnity ? 20_000 : undefined);
       if (isUnity) {
         // The CLI's exit code alone is not a verdict: a green run needs its report or output, and a red one gets a hint on what the code means.

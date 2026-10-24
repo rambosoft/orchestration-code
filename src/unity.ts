@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { VisualConfig } from "./contracts.js";
 import { childEnv } from "./env.js";
@@ -107,7 +107,7 @@ export function runUnity(args: string[], cwd: string, signal: AbortSignal | unde
 }
 
 export const UNITY_SHOT_DIR = path.join("Logs", "screenshots");
-export type UnityCaptureDeps = { run?: (args: string[], cwd: string, signal: AbortSignal | undefined) => Promise<UnityRun>; stopEditors?: (projectRoot: string) => Promise<number[]> };
+export type UnityCaptureDeps = { run?: (args: string[], cwd: string, signal: AbortSignal | undefined) => Promise<UnityRun>; stopEditors?: (projectRoot: string) => Promise<number[]>; waitUnlock?: (projectRoot: string) => Promise<number> };
 
 /**
  * Screenshot evidence for a Unity project: runs the project's capture test (a PlayMode test that renders a camera to a RenderTexture and writes PNGs to Logs/screenshots)
@@ -121,6 +121,8 @@ export async function captureUnityScreenshots(config: VisualConfig, options: { c
     await mkdir(options.outDir, { recursive: true });
     await rm(shotDir, { recursive: true, force: true });
     const stopped = await (deps.stopEditors ?? stopProjectEditors)(options.cwd);
+    const waited = await (deps.waitUnlock ?? waitForProjectUnlock)(options.cwd);
+    if (waited >= 5000) warnings.push(`waited ${Math.round(waited / 1000)}s for the previous Unity process to release the project`);
     if (stopped.length) warnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the capture`);
     const report = path.join(options.outDir, "unity-capture-results.xml");
     const result = await (deps.run ?? runUnity)(["test", "--mode", "PlayMode", "--filter", config.unityFilter, "--output", report, "--timeout", String(Math.max(600, Math.round(config.readyTimeoutMs / 1000))), "--non-interactive", "--no-banner"], options.cwd, options.signal);
@@ -196,4 +198,23 @@ export async function readUnityTestSources(projectRoot: string): Promise<string[
   };
   await walk(path.join(projectRoot, "Assets", "Tests"));
   return texts;
+}
+
+// The Unity CLI can return a moment before its Editor has exited and released Temp/UnityLockfile, and the next command then fails with "instances cannot open the same project"
+// (the capture of the first review round failed this way in two live tasks while no stray process existed). Before each Unity command the lock is waited for.
+export type LockDeps = { probe?: (lockfile: string) => Promise<boolean>; sleep?: (ms: number) => Promise<void>; now?: () => number };
+async function lockIsFree(lockfile: string): Promise<boolean> {
+  try { const handle = await open(lockfile, "r+"); await handle.close(); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
+}
+/** Waits until nobody holds the project's lockfile, at most `timeoutMs`; returns the milliseconds waited. Never throws and never blocks longer than the timeout. */
+export async function waitForProjectUnlock(projectRoot: string, timeoutMs = 90_000, deps: LockDeps = {}): Promise<number> {
+  const probe = deps.probe ?? lockIsFree; const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))); const now = deps.now ?? Date.now;
+  const lockfile = path.join(projectRoot, "Temp", "UnityLockfile");
+  const started = now();
+  while (now() - started < timeoutMs) {
+    if (await probe(lockfile).catch(() => true)) return now() - started;
+    await sleep(2000);
+  }
+  return now() - started;
 }
