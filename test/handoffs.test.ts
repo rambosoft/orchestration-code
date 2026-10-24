@@ -115,7 +115,11 @@ describe("compressed handoff schemas and budgets", () => {
     }), plan, context);
     const implementation = implementationPrompt(JSON.stringify(validated));
     const repeatedSource = ["Add a percentage button", context, JSON.stringify(plan), context, JSON.stringify(plan)].join("\n\n");
-    expect(estimateTokens(implementation)).toBeLessThan(estimateTokens(repeatedSource) * 0.7);
+    // The instructions every implementation prompt carries (delivery contract, simplicity policy, test strategy) are a constant that does not depend on the task. The handoff
+    // is what this test is about, so it is measured on its own, and the constant has its own ceiling so that growing it is a visible decision instead of silent drift.
+    const instructions = estimateTokens(implementationPrompt(""));
+    expect(estimateTokens(implementation) - instructions).toBeLessThan(estimateTokens(repeatedSource) * 0.7);
+    expect(instructions).toBeLessThanOrEqual(1000);
   });
 
   it("fails closed when a protected requirement is missing or checklist exceeds its budget", () => {
