@@ -107,7 +107,7 @@ export function runUnity(args: string[], cwd: string, signal: AbortSignal | unde
 }
 
 export const UNITY_SHOT_DIR = path.join("Logs", "screenshots");
-export type UnityCaptureDeps = { run?: (args: string[], cwd: string, signal: AbortSignal | undefined) => Promise<UnityRun> };
+export type UnityCaptureDeps = { run?: (args: string[], cwd: string, signal: AbortSignal | undefined) => Promise<UnityRun>; stopEditors?: (projectRoot: string) => Promise<number[]> };
 
 /**
  * Screenshot evidence for a Unity project: runs the project's capture test (a PlayMode test that renders a camera to a RenderTexture and writes PNGs to Logs/screenshots)
@@ -120,6 +120,8 @@ export async function captureUnityScreenshots(config: VisualConfig, options: { c
     if (!config.unityFilter) return { images, warnings: ["unity capture skipped: visual.unityFilter is not set"] };
     await mkdir(options.outDir, { recursive: true });
     await rm(shotDir, { recursive: true, force: true });
+    const stopped = await (deps.stopEditors ?? stopProjectEditors)(options.cwd);
+    if (stopped.length) warnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the capture`);
     const report = path.join(options.outDir, "unity-capture-results.xml");
     const result = await (deps.run ?? runUnity)(["test", "--mode", "PlayMode", "--filter", config.unityFilter, "--output", report, "--timeout", String(Math.max(600, Math.round(config.readyTimeoutMs / 1000))), "--non-interactive", "--no-banner"], options.cwd, options.signal);
     if (result.code !== 0) warnings.push(`unity capture run ended with exit ${result.code ?? "unknown"}${result.stderr || result.output ? `: ${(result.stderr || result.output).replace(/\s+/g, " ").slice(-300)}` : ""}`);
@@ -142,4 +144,54 @@ export function unityAgentContext(projectRoot: string | undefined, env: NodeJS.P
   if (!projectRoot || !exists(path.join(projectRoot, "ProjectSettings", "ProjectVersion.txt"))) return undefined;
   const dir = env.UNITY_AGENT_PLUGIN_DIR;
   return dir && exists(dir) ? { pluginDir: dir } : {};
+}
+
+// A Unity project can only be open in one Editor. Agents driving a live Editor (the unity-cli skill does) can leave it running on the worktree, and then every gate
+// and the screenshot capture fail with "instances cannot open the same project" (found in the first live game run). Before the gates run, the Editors of this worktree are stopped.
+export type ProcessInfo = { pid: number; commandLine: string };
+const normalizePath = (value: string): string => value.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
+/** Unity Editor processes (and their import workers) whose command line opens exactly this project. */
+export function editorPidsFor(processes: ProcessInfo[], projectRoot: string): number[] {
+  const root = normalizePath(path.resolve(projectRoot));
+  return processes.filter(item => {
+    const line = normalizePath(item.commandLine);
+    const at = line.indexOf("-projectpath");
+    if (at < 0) return false;
+    const value = line.slice(at + "-projectpath".length).trimStart().replace(/^"/, "");
+    return value === root || value.startsWith(`${root}"`) || value.startsWith(`${root} `);
+  }).map(item => item.pid);
+}
+export type EditorProcessDeps = { list?: () => Promise<ProcessInfo[]>; kill?: (pid: number) => void };
+async function listEditorProcesses(): Promise<ProcessInfo[]> {
+  if (process.platform !== "win32") return [];
+  const result = await new Promise<string>(resolve => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"name = 'Unity.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"], { windowsHide: true });
+    const chunks: Buffer[] = []; child.stdout.on("data", (b: Buffer) => chunks.push(b)); child.on("error", () => resolve("")); child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  });
+  try { const parsed = JSON.parse(result) as { ProcessId: number; CommandLine: string | null } | Array<{ ProcessId: number; CommandLine: string | null }>; return (Array.isArray(parsed) ? parsed : [parsed]).map(item => ({ pid: item.ProcessId, commandLine: item.CommandLine ?? "" })); } catch { return []; }
+}
+function killTree(pid: number): void { spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }); }
+/** Stops the Editors that have this project open and returns their process ids. Never throws: a failure here must not hide the real gate result. */
+export async function stopProjectEditors(projectRoot: string, deps: EditorProcessDeps = {}): Promise<number[]> {
+  try {
+    const pids = editorPidsFor(await (deps.list ?? listEditorProcesses)(), projectRoot);
+    for (const pid of pids) (deps.kill ?? killTree)(pid);
+    if (pids.length) await new Promise(resolve => setTimeout(resolve, 3000));
+    return pids;
+  } catch { return []; }
+}
+
+/** Source of every C# test file of the project (Assets/Tests), for the acceptance trace. */
+export async function readUnityTestSources(projectRoot: string): Promise<string[]> {
+  const texts: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full); else if (entry.name.endsWith(".cs")) texts.push(await readFile(full, "utf8"));
+    }
+  };
+  await walk(path.join(projectRoot, "Assets", "Tests"));
+  return texts;
 }

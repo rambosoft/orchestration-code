@@ -57,3 +57,8 @@
 ## 2026-10-24 update (Unity support, phase 5)
 - Done: B-054. ADR 0012 (stack profiles, Unity gates) and 0013 (game projects), doctor `unity:*` checks, `npm run unity:plugin` (pins Unity's official agent plugin at 3831ddb), `ORCHESTRATOR_WORKTREES_DIR`, failure modes FM-046..FM-049, config-schema and project-types updated. 46 files, 607 tests pass.
 - Next: B-055, the live 2048-like project: rebuild, restart worker and bridge, create it in Paperclip, approve the game design and plan, let the tasks run.
+
+## 2026-10-24 update (first live game run: gates tightened)
+- Live run: project Tile Merge 2048 (LOC-68), repo rambosoft/tile-merge-2048, 5 milestones, 16 tasks. T1, T2 and T3 published draft PRs. T3's first run was interrupted by a machine and Docker restart (Paperclip adapter lost; recovery needed a board-level reconciliation resolve) and hit the old 30 minute limit; its second run passed every gate but the review found 3 blocking gaps the tests had not caught.
+- Fixes (FM-050, FM-051): numbered acceptance criteria with a verify gate (`Covers:` / `Deferred:`), blank-frame guard in the capture helper, planning rule against criteria that depend on later tasks, stray Unity Editor stop, 60 minute implement limit, reconcile every 3 minutes by the worker supervisor, `ORCHESTRATOR_WORKTREES_DIR`.
+- Verified: 48 files, 619 tests; real Unity: the guard fails a blank frame and passes a real one on a fresh scaffold.

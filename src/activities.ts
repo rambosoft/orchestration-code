@@ -6,7 +6,8 @@ import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
-import { clearUnityEvidence, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
+import { acceptanceProblem } from "./acceptance.js";
+import { clearUnityEvidence, readUnityTestSources, stopProjectEditors, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -183,6 +184,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       return { ok: false, summary: "quality gate failed: no deterministic quality commands are configured", findings: ["Configure at least one deterministic verification command."], artifactRefs: [], provider: "quality-gate", durationMs, metadata: { checks: [], passed: false, activityDurationMs: durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     }
     const results: NonNullable<typeof qualityChecks> = [];
+    // An Editor the agent left open on this worktree makes every Unity command fail with "instances cannot open the same project".
+    if (checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
     for (const check of checks) {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
@@ -204,6 +207,18 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
         return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+      }
+    }
+    // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
+    if (checks.some(check => check.executable === "unity")) {
+      const missing = acceptanceProblem(input.prompt, await readUnityTestSources(input.projectRoot));
+      if (missing) {
+        const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
+        const activityDurationMs = Date.now() - activityStartedAt;
+        results.push({ executable: "acceptance-trace", args: [], exitCode: 1, durationMs: 0, output: missing, stderr: "" });
+        await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs }, null, 2));
+        await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: "acceptance-trace" }, "error");
+        return { ok: false, summary: "quality check failed: acceptance-trace", findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
     }
     const qualityFile = path.join(artifactsDir, `quality-${input.attempt}.json`);

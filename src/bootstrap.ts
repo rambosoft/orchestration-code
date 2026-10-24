@@ -309,7 +309,7 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
   const visual = options.visual_verification === true ? template?.visual : undefined;
   if (template?.unity) {
     // A Unity project: the Unity CLI gates, the unity-mobile stack profile and longer provider timeouts (imports and builds are slow).
-    const timeouts = { ...config.manifest.providerTimeouts, implement: Math.max(config.manifest.providerTimeouts.implement ?? 0, 1_800_000), review: Math.max(config.manifest.providerTimeouts.review ?? 0, 900_000) };
+    const timeouts = { ...config.manifest.providerTimeouts, implement: Math.max(config.manifest.providerTimeouts.implement ?? 0, 3_600_000), review: Math.max(config.manifest.providerTimeouts.review ?? 0, 1_200_000) };
     return {
       id: projectId, aliases: [slug], name: form.name, root: slug, containerRoot: `${config.manifest.containerProjectsRoot}/${slug}`,
       ...(hasRepository ? { repository: { remote: "origin", targetBranch: config.manifest.targetBranch, requiredSourcePaths: ["README.md"] } } : {}),
@@ -364,11 +364,21 @@ export function planBlockers(blueprint: Blueprint, parallel: boolean): Map<strin
   return blockers;
 }
 
+const SCREEN_TASK = /\b(screen|view|menu|hud|popup|dialog|overlay|settings|button|layout|theme|ui)\b/i;
+/** A game task's criteria get ids (T3-AC1) the verify gate traces to tests, plus a standing criterion that every screen it builds is captured, and the convention the agent follows. */
+export function gameAcceptance(task: { title: string; description: string; acceptance: string[] }, number: number): string {
+  const id = `T${number}`;
+  const items = [...task.acceptance];
+  if (SCREEN_TASK.test(`${task.title} ${task.description}`)) items.push("Every screen this task builds or changes is rendered by a PlayMode capture test in Assets/Tests/PlayMode/CaptureTests.cs (a blank frame fails the test) and shows its real content");
+  return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.`;
+}
+
 export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {
   const autostart = String(options.autostart);
   const issues: PlannedIssue[] = [];
   const blockers = planBlockers(blueprint, isParallelPlan(options));
   const lastTask = blueprint.milestones.at(-1)?.tasks.at(-1);
+  let taskNumber = 0;
   const designBlock = (last: boolean) => { const block = designTaskBlock(options, charter, last); return block ? `\n\n${block}` : ""; };
   for (const [index, milestone] of blueprint.milestones.entries()) {
     const milestoneKey = `milestone:${milestone.key}`;
@@ -376,7 +386,7 @@ export function buildIssuePlan(blueprint: Blueprint, options: Record<string, Opt
     issues.push({ key: milestoneKey, kind: "milestone", title: `Milestone ${index + 1}: ${milestone.title}`, description: `${milestone.goal}${checklist}\n\nTasks:\n${milestone.tasks.map(task => `- ${task.title}`).join("\n")}`, labels: ["milestone"], blockedByKeys: [], start: false });
     for (const task of milestone.tasks) {
       const reliesOn = task.depends_on.length ? `\n\nRelies on: ${task.depends_on.join(", ")}.` : "";
-      const acceptance = `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
+      const acceptance = isGame(options) && task.type === "task" ? gameAcceptance(task, ++taskNumber) : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
         key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}\n\n${CONTRACT_FOOTER}`,
         labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: blockers.get(`task:${task.key}`) ?? [],

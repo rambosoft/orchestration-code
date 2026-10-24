@@ -1,0 +1,33 @@
+// Acceptance traceability for game tasks. Every acceptance criterion of a task has an id (T3-AC1), the agent proves each one with a test that says `Covers: T3-AC1`, and the verify
+// activity fails the task when one has no test. A criterion that cannot be met in this task has to be deferred in the open (`Deferred: T3-AC4 -> T8 reason`), which is reported to the
+// reviewer. This closes the gap the first live game run showed: the tests passed, but nothing tied them to what the task had to deliver.
+const ID = /\bT\d+-AC\d+\b/g;
+const unique = (items: string[]): string[] => [...new Set(items)];
+
+/** The criterion ids a task description declares. Empty for a task without numbered criteria (every non-game task), which turns the check off. */
+export function acceptanceIds(prompt: string): string[] {
+  return unique([...prompt.matchAll(/^\s*[-*]\s*(T\d+-AC\d+)\s*:/gm)].map(match => match[1]!));
+}
+
+export type AcceptanceTrace = { missing: string[]; deferred: Array<{ id: string; to: string }> };
+export function traceAcceptance(ids: string[], testTexts: string[]): AcceptanceTrace {
+  const text = testTexts.join("\n");
+  const covered = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const covers = /\bCovers\s*:(.*)$/i.exec(line);
+    if (covers) for (const id of covers[1]!.match(ID) ?? []) covered.add(id);
+  }
+  const deferred: AcceptanceTrace["deferred"] = [];
+  for (const match of text.matchAll(/\bDeferred\s*:\s*(T\d+-AC\d+)\s*->\s*(T\d+)\b/gi)) deferred.push({ id: match[1]!, to: match[2]! });
+  const deferredIds = new Set(deferred.map(item => item.id));
+  return { missing: ids.filter(id => !covered.has(id) && !deferredIds.has(id)), deferred: deferred.filter(item => ids.includes(item.id) && !covered.has(item.id)) };
+}
+
+/** The failure text for the repair prompt, or undefined when every criterion is covered or openly deferred. */
+export function acceptanceProblem(prompt: string, testTexts: string[]): string | undefined {
+  const ids = acceptanceIds(prompt);
+  if (!ids.length) return undefined;
+  const { missing } = traceAcceptance(ids, testTexts);
+  if (!missing.length) return undefined;
+  return `acceptance criteria without a test: ${missing.join(", ")}. Add a test (EditMode for rules, PlayMode for screens and flows) for each, and put "Covers: ${missing[0]}" in a comment on the test that proves it. A criterion this task truly cannot meet because it depends on a later task is declared in a test file comment as "Deferred: ${missing[0]} -> T<later task> reason" and is shown to the reviewer; never delete or weaken a criterion.`;
+}
