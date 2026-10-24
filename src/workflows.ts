@@ -10,6 +10,7 @@ import { analysisBlock, analysisConstraints, analysisPrompt as makeAnalysisPromp
 import { DEFAULT_UI_UX_CONFIG, uiUxGuidance } from "./uiux.js";
 import { taskTypes } from "./task-types.js";
 import { diagnosePrompt, diagnosisBlock, diagnosisConstraints, formatDiagnosisMarkdown, hintFromDiagnosis, hintFromReproduction, needsInfoMessage, regressionGate, repairDiagnosisPrompt, repairReproductionPrompt, reproducePrompt, salvageDiagnosis, validateDiagnosis, validateReproduction, type BugOutcome, type Diagnosis, type ReproVerification, type Reproduction } from "./bug.js";
+import { testStrategy } from "./test-strategy.js";
 import { deterministicGameDesign, gameDesignPrompt, isGame, isUnityGame, repairGameDesignPrompt, unityStackDecision, validateGameDesign, type GameDesign } from "./game.js";
 import { blueprintPrompt, buildIssuePlan, charterPrompt, deterministicBlueprint, deterministicCharter, deterministicStack, planLimits, repairBlueprintPrompt, repairCharterPrompt, repairStackPrompt, salvageBlueprint, stackPrompt, validateBlueprint, validateCharter, validateStack, type Blueprint, type BootstrapState, type Charter, type StackDecision } from "./bootstrap.js";
 import { renderPlanSummary } from "./bootstrap-docs.js";
@@ -84,7 +85,7 @@ export function implementationPrompt(taskPrompt: string, repairFindings?: Review
     : "\nNo deterministic checks are configured; report this as a blocking delivery risk.";
   const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Deliver production-ready work: clean code that reads like its surroundings, and meaningful tests (regression coverage plus the edge cases and boundaries of the behaviour). Run the checks yourself before you finish: the project's full test suite and its build or typecheck (for example npm test and npm run build). Fix every failure; never leave a test broken, skipped, weakened or deleted, and never rely on the orchestration's gates to find problems for you. If you cannot run a check in this environment, say so plainly with the exact reason and do not claim it passed. Inspect the diff and report changed files and test results accurately. Do not decide on your own that a requirement is unnecessary or infeasible and ship a weaker variant: if you could not satisfy an acceptance check, say which one and why. End your answer with one line, "UNMET_ACCEPTANCE: none", or "UNMET_ACCEPTANCE:" followed by one line per unmet check; unmet checks are sent back for rework. The orchestration runs configured quality gates again afterwards.
 
-${SIMPLICITY_POLICY}${configuredChecks}`;
+${SIMPLICITY_POLICY}${configuredChecks}\n\n${testStrategy(qualityCommands)}`;
   const guidance = [uiUxContext, analysisDecisions, contractContext].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
   const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}${finding.scenario ? `\n   Scenario: ${finding.scenario}` : ""}`).join("\n");

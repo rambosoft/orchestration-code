@@ -80,6 +80,7 @@ ${commands}
 - Language: ${stack.language}. Frameworks: ${stack.frameworks.map(item => item.name).join(", ")}.
 - Match the surrounding code; make the smallest complete change; reuse what exists before adding anything new.
 - Meaningful tests for behaviour you add, and a regression test for every bug fix.
+- While you work run only the tests your change can affect (a test file or fixture, or the runner's changed/related mode); run the full suite once before you finish.
 
 ## Hard rules
 - Never commit secrets or \`.env\` files.
