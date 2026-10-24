@@ -38,7 +38,7 @@ const viteReactTs: ScaffoldTemplate = {
     ".gitignore": `node_modules/\ndist/\n*.log\n.env\n.env.*\n!.env.example\ncoverage/\n`,
   }),
   checks: { build: { executable: "npm", args: ["run", "build"] }, test: { executable: "npm", args: ["test"] } },
-  visual: { enabled: true, command: { executable: "npm", args: ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5199", "--strictPort"] }, url: "http://127.0.0.1:5199/", readyTimeoutMs: 60_000, viewports: [{ name: "desktop", width: 1280, height: 800 }, { name: "mobile", width: 390, height: 844 }], steps: [{ do: "shot", name: "initial" }], maxImages: 4, required: false },
+  visual: { enabled: true, engine: "web", command: { executable: "npm", args: ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5199", "--strictPort"] }, url: "http://127.0.0.1:5199/", readyTimeoutMs: 60_000, viewports: [{ name: "desktop", width: 1280, height: 800 }, { name: "mobile", width: 390, height: 844 }], steps: [{ do: "shot", name: "initial" }], maxImages: 4, required: false },
 };
 
 export const TEMPLATES: Record<string, ScaffoldTemplate> = { [viteReactTs.id]: viteReactTs };

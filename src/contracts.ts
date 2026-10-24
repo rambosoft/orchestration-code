@@ -31,14 +31,23 @@ export const VisualStepSchema = z.discriminatedUnion("do", [
 /** Optional screenshot capture of the running app for the reviewer (ADR 0007). The page must be served on this machine. */
 export const VisualConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  command: z.object({ executable: ToolExecutableSchema, args: z.array(z.string()), cwd: z.string().optional() }),
-  url: z.string().url().refine(value => /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(value), "visual.url must be an http://localhost, 127.0.0.1 or [::1] address"),
+  /** web: a dev server screenshotted with Playwright (default). unity: the project's PlayMode capture test writes the images (src/unity.ts). */
+  engine: z.enum(["web", "unity"]).default("web"),
+  /** engine web only. */
+  command: z.object({ executable: ToolExecutableSchema, args: z.array(z.string()), cwd: z.string().optional() }).optional(),
+  /** engine web only. */
+  url: z.string().url().refine(value => /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(value), "visual.url must be an http://localhost, 127.0.0.1 or [::1] address").optional(),
+  /** engine unity only: NUnit filter selecting the capture test, for example CaptureTests. */
+  unityFilter: z.string().regex(/^[A-Za-z_][\w.]*$/, "a test or fixture name").optional(),
   readyTimeoutMs: z.number().int().min(1000).max(300_000).default(60_000),
   viewports: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,20}$/), width: z.number().int().min(200).max(3840), height: z.number().int().min(200).max(2160) })).min(1).max(3).default([{ name: "desktop", width: 1280, height: 720 }]),
   steps: z.array(VisualStepSchema).min(1).max(40).default([{ do: "shot", name: "initial" }]),
   maxImages: z.number().int().min(1).max(8).default(6),
   /** true: a capture that cannot be produced fails the review instead of only warning. */
   required: z.boolean().default(false),
+}).superRefine((config, ctx) => {
+  if (config.engine === "web" && (!config.command || !config.url)) ctx.addIssue({ code: "custom", path: ["command"], message: "a web visual config needs command and url" });
+  if (config.engine === "unity" && !config.unityFilter) ctx.addIssue({ code: "custom", path: ["unityFilter"], message: "a unity visual config needs unityFilter" });
 });
 export type VisualConfig = z.infer<typeof VisualConfigSchema>;
 export const ReviewFindingSchema = z.object({
@@ -110,6 +119,7 @@ export const ProjectManifestSchema = z.object({
     ...manifest.qualityCommands.map((command, index) => ({ where: `qualityCommands.${index}`, path: ["qualityCommands", index, "executable"] as Array<string | number>, command })),
     ...Object.entries(manifest.qualityCommandsByProfile).flatMap(([profile, list]) => list.map((command, index) => ({ where: `qualityCommandsByProfile.${profile}.${index}`, path: ["qualityCommandsByProfile", profile, index, "executable"] as Array<string | number>, command }))),
   ];
+  if (manifest.visual?.engine === "unity" && manifest.stack?.profile !== "unity-mobile") ctx.addIssue({ code: "custom", path: ["visual", "engine"], message: "visual.engine unity needs stack.profile unity-mobile" });
   for (const problem of stackCommandProblems(manifest.stack, commands)) ctx.addIssue({ code: "custom", path: commands.find(entry => entry.where === problem.where)!.path, message: problem.message });
 });
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;

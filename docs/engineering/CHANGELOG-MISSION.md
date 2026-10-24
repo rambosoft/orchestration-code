@@ -29,3 +29,6 @@ One line per completed item: id, commit, evidence.
 
 ## 2026-10-24 Unity support phase 1 [B-050]
 - Added `src/stack-profiles.ts`, manifest `stack`, Unity command allow-list, Unity import step in dependency prep, tests. Research and plan: docs/engineering/research/unity-game-support.md.
+
+## 2026-10-24 Unity support phase 2 [B-051]
+- Added `src/unity.ts`, `visual.engine`/`unityFilter`, verify-activity Unity evidence checks and the hygiene script with tests.

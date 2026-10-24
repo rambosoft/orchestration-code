@@ -44,3 +44,6 @@
 - Done: B-050. Stack profiles (`node-web` default, `unity-mobile`), manifest `stack` field with superRefine that only allows `unity test|build|recompile` for the unity profile (no `--`, no editor path, no installs, declared `--execute-method` only), reproduction commands reject `unity`, `prepareProjectDependencies` imports a detected Unity worktree through `unity run` before npm. No workflow change, replay fixture unchanged.
 - Verified: typecheck, check:chars, 42 files and 545 tests pass; Unity CLI spike (EditMode, PlayMode capture, Android AAB) recorded in research/unity-game-support.md section 5c.
 - Next: B-051 (Unity gates), then B-052..B-055 in order.
+
+## 2026-10-24 update (Unity support, phase 2)
+- Done: B-051. Unity gates inside the verify activity: default timeouts, stale report removal, NUnit report must exist with tests and no failures, declared build output must exist, exit-code hints; `visual.engine: "unity"` runs the project's PlayMode capture test and copies `Logs/screenshots/*.png` to the review; hygiene script in `templates/unity-mobile-2d/scripts/`. Verified: typecheck, check:chars, 44 files and 565 tests. No workflow change.

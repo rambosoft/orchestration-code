@@ -6,6 +6,7 @@ import path from "node:path";
 import type { VisualConfig } from "./contracts.js";
 import { childEnv } from "./env.js";
 import { killProcessTree, toolCommand } from "./process-control.js";
+import { captureUnityScreenshots } from "./unity.js";
 
 // Screenshot capture of the running app for the reviewer (ADR 0007). Every problem is reported as a warning: capture never throws, and a review
 // that cannot be illustrated still runs on text.
@@ -55,9 +56,10 @@ export function findBrowser(env: NodeJS.ProcessEnv = process.env, platform: Node
 }
 
 function defaultStartServer(config: VisualConfig, cwd: string, signal?: AbortSignal): ServerHandle {
-  const { command, args } = toolCommand(config.command.executable, config.command.args);
+  const web = config.command!; // captureScreenshots only starts a server for engine "web", which the schema guarantees has a command
+  const { command, args } = toolCommand(web.executable, web.args);
   // BROWSER=none stops dev servers from opening a window on the operator's desktop.
-  const child = spawn(command, args, { cwd: path.resolve(cwd, config.command.cwd ?? "."), shell: false, windowsHide: true, stdio: ["ignore", "ignore", "pipe"], env: { ...childEnv(), BROWSER: "none" } });
+  const child = spawn(command, args, { cwd: path.resolve(cwd, web.cwd ?? "."), shell: false, windowsHide: true, stdio: ["ignore", "ignore", "pipe"], env: { ...childEnv(), BROWSER: "none" } });
   let tail = ""; let ended: string | undefined;
   child.stderr?.on("data", (chunk: Buffer) => { tail = (tail + chunk.toString("utf8")).slice(-600); });
   child.on("error", error => { ended = `could not start: ${error.message}`; });
@@ -85,7 +87,10 @@ async function waitReady(url: string, timeoutMs: number, server: ServerHandle, s
 }
 
 export async function captureScreenshots(config: VisualConfig, options: { cwd: string; outDir: string; signal?: AbortSignal }, deps: VisualDeps = {}): Promise<VisualResult> {
+  if (config.engine === "unity") return captureUnityScreenshots(config, options);
   const images: string[] = []; const warnings: string[] = [];
+  const url = config.url;
+  if (!config.command || !url) return { images, warnings: ["visual capture skipped: the web visual config has no command or url"] };
   const now = deps.now ?? Date.now;
   let server: ServerHandle | undefined; let browser: BrowserLike | undefined;
   try {
@@ -94,14 +99,14 @@ export async function captureScreenshots(config: VisualConfig, options: { cwd: s
     await mkdir(options.outDir, { recursive: true });
     const deadline = now() + CAPTURE_DEADLINE_MS;
     server = (deps.startServer ?? defaultStartServer)(config, options.cwd, options.signal);
-    const notReady = await waitReady(config.url, config.readyTimeoutMs, server, options.signal, now);
+    const notReady = await waitReady(url, config.readyTimeoutMs, server, options.signal, now);
     if (notReady) return { images, warnings: [`visual capture skipped: ${notReady}`] };
     browser = await (deps.launch ?? defaultLaunch)(executable);
     for (const viewport of config.viewports) {
       const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
       try {
         page.setDefaultTimeout(STEP_TIMEOUT_MS);
-        await page.goto(config.url, { waitUntil: "load", timeout: 30_000 });
+        await page.goto(url, { waitUntil: "load", timeout: 30_000 });
         for (const step of config.steps) {
           if (options.signal?.aborted) throw new Error("cancelled");
           if (now() > deadline) { warnings.push(`visual capture stopped after ${CAPTURE_DEADLINE_MS / 1000}s; remaining steps skipped`); return { images, warnings }; }

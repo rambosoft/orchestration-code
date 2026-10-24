@@ -6,6 +6,7 @@ import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
+import { clearUnityEvidence, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -184,7 +185,16 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     const results: NonNullable<typeof qualityChecks> = [];
     for (const check of checks) {
       const checkStartedAt = Date.now();
-      const result = await runCheck(check.executable, check.args, path.resolve(input.projectRoot, check.cwd ?? "."));
+      const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
+      const isUnity = check.executable === "unity";
+      if (isUnity) await clearUnityEvidence(check, checkCwd);
+      let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, isUnity ? 20_000 : undefined);
+      if (isUnity) {
+        // The CLI's exit code alone is not a verdict: a green run needs its report or output, and a red one gets a hint on what the code means.
+        const evidence = await unityEvidenceProblem(check, checkCwd, result.code);
+        const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
+        if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
+      }
       results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: result.output, stderr: result.stderr });
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
