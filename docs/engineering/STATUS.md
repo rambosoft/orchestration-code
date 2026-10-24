@@ -76,3 +76,8 @@
 
 ## 2026-10-24 update (recovery tooling and runbook)
 - Added `npm run resume-run -- <failed workflow id>` (`src/client.ts` `resumeRun`, `nextResumeId`, tested): resumes a failed run with the original input and run id so only the failed stage and what follows execute (measured on T12: plan, brief and implement reused). Runbook `docs/engineering/runbooks/recover-tasks.md` covers every case met in the live Unity run; FM-053 to FM-055 added.
+
+## 2026-10-25 update (speed analysis, B-056)
+- Measured from `data/logs/worker-activity-events.jsonl` (39 real runs): implement is 343 of 534 minutes (median 3.7, p90 22); first review rejected 17 of 39; on Node projects the OpenSpec/analysis chain costs about as much as implementing; Unity tasks are 30-57 minutes (implement 3-35, verify 3-20, a repair round doubles it). Worktree, install, import and publish time was not logged until now.
+- Finding: a failed deterministic gate has no repair path (the run fails), which is why the agent runs the slow build itself and the gate repeats it. B-057 adds that path; until then the agent keeps self-verifying. Plan and order: B-056, B-057, B-058, B-059, B-060, B-061.
+- Done: B-056. Not verified: the new events on a live worker (needs build, worker restart).

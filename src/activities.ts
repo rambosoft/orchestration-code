@@ -18,12 +18,13 @@ import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./proces
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { buildIntegrationBase, resolveRemoteBranch, runCommand } from "./workspaces.js";
+import { timedActivity } from "./timing.js";
 import { archiveOpenSpec, prepareOpenSpec as prepareOpenSpecProject, validateOpenSpec as validateOpenSpecProject } from "./openspec.js";
 import type { OpenSpecPrepared, OpenSpecContext } from "./contracts.js";
 import { prepareWorktree as prepareWorktreeImpl, collectWorktree as collectWorktreeImpl, publishWorktree as publishWorktreeImpl } from "./workspaces.js";
 
 async function emitActivityEvent(event: Record<string, unknown>, level: "info" | "error" = "info"): Promise<void> {
-  const line = JSON.stringify(event);
+  const line = JSON.stringify({ at: new Date().toISOString(), ...event });
   if (level === "error") console.error(line); else console.log(line);
   const logFile = path.join(path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data"), "logs", "worker-activity-events.jsonl");
   try {
@@ -287,20 +288,22 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
   const file = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
   await writeFile(file, JSON.stringify({ ...out, metadata: withVisual(out.metadata), stage: input.stage, runId: input.runId, taskId: input.taskId, inputHash }, null, 2), { flag: "w" });
-  await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
+  const costUsd = out.metadata?.total_cost_usd;
+  await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(typeof costUsd === "number" ? { costUsd } : {}), retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
   return { ...out, metadata: withVisual(out.metadata), stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, ...visualImages, file] };
 }
 async function timeoutProbeImpl(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
 
 // Every activity heartbeats (see heartbeating): the workflow sets a heartbeatTimeout on all of them.
-export const prepareWorktree = heartbeating(prepareWorktreeImpl);
-export const collectWorktree = heartbeating(collectWorktreeImpl);
-export const publishWorktree = heartbeating(publishWorktreeImpl);
-export const prepareOpenSpec = heartbeating(prepareOpenSpecImpl);
-export const validateOpenSpec = heartbeating(validateOpenSpecImpl);
-export const archiveOpenSpecChange = heartbeating(archiveOpenSpecChangeImpl);
-export const checkDependencies = heartbeating(checkDependenciesImpl);
-export const prepareProjectDependencies = heartbeating(prepareProjectDependenciesImpl);
+// The slow ones also log an `activity.timed` event (B-056), so `npm run timing` can show where a task's time went outside the model stages.
+export const prepareWorktree = heartbeating(timedActivity("prepareWorktree", prepareWorktreeImpl, emitActivityEvent));
+export const collectWorktree = heartbeating(timedActivity("collectWorktree", collectWorktreeImpl, emitActivityEvent));
+export const publishWorktree = heartbeating(timedActivity("publishWorktree", publishWorktreeImpl, emitActivityEvent));
+export const prepareOpenSpec = heartbeating(timedActivity("prepareOpenSpec", prepareOpenSpecImpl, emitActivityEvent));
+export const validateOpenSpec = heartbeating(timedActivity("validateOpenSpec", validateOpenSpecImpl, emitActivityEvent));
+export const archiveOpenSpecChange = heartbeating(timedActivity("archiveOpenSpecChange", archiveOpenSpecChangeImpl, emitActivityEvent));
+export const checkDependencies = heartbeating(timedActivity("checkDependencies", checkDependenciesImpl, emitActivityEvent));
+export const prepareProjectDependencies = heartbeating(timedActivity("prepareProjectDependencies", prepareProjectDependenciesImpl, emitActivityEvent));
 export const timeoutProbe = heartbeating(timeoutProbeImpl);
 
 /** Write the analysis document into the task worktree so it is part of the published change. */
@@ -331,7 +334,7 @@ export const writeDocument = heartbeating(writeDocumentImpl);
 async function buildContextPackImpl(input: { worktree: string; terms: string[]; paths: string[]; maxChars?: number }): Promise<ContextPack> {
   return buildPack({ root: input.worktree, terms: input.terms, paths: input.paths, ...(input.maxChars ? { maxChars: input.maxChars } : {}) });
 }
-export const buildContextPack = heartbeating(buildContextPackImpl);
+export const buildContextPack = heartbeating(timedActivity("buildContextPack", buildContextPackImpl, emitActivityEvent));
 
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 
@@ -380,7 +383,7 @@ async function verifyReproductionImpl(input: { worktree: string; command: Pick<Q
   if (!squash(output).includes(squash(input.expectedFailure))) return { reproduced: false, exitCode: result.code, evidence: `the command failed, but not with the announced signature "${input.expectedFailure.slice(0, 120)}", so it may fail for an unrelated reason: ${excerpt}`, ...base };
   return { reproduced: true, exitCode: result.code, evidence: excerpt, ...base };
 }
-export const verifyReproduction = heartbeating(verifyReproductionImpl);
+export const verifyReproduction = heartbeating(timedActivity("verifyReproduction", verifyReproductionImpl, emitActivityEvent));
 
 /** Post a comment on the draft PR (open review findings for a human to accept or send back). */
 async function commentOnPullRequestImpl(input: { worktree: string; prUrl: string; body: string }): Promise<void> {

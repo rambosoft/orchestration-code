@@ -17,6 +17,13 @@ describe("test strategy", () => {
     expect(affectedTestHints([{ executable: "python", args: ["-m", "pytest"] }] as never)[0]).toContain("file or name filter");
     expect(affectedTestHints([])[0]).toContain("file or name filter");
   });
+  it("limits a Unity packaging build to one run that has finished, and says nothing about builds for other projects", () => {
+    const unity = testStrategy([{ executable: "unity", args: ["test", "--mode", "EditMode"] }, { executable: "unity", args: ["build", "--target", "Android"] }]);
+    expect(unity).toContain("SLOW BUILD");
+    expect(unity).toContain("never end your turn with a build");
+    expect(testStrategy([{ executable: "unity", args: ["test"] }])).not.toContain("SLOW BUILD");
+    expect(testStrategy([{ executable: "npm", args: ["run", "build"] }])).not.toContain("SLOW BUILD");
+  });
   it("is part of the implementation prompt for a first pass and a repair, with or without configured checks", () => {
     const checks = [{ executable: "unity" as const, args: ["test"] }];
     expect(implementationPrompt("Task", undefined, checks)).toContain("TEST STRATEGY");

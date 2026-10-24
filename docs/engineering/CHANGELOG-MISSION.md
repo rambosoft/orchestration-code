@@ -35,3 +35,7 @@ One line per completed item: id, commit, evidence.
 
 ## 2026-10-24 Unity support phases 3 and 4 [B-052][B-053]
 - Added `src/game.ts` (game design stage, Unity stack, game bar and blueprint rules), `src/unity-scaffold.ts`, the `unity-mobile-2d` template, game options, Unity manifest and docs, the design stage in the bootstrap workflow, Claude Unity tooling, tests (`test/game.test.ts`, chaos table).
+
+## 2026-10-25 Time visibility and Unity build rule [B-056]
+- Added `src/timing.ts`: `activity.timed` events (duration, ok, ids) for worktree, dependency install, OpenSpec, context pack, reproduction check and publish activities; every activity event now carries `at`; stage events carry `costUsd` when the provider reports it. `npm run timing [-- --since ISO --json --include-fake]` prints time per stage and, per task, wall clock, busy and idle time. Tests: `test/timing.test.ts`.
+- Implement prompt: for Unity projects with a `unity build` gate, `slowBuildRule` (src/test-strategy.ts) tells the agent to build once and never end its turn with a build running (a 35 minute stage ended with the Android build still running and was sent back as unmet). No workflow command changed; replay fixture unchanged.

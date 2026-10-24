@@ -14,7 +14,14 @@ export function affectedTestHints(checks: ReadonlyArray<Pick<QualityCommand, "ex
   return hints;
 }
 
+/** A packaging build is the slowest check there is (a cold Android build took 10 minutes); a task that started a second one, or ended while one was still running, was sent back as unmet. */
+export function slowBuildRule(checks: ReadonlyArray<Pick<QualityCommand, "executable" | "args">>): string {
+  return checks.some(check => check.executable === "unity" && check.args.includes("build"))
+    ? "\nSLOW BUILD. Run `unity build` once, after the tests pass. Never start a second build while one is running, never end your turn with a build or a background watch still pending, and do not rebuild after a change that cannot affect the build (documentation, tests). The orchestration runs the build again as the gate, so a green build here is your evidence, not a step to repeat."
+    : "";
+}
+
 /** The paragraph added to every implementation prompt. */
 export function testStrategy(checks: ReadonlyArray<Pick<QualityCommand, "executable" | "args">>): string {
-  return `TEST STRATEGY. While you work, run only the tests your change can affect: the test files or fixtures of the code you touched, the tests you add, and the ones that failed before. Do not run the whole suite after every edit. Run the full suite and the other configured checks once, at the end, before you finish; the orchestration runs them again as the publication gate. A test you added must be run on its own before you rely on it.\n${affectedTestHints(checks).map(hint => `- ${hint}`).join("\n")}`;
+  return `TEST STRATEGY. While you work, run only the tests your change can affect: the test files or fixtures of the code you touched, the tests you add, and the ones that failed before. Do not run the whole suite after every edit. Run the full suite and the other configured checks once, at the end, before you finish; the orchestration runs them again as the publication gate. A test you added must be run on its own before you rely on it.\n${affectedTestHints(checks).map(hint => `- ${hint}`).join("\n")}${slowBuildRule(checks)}`;
 }
