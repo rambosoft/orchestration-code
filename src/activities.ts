@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
+import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -93,23 +94,49 @@ export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles 
   return `${prompt}${changedFiles ? `\n\nChanged files:\n${changedFiles}` : ""}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, REVIEW_DIFF_LIMIT)}${truncated ? `\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters: inspect the remaining changes yourself with git diff and by reading the files before you decide]` : ""}`;
 }
 
-/** Install locked npm dependencies in a fresh isolated worktree before agents or quality checks use them. */
+/** A Unity project has ProjectSettings/ProjectVersion.txt and an Assets folder. The stack profile is detected from the worktree so the workflow input stays unchanged. */
+async function detectUnityProject(root: string): Promise<{ editorVersion: string } | undefined> {
+  try {
+    await access(path.join(root, "Assets"));
+    const editorVersion = parseUnityEditorVersion(await readFile(path.join(root, "ProjectSettings", "ProjectVersion.txt"), "utf8"));
+    if (!editorVersion) throw new Error("ProjectSettings/ProjectVersion.txt has no m_EditorVersion line");
+    return { editorVersion };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** Unity: one batch import pass through the Unity CLI so the Library, packages and compile state are warm before agents and gates run. Fails closed on licence, version or compile problems. */
+async function prepareUnityProject(root: string, editorVersion: string, run: typeof runCheck): Promise<string> {
+  const configured = Number(process.env.UNITY_IMPORT_TIMEOUT_SECONDS);
+  const timeoutSeconds = Number.isFinite(configured) && configured >= 60 ? Math.min(configured, 840) : 840;
+  const result = await run("unity", ["run", root, "--timeout", String(timeoutSeconds), "--no-banner", "--non-interactive"], root, 3000);
+  if (result.code !== 0) {
+    throw new Error(`Unity import of the isolated task worktree failed (editor ${editorVersion}, exit ${result.code ?? "unknown"})${result.stderr ? `: ${result.stderr}` : result.output ? `: ${result.output}` : ""}`);
+  }
+  return `Imported the Unity project (editor ${editorVersion}) with the Unity CLI.`;
+}
+
+/** Prepare a fresh isolated worktree before agents or quality checks use it: Unity import for a Unity project, then locked npm dependencies when the project has them. */
 async function prepareProjectDependenciesImpl(
   projectRoot: string,
   run: typeof runCheck = runCheck,
 ): Promise<{ installed: boolean; summary: string }> {
   const root = path.resolve(projectRoot);
+  const unity = await detectUnityProject(root);
+  const unitySummary = unity ? await prepareUnityProject(root, unity.editorVersion, run) : undefined;
   try {
     await access(path.join(root, "package.json"));
     await access(path.join(root, "package-lock.json"));
   } catch {
-    return { installed: false, summary: "No npm package and lockfile pair; dependency installation skipped." };
+    return { installed: unity !== undefined, summary: unitySummary ?? "No npm package and lockfile pair; dependency installation skipped." };
   }
   const result = await run("npm", ["ci"], root, 3000);
   if (result.code !== 0) {
     throw new Error(`npm ci failed in the isolated task worktree${result.stderr ? `: ${result.stderr}` : result.output ? `: ${result.output}` : ` (exit ${result.code ?? "unknown"})`}`);
   }
-  return { installed: true, summary: "Installed npm dependencies from package-lock.json with npm ci." };
+  return { installed: true, summary: `${unitySummary ? `${unitySummary} ` : ""}Installed npm dependencies from package-lock.json with npm ci.` };
 }
 
 export type ProviderErrorCategory = "timeout" | "rate_limit" | "authentication" | "configuration" | "provider_error";

@@ -39,3 +39,8 @@
 - Verified: typecheck, `check:chars`, build, the full existing suite (40 files, 503 tests, replay fixture unchanged) and `test/stacking.test.ts` (17 tests: plan blockers, real-Git integration base incl. conflict, retry and moved parent, stack base, contract reading, workflow with an assembled base and a contract). No `patched()` needed (ADR 0011).
 - Not verified: a live parallel project through Paperclip and GitHub; a live task showing the contract block in a real Claude or Codex prompt. The GitHub repo `rambosoft/aurora-store-prototype` still exists: the `gh` login lacks the `delete_repo` scope (`gh auth refresh -h github.com -s delete_repo`, then `gh repo delete rambosoft/aurora-store-prototype --yes`).
 - Next: `npm run build`, restart the worker, `docker compose up -d --build orchestrator`; create a small project with `plan_mode=parallel` and watch the first task that has two blockers.
+
+## 2026-10-24 update (Unity support, phase 1)
+- Done: B-050. Stack profiles (`node-web` default, `unity-mobile`), manifest `stack` field with superRefine that only allows `unity test|build|recompile` for the unity profile (no `--`, no editor path, no installs, declared `--execute-method` only), reproduction commands reject `unity`, `prepareProjectDependencies` imports a detected Unity worktree through `unity run` before npm. No workflow change, replay fixture unchanged.
+- Verified: typecheck, check:chars, 42 files and 545 tests pass; Unity CLI spike (EditMode, PlayMode capture, Android AAB) recorded in research/unity-game-support.md section 5c.
+- Next: B-051 (Unity gates), then B-052..B-055 in order.

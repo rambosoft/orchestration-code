@@ -112,6 +112,8 @@ export function reproductionCommandProblem(command: Pick<QualityCommand, "execut
   if (cwd !== undefined && escapes(cwd)) return "cwd must be a relative path inside the repository";
   if (args.some(arg => FORBIDDEN_FLAG.test(arg))) return "inline code, preload and loader flags are not allowed";
   if (args.some(arg => !arg.startsWith("-") && /[\\/]/.test(arg) && escapes(arg))) return "paths must be relative and stay inside the repository";
+  // The model chooses this command without the manifest's stack profile in view, so the Unity CLI is not accepted for reproductions yet.
+  if (executable === "unity") return "unity is not supported for reproduction commands; use a node or npm test";
   if (executable === "node") {
     if (args[0] === "--test") return args.slice(1).some(arg => arg.startsWith("-") && !/^--test-/.test(arg)) ? "only --test-* options may follow --test" : undefined;
     return args[0] !== undefined && NODE_SCRIPT.test(args[0]) ? undefined : "node may only run `--test <path>` or a relative script file";

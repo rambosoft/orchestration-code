@@ -26,3 +26,6 @@ One line per completed item: id, commit, evidence.
 
 - 2026-10-23 B-048/B-049: UI/UX direction for generated projects (ADR 0010) and plugin token setup (`npm run plugin:setup`).
 - 2026-10-24 B-044/B-046/B-047 (ADR 0011): contract channel and parallel plans. `bootstrap.global.json` `contract` section (global drift rules, file, size); `src/contract-text.ts` and `src/contract.ts` build the bounded block from the contract file at the task's base commit, sent as `RunInput.projectContract` and used in the plan, implement and review prompts. Option `plan_mode=parallel` (`planBlockers` in `src/bootstrap.ts`); `resolveStackBase` and `buildIntegrationBase` (`src/workspaces.ts`) give a task with several blockers a worker-built integration branch; `checkDependencies` returns the assembled base and the workflow publishes on it. No `patched()`; replay fixture unchanged. 17 new tests (`test/stacking.test.ts`). FM-042 mitigated by runbook section 8, FM-045 added. Local `aurora-store-prototype` folder removed.
+
+## 2026-10-24 Unity support phase 1 [B-050]
+- Added `src/stack-profiles.ts`, manifest `stack`, Unity command allow-list, Unity import step in dependency prep, tests. Research and plan: docs/engineering/research/unity-game-support.md.

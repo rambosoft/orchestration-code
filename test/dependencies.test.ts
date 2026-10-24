@@ -34,6 +34,59 @@ it("skips dependency installation when the project has no npm lockfile", async (
   expect(runner).not.toHaveBeenCalled();
 });
 
+async function unityRoot(version = "6000.3.11f1") {
+  const root = await tempRoot();
+  await mkdir(path.join(root, "Assets"), { recursive: true });
+  await mkdir(path.join(root, "ProjectSettings"), { recursive: true });
+  await writeFile(path.join(root, "ProjectSettings", "ProjectVersion.txt"), `m_EditorVersion: ${version}\nm_EditorVersionWithRevision: ${version} (abc)\n`);
+  return root;
+}
+
+it("imports a Unity project through the Unity CLI before anything else", async () => {
+  const root = await unityRoot();
+  const runner = vi.fn(async () => ({ code: 0, output: "", stderr: "" }));
+
+  await expect(prepareProjectDependencies(root, runner)).resolves.toMatchObject({ installed: true, summary: expect.stringContaining("6000.3.11f1") });
+  expect(runner).toHaveBeenCalledTimes(1);
+  expect(runner).toHaveBeenCalledWith("unity", ["run", root, "--timeout", "840", "--no-banner", "--non-interactive"], root, 3000);
+});
+
+it("also installs npm dependencies in a Unity project that has a lockfile", async () => {
+  const root = await unityRoot();
+  await writeFile(path.join(root, "package.json"), "{}");
+  await writeFile(path.join(root, "package-lock.json"), "{}");
+  const runner = vi.fn(async () => ({ code: 0, output: "", stderr: "" }));
+
+  await expect(prepareProjectDependencies(root, runner)).resolves.toMatchObject({ installed: true, summary: expect.stringContaining("npm ci") });
+  expect(runner.mock.calls.map(call => (call as unknown as string[])[0])).toEqual(["unity", "npm"]);
+});
+
+it("fails closed when the Unity import fails and never reaches npm", async () => {
+  const root = await unityRoot();
+  await writeFile(path.join(root, "package.json"), "{}");
+  await writeFile(path.join(root, "package-lock.json"), "{}");
+  const runner = vi.fn(async () => ({ code: 6, output: "", stderr: "No valid Unity Editor license found" }));
+
+  await expect(prepareProjectDependencies(root, runner)).rejects.toThrow("Unity import of the isolated task worktree failed (editor 6000.3.11f1, exit 6): No valid Unity Editor license found");
+  expect(runner).toHaveBeenCalledTimes(1);
+});
+
+it("rejects a Unity project whose version file has no editor version", async () => {
+  const root = await unityRoot();
+  await writeFile(path.join(root, "ProjectSettings", "ProjectVersion.txt"), "garbage\n");
+
+  await expect(prepareProjectDependencies(root, vi.fn())).rejects.toThrow("no m_EditorVersion");
+});
+
+it("does not treat an Assets folder alone as a Unity project", async () => {
+  const root = await tempRoot();
+  await mkdir(path.join(root, "Assets"), { recursive: true });
+  const runner = vi.fn();
+
+  await expect(prepareProjectDependencies(root, runner)).resolves.toMatchObject({ installed: false });
+  expect(runner).not.toHaveBeenCalled();
+});
+
 it("fails closed when locked dependency installation fails", async () => {
   const root = await tempRoot();
   await writeFile(path.join(root, "package.json"), "{}");

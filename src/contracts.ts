@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { TaskTypeId } from "./task-types.js";
+import { CORE_EXECUTABLES, STACK_PROFILE_IDS, stackCommandProblems } from "./stack-profiles.js";
 import type { BootstrapOutcome, BootstrapRunInput } from "./bootstrap.js";
 
 export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint"]);
@@ -15,9 +16,11 @@ export const UiUxConfigSchema = z.object({
   exclude: z.array(UiUxSkillIdSchema),
 });
 export type UiUxConfig = z.infer<typeof UiUxConfigSchema>;
-const ToolExecutableSchema = z.enum(["node", "npm", "pnpm", "yarn"]);
+const ToolExecutableSchema = z.enum(CORE_EXECUTABLES);
+/** `unity` is accepted by the schema but the manifest only allows it for the unity-mobile stack profile (see stackCommandProblems). */
+const QualityExecutableSchema = z.enum([...CORE_EXECUTABLES, "unity"]);
 /** severity "warn": a failing command is reported as a warning and never stops the run (for example a first knip or jscpd report). Default "fail". */
-export const QualityCommandSchema = z.object({ executable: ToolExecutableSchema, args: z.array(z.string()), cwd: z.string().optional(), severity: z.enum(["fail", "warn"]).optional() });
+export const QualityCommandSchema = z.object({ executable: QualityExecutableSchema, args: z.array(z.string()), cwd: z.string().optional(), severity: z.enum(["fail", "warn"]).optional() });
 export type QualityCommand = z.infer<typeof QualityCommandSchema>;
 export const VisualStepSchema = z.discriminatedUnion("do", [
   z.object({ do: z.literal("press"), key: z.string().min(1).max(32) }),
@@ -88,11 +91,26 @@ export const ProjectManifestSchema = z.object({
     exclude: z.array(UiUxSkillIdSchema).optional(),
   }).optional(),
   visual: VisualConfigSchema.optional(),
+  /** Toolchain profile (src/stack-profiles.ts). Absent means node-web, today's behaviour. */
+  stack: z.object({
+    profile: z.enum(STACK_PROFILE_IDS).default("node-web"),
+    unity: z.object({
+      editorVersion: z.string().regex(/^\d{4}\.\d+\.\d+[abfp]\d+$/, "a Unity editor version such as 6000.3.11f1").optional(),
+      /** Static C# methods quality commands may name with --execute-method. */
+      executeMethods: z.array(z.string().regex(/^[A-Za-z_][\w.]*\.[A-Za-z_]\w*$/)).max(10).default([]),
+    }).default({ executeMethods: [] }),
+  }).optional(),
   qualityCommands: z.array(QualityCommandSchema).default([]),
   qualityCommandsByProfile: z.record(z.string(), z.array(QualityCommandSchema)).default({}),
   repository: z.object({ remote: z.string().min(1).default("origin"), targetBranch: z.string().min(1), integratedBaseBranch: z.string().min(1).optional(), requiredSourcePaths: z.array(z.string().min(1)).default([]) }).optional(),
   plugins: z.array(z.object({ id: z.string(), version: z.string(), capabilities: z.array(z.string()).default([]), dependencies: z.array(z.string()).default([]), compatibility: z.object({ minCoreVersion: z.string().default("0.1.0"), maxCoreVersion: z.string().optional() }).default({ minCoreVersion: "0.1.0" }), required: z.boolean().default(false), enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}), permissions: z.array(z.string()).default([]), errorPolicy: z.object({ maxAttempts: z.number().int().min(1).max(5).default(2), timeoutMs: z.number().int().positive().max(600_000).default(60_000) }).default({ maxAttempts: 2, timeoutMs: 60_000 }) })).default([]),
   policy: z.object({ maxReviewRounds: z.number().int().min(1).max(4).optional(), maxRepairAttempts: z.number().int().min(0).max(3).optional(), maxParallelism: z.number().int().min(1).max(8).default(2), requireApprovalBeforeMerge: z.boolean().default(true) }).default({ maxParallelism: 2, requireApprovalBeforeMerge: true }).transform(policy => ({ ...policy, maxReviewRounds: policy.maxReviewRounds ?? (policy.maxRepairAttempts === undefined ? 2 : Math.max(1, Math.min(4, policy.maxRepairAttempts + 1))) })),
+}).superRefine((manifest, ctx) => {
+  const commands = [
+    ...manifest.qualityCommands.map((command, index) => ({ where: `qualityCommands.${index}`, path: ["qualityCommands", index, "executable"] as Array<string | number>, command })),
+    ...Object.entries(manifest.qualityCommandsByProfile).flatMap(([profile, list]) => list.map((command, index) => ({ where: `qualityCommandsByProfile.${profile}.${index}`, path: ["qualityCommandsByProfile", profile, index, "executable"] as Array<string | number>, command }))),
+  ];
+  for (const problem of stackCommandProblems(manifest.stack, commands)) ctx.addIssue({ code: "custom", path: commands.find(entry => entry.where === problem.where)!.path, message: problem.message });
 });
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;
 
