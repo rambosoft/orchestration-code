@@ -65,3 +65,6 @@ docker compose rm -f paperclip
 docker compose up -d --no-build paperclip
 ```
 Run `docker compose build paperclip` first if `.runtime/paperclip` changed. Afterwards check `docker compose ps paperclip`, open http://localhost:3100, and restart the worker if `.env` changed. The bridge recreates normally with `docker compose up -d --build orchestrator`.
+
+## 9. Recovering tasks
+`recover-tasks.md` covers a run that failed late (resume only the remaining stages), the Paperclip execution lock, `needs_review` decisions, dependencies without a publication marker, duplicate runs and worker restarts.

@@ -6,3 +6,4 @@
 4. Disk: worktrees under `data/worktrees` are never auto-removed (B-010 open): `git worktree remove --force <path>` from the project root.
 5. Retried identical stage: results are reused from `artifacts/<task>/<runId>/<stage>-<n>.json` (metadata.reused=true).
 6. Rebase/force-with-lease happens only in `sync-stack` (human-invoked).
+7. Board and orchestration disagree, a run failed late, a Paperclip lock or dependency problem: see `recover-tasks.md` (resume from the failed stage with `npm run resume-run -- <workflow id>` instead of running everything again).

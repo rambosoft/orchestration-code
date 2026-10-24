@@ -73,3 +73,6 @@
 ## 2026-10-24 update (affected tests only, every project)
 - Every implementation prompt now carries a TEST STRATEGY paragraph (`src/test-strategy.ts`): while working run only the tests the change can affect, the full suite once at the end; the hint names the stack's way (Unity `--filter`, `--affected --since HEAD`, `--rerun-failed`; Vitest `--changed` and `related`; Jest `--onlyChanged`; `node --test <file>`). Generated agent guides carry the same line. The orchestration's own gate still runs the full suite once per verify, so nothing reaches review unverified (not changed: an affected-only gate for repair rounds is not built).
 - Takes effect after the worker restart (the prompt is built in the workflow bundle). No workflow command changed; replay fixture unchanged.
+
+## 2026-10-24 update (recovery tooling and runbook)
+- Added `npm run resume-run -- <failed workflow id>` (`src/client.ts` `resumeRun`, `nextResumeId`, tested): resumes a failed run with the original input and run id so only the failed stage and what follows execute (measured on T12: plan, brief and implement reused). Runbook `docs/engineering/runbooks/recover-tasks.md` covers every case met in the live Unity run; FM-053 to FM-055 added.

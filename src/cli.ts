@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { ProjectManifestSchema } from "./contracts.js";
-import { cancelRun, inspectRun, listRuns, signalApproval, startRun } from "./client.js";
+import { cancelRun, inspectRun, listRuns, signalApproval, resumeRun, startRun } from "./client.js";
 import { syncMergedStack } from "./workspaces.js";
 import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
@@ -96,6 +96,10 @@ async function main() {
     if (!worktree || !childBranch || !parentPrUrl || !targetBranch) throw new Error("usage: dev sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
   }
+  if (command === "resume-run") {
+    if (!args[0]) throw new Error("usage: dev resume-run <workflowId of the failed run>");
+    return console.log(JSON.stringify(await resumeRun(args[0]), null, 2));
+  }
   if (command === "resume" || command === "restart") {
     const [projectFile, taskId, revision, ...promptParts] = args;
     if (!projectFile || !taskId || !revision || promptParts.length === 0) {
@@ -105,6 +109,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

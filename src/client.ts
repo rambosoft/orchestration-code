@@ -39,3 +39,32 @@ export async function runAndWait(input: Omit<RunInput, "runId"> & { runId?: stri
   const runId = input.runId ?? randomUUID(); const full = { ...input, runId } as RunInput; const id = workflowId(full);
   return withTemporal(async c => c.workflow.execute(projectWorkflow, { taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? "orchestration", workflowId: id, args: [full], workflowIdReusePolicy: "ALLOW_DUPLICATE_FAILED_ONLY", workflowExecutionTimeout: executionTimeoutMs() }));
 }
+
+/** `<id>-resume1`, `<id>-resume2` ...: the next free id for resuming a workflow (a resumed run keeps the original run id and input, only the Temporal workflow id is new). */
+export function nextResumeId(originalId: string, existing: string[]): string {
+  const base = originalId.replace(/-resume\d+$/, "");
+  const prefix = `${base}-resume`;
+  const used = existing.filter(id => id.startsWith(prefix)).map(id => Number(id.slice(prefix.length))).filter(Number.isInteger);
+  return `${prefix}${Math.max(0, ...used) + 1}`;
+}
+
+/**
+ * Resume a finished (failed) run from where it stopped. The new workflow gets the original input and the original run id, so the activities find the preserved worktree and the
+ * saved stage results (`artifacts/<task>/<run id>/<stage>-<n>.json`) and skip every stage whose input is unchanged; only the stage that failed, and what follows it, executes.
+ * The workflow id keeps the issue-id prefix, so `reconcile` reports the result to Paperclip like any other run.
+ */
+export async function resumeRun(originalId: string): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean }> {
+  return withTemporal(async client => {
+    const history = await client.workflow.getHandle(originalId).fetchHistory();
+    const started = history.events?.find(event => event.workflowExecutionStartedEventAttributes)?.workflowExecutionStartedEventAttributes;
+    const payload = started?.input?.payloads?.[0];
+    if (!payload?.data) throw new Error(`workflow ${originalId} has no readable start input`);
+    const input = JSON.parse(Buffer.from(payload.data).toString("utf8")) as RunInput;
+    const base = originalId.replace(/-resume\d+$/, "");
+    const existing: string[] = [];
+    for await (const row of client.workflow.list({ query: `WorkflowId STARTS_WITH "${base}"` })) existing.push(row.workflowId);
+    const id = nextResumeId(originalId, existing);
+    const result = await startOrAttach(client, id, input);
+    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted };
+  });
+}
