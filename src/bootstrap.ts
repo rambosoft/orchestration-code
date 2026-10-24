@@ -309,7 +309,7 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
   const visual = options.visual_verification === true ? template?.visual : undefined;
   if (template?.unity) {
     // A Unity project: the Unity CLI gates, the unity-mobile stack profile and longer provider timeouts (imports and builds are slow).
-    const timeouts = { ...config.manifest.providerTimeouts, implement: Math.max(config.manifest.providerTimeouts.implement ?? 0, 3_600_000), review: Math.max(config.manifest.providerTimeouts.review ?? 0, 1_200_000) };
+    const timeouts = { ...config.manifest.providerTimeouts, implement: Math.max(config.manifest.providerTimeouts.implement ?? 0, 7_200_000), review: Math.max(config.manifest.providerTimeouts.review ?? 0, 1_800_000) };
     return {
       id: projectId, aliases: [slug], name: form.name, root: slug, containerRoot: `${config.manifest.containerProjectsRoot}/${slug}`,
       ...(hasRepository ? { repository: { remote: "origin", targetBranch: config.manifest.targetBranch, requiredSourcePaths: ["README.md"] } } : {}),
@@ -370,7 +370,7 @@ export function gameAcceptance(task: { title: string; description: string; accep
   const id = `T${number}`;
   const items = [...task.acceptance];
   if (SCREEN_TASK.test(`${task.title} ${task.description}`)) items.push("Every screen this task builds or changes is rendered by a PlayMode capture test in Assets/Tests/PlayMode/CaptureTests.cs (a blank frame fails the test) and shows its real content");
-  return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.`;
+  return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.\n\nTime budget: the full PlayMode suite takes several minutes and grows with every task. While you work run EditMode and only the PlayMode fixtures you touched (unity test --mode PlayMode --filter <Fixture>); run the full PlayMode suite and the hygiene check once at the end, before you finish.`;
 }
 
 export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {

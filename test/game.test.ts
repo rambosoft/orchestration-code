@@ -129,7 +129,7 @@ describe("unity template and plan", () => {
     expect(production.stack).toMatchObject({ profile: "unity-mobile", unity: { editorVersion: "6000.3.11f1", executeMethods: ["Builder.Android"] } });
     expect(production.qualityCommands.map(command => `${command.executable} ${command.args[0]}${command.severity === "warn" ? " (warn)" : ""}`)).toEqual(["node scripts/check-unity-hygiene.mjs", "unity test", "unity test", "unity build"]);
     expect(production.visual).toMatchObject({ engine: "unity", unityFilter: "CaptureTests" });
-    expect(production.providerTimeouts.implement).toBeGreaterThanOrEqual(3_600_000);
+    expect(production.providerTimeouts.implement).toBeGreaterThanOrEqual(7_200_000);
     expect(manifestFor("mvp").qualityCommands.at(-1)).toMatchObject({ severity: "warn" });
     // a game never runs below unit tests (derived), so even a prototype gates on both test modes but has no build gate
     expect(manifestFor("prototype", "smoke").qualityCommands.map(command => command.args[0])).toEqual(["scripts/check-unity-hygiene.mjs", "test", "test"]);
