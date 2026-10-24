@@ -14,6 +14,8 @@ describe("Unity editors left open on a worktree", () => {
       { pid: 5, commandLine: "Unity.exe -batchmode" },
       { pid: 6, commandLine: "" },
     ];
+    // trailing slash inside quotes, the project as a positional argument, and a path below the root are all this project; a sibling with a longer name is not
+    expect(editorPidsFor([...processes, { pid: 7, commandLine: "Unity.exe -batchmode -projectPath \"C:\\w\\run-a\\\" -quit" }, { pid: 8, commandLine: "unity.exe test C:/w/run-a --mode EditMode" }], "C:\\w\\run-a")).toEqual([1, 2, 7, 8]);
     expect(editorPidsFor(processes, "C:\\w\\run-a")).toEqual([1, 2]);
     expect(editorPidsFor(processes, "c:/w/RUN-B/")).toEqual([3]);
     expect(editorPidsFor(processes, "C:\\w\\none")).toEqual([]);

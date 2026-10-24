@@ -153,13 +153,15 @@ const normalizePath = (value: string): string => value.split("\\").join("/").rep
 /** Unity Editor processes (and their import workers) whose command line opens exactly this project. */
 export function editorPidsFor(processes: ProcessInfo[], projectRoot: string): number[] {
   const root = normalizePath(path.resolve(projectRoot));
-  return processes.filter(item => {
-    const line = normalizePath(item.commandLine);
-    const at = line.indexOf("-projectpath");
-    if (at < 0) return false;
-    const value = line.slice(at + "-projectpath".length).trimStart().replace(/^"/, "");
-    return value === root || value.startsWith(`${root}"`) || value.startsWith(`${root} `);
-  }).map(item => item.pid);
+  // The command line names the project in several spellings (-projectPath C:\w\x, "C:/w/x/", a path inside it); a hit needs a path boundary after the root so a sibling like x-copy is never touched.
+  const names = (line: string): boolean => {
+    for (let from = line.indexOf(root); from >= 0; from = line.indexOf(root, from + 1)) {
+      const next = line[from + root.length];
+      if (next === undefined || next === "\"" || next === " " || next === "/" || next === "'") return true;
+    }
+    return false;
+  };
+  return processes.filter(item => names(normalizePath(item.commandLine))).map(item => item.pid);
 }
 export type EditorProcessDeps = { list?: () => Promise<ProcessInfo[]>; kill?: (pid: number) => void };
 async function listEditorProcesses(): Promise<ProcessInfo[]> {
