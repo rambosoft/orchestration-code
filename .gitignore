@@ -16,3 +16,8 @@ paperclip-adapter/node_modules/
 paperclip-adapter/dist/
 demo/project/
 landing-page-review.png
+
+# Project bootstrap (ADR 0009): manifests the worker generates, and the plugin build output.
+projects/generated/
+plugins/*/node_modules/
+plugins/*/dist/

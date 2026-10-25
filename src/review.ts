@@ -15,12 +15,14 @@ function normalizeFinding(raw: unknown): ReviewFinding | undefined {
   const severity = String(item.severity ?? "medium").toLowerCase();
   const category = String(item.category ?? "other").toLowerCase();
   const criterion = asText(item.acceptanceCriterion);
+  const scenario = asText(item.scenario) ?? asText(item.counterexample) ?? asText(item.failingScenario);
   return {
     severity: (SEVERITIES as readonly string[]).includes(severity) ? severity as ReviewFinding["severity"] : "medium",
     category: (CATEGORIES as readonly string[]).includes(category) ? category as ReviewFinding["category"] : "other",
     title: title.slice(0, 180),
     evidence: asText(item.evidence) ?? asText(item.details) ?? asText(item.detail) ?? asText(item.reason) ?? title,
     ...(criterion ? { acceptanceCriterion: criterion } : {}),
+    ...(scenario ? { scenario: scenario.slice(0, 600) } : {}),
     fixableInCode: typeof item.fixableInCode === "boolean" ? item.fixableInCode : true,
   };
 }
@@ -70,4 +72,56 @@ export function applyReviewAssessment(output: StageOutput): StageOutput {
   const review = parseReviewAssessment(output.summary);
   if (review) { const outcome = reviewOutcome(review); return { ...output, ok: outcome.ok, findings: outcome.findings, review }; }
   return { ...output, ok: false, findings: ["Review output could not be read as an assessment"], metadata: { ...output.metadata, reviewUnparseable: true } };
+}
+
+/**
+ * The implement stage ends its answer with "UNMET_ACCEPTANCE: none" or a list of the acceptance checks it could not satisfy. An implementer that
+ * decides on its own that a requirement is infeasible must not ship a weaker variant unnoticed, so each declared item becomes a blocking finding
+ * that goes back for rework (and fails the run if it is still declared after the last round).
+ */
+export function declaredUnmetAcceptance(summary: string): ReviewFinding[] {
+  const match = /^[ \t>*_-]*UNMET_ACCEPTANCE[ \t*_]*:[ \t*_]*([\s\S]*)$/im.exec(summary);
+  if (!match) return [];
+  const items = match[1]!.split(/\r?\n/).map(line => line.replace(/^[\s>*_\-\d.)]+/, "").trim()).filter(Boolean);
+  if (!items.length || /^none\b/i.test(items[0]!)) return [];
+  return items.slice(0, 5).map(item => ({ severity: "high" as const, category: "acceptance" as const, title: `Declared unmet by the implementation: ${item.slice(0, 140)}`, evidence: `The implementation summary states this requirement was not satisfied: ${item.slice(0, 400)}`, fixableInCode: true }));
+}
+
+const words = (text: string): Set<string> => new Set(text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
+function sameAs(finding: ReviewFinding, prior: ReviewFinding): boolean {
+  if (finding.acceptanceCriterion && finding.acceptanceCriterion === prior.acceptanceCriterion) return true;
+  const a = words(finding.title); const b = words(prior.title);
+  const shared = [...a].filter(word => b.has(word)).length;
+  return a.size > 0 && b.size > 0 && shared / Math.min(a.size, b.size) >= 0.7;
+}
+
+/**
+ * Follow-up reviews may only block on what they can substantiate. A blocking finding stays blocking when it restates a prior blocker (the repair did
+ * not fix it) or carries a concrete `scenario` (an input or state and the wrong result). Anything else, typically "this test could be stricter", becomes a
+ * non-blocking note, so a reviewer cannot fail the final round on a remark that no input can demonstrate. Returns the output unchanged when nothing was demoted.
+ */
+export function requireSubstantiatedBlockers(output: StageOutput, priorBlockers: ReviewFinding[]): StageOutput {
+  const review = output.review;
+  if (!review) return output;
+  const demoted: ReviewFinding[] = [];
+  const findings = review.findings.filter(finding => {
+    if (!isBlockingFinding(finding) || (finding.scenario?.length ?? 0) >= 25 || priorBlockers.some(prior => sameAs(finding, prior))) return true;
+    demoted.push({ ...finding, severity: "medium" });
+    return false;
+  });
+  if (!demoted.length) return output;
+  const next: ReviewAssessment = { verdict: findings.some(isBlockingFinding) || findings.some(isExternalBlocker) ? "needs_changes" : "pass", findings, notes: [...review.notes, ...demoted] };
+  const outcome = reviewOutcome(next);
+  return { ...output, ok: outcome.ok, findings: outcome.findings, review: next, metadata: { ...output.metadata, demotedUnsubstantiated: demoted.map(finding => finding.title) } };
+}
+
+/** The pull request comment that hands unresolved review findings to a human: fix them, or accept the change as it is. */
+export function openFindingsComment(findings: ReviewFinding[], context: { rounds: number }): string {
+  const items = findings.map((finding, index) => [
+    `${index + 1}. **[${finding.severity}/${finding.category}] ${finding.title}**`,
+    `   - Evidence: ${finding.evidence.replace(/\s+/g, " ").slice(0, 900)}`,
+    ...(finding.scenario ? [`   - Scenario: ${finding.scenario.replace(/\s+/g, " ").slice(0, 600)}`] : []),
+    ...(finding.acceptanceCriterion ? [`   - Criterion: ${finding.acceptanceCriterion.replace(/\s+/g, " ").slice(0, 400)}`] : []),
+  ].join("\n")).join("\n");
+  return `### Open review findings\n\nThe automated review still had ${findings.length} blocking finding${findings.length === 1 ? "" : "s"} after ${context.rounds} review round${context.rounds === 1 ? "" : "s"}. The deterministic checks (tests and build) pass, so the change is published as a draft instead of being discarded.\n\n${items}\n\n**Decide:** accept the change as it is, or ask for a fix (comment on the Paperclip task) and re-run it.\n`;
 }

@@ -31,6 +31,7 @@ services:
     volumes:
       - ./data/orchestrator:/data
       - ./uiux.global.json:/app/uiux.global.json:ro
+      - ./bootstrap.global.json:/app/bootstrap.global.json:ro
       # Keep project manifests authoritative from the workspace instead of
       # silently running the stale copy baked into the image at build time.
       - ./projects:/app/projects:ro
@@ -73,6 +74,8 @@ services:
     volumes:
       - ./data/paperclip:/paperclip
       - ./paperclip-adapter:/opt/paperclip-adapter:ro
+      # Local-path plugin install source (ADR 0009); the built dist/ is bundled, so no node_modules are needed inside the container.
+      - ./plugins/project-bootstrap:/opt/paperclip-plugins/project-bootstrap:ro
       - type: bind
         source: ${CALCULATOR_PROJECT_ROOT:?Set calculator workspace in .env}
         target: /workspace/calculator

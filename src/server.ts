@@ -5,30 +5,47 @@ import { ProjectManifestSchema } from "./contracts.js";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { profiles } from "./profiles.js";
-import { admitRepository, resolveRemoteBranch, taskBranch } from "./workspaces.js";
+import { admitRepository, resolveStackBase, taskBranch } from "./workspaces.js";
+import { projectContractBlock } from "./contract.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
 import { indexManifests } from "./manifest-index.js";
 import { resolveTaskType, taskTypes } from "./task-types.js";
+import { catalogPayload, resolveOptions } from "./bootstrap-options.js";
+import { templateSummaries } from "./bootstrap-templates.js";
+import { prepareBootstrapRun } from "./bootstrap-start.js";
+import { loadBootstrapConfig } from "./bootstrap-config.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
 const projectFile = process.env.ORCHESTRATOR_PROJECT_FILE ?? "project.example.json";
 const defaultProject = ProjectManifestSchema.parse(JSON.parse(await readFile(projectFile, "utf8")));
-const manifests = [defaultProject];
 const projectDirectory = process.env.ORCHESTRATOR_PROJECTS_DIR ?? path.resolve("projects");
-try {
-  for (const entry of await readdir(projectDirectory, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const manifest = ProjectManifestSchema.parse(JSON.parse(await readFile(path.join(projectDirectory, entry.name), "utf8")));
-    manifests.push(manifest);
+// Hand-written manifests live in projects/, manifests written by a project bootstrap (ADR 0009) in projects/generated/.
+async function loadManifests() {
+  const manifests = [defaultProject];
+  for (const directory of [projectDirectory, path.join(projectDirectory, "generated")]) {
+    try {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        manifests.push(ProjectManifestSchema.parse(JSON.parse(await readFile(path.join(directory, entry.name), "utf8"))));
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
-} catch (error) {
-  if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  return indexManifests(manifests);
 }
-const projects = indexManifests(manifests);
+let projects = await loadManifests();
+/** A project created after startup (by a bootstrap) is picked up by re-reading the manifests once, so no bridge restart is needed. */
+async function findProject(id: string) {
+  const known = projects.get(id);
+  if (known) return known;
+  projects = await loadManifests();
+  return projects.get(id);
+}
 const startSchema = z.object({ taskId: z.string().min(1).max(180), projectId: z.string().min(1).optional(), revision: z.string().optional(), attempt: z.number().int().positive().optional(), profile: z.string().optional(), taskType: z.string().optional(), labels: z.array(z.string().max(120)).max(50).default([]), prompt: z.string().min(1).max(20_000), openSpec: z.boolean().optional(), analysis: z.boolean().optional(), taskTitle: z.string().optional(), approval: z.boolean().optional(), injectReviewFailure: z.boolean().optional(), repeatReviewFailure: z.boolean().optional(), injectActivityTimeout: z.boolean().optional(), blockers: z.array(z.object({ id: z.string(), status: z.string() })).default([]), parentPublications: z.array(z.object({ issueId: z.string(), branch: z.string(), headSha: z.string().regex(/^[0-9a-f]{40,64}$/i), prUrl: z.string().url() })).default([]) });
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
@@ -37,10 +54,19 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/health") { res.end(JSON.stringify({ ok: true, project: defaultProject.id, projects: [...projects.keys()] })); return; }
     if (req.method === "GET" && url.pathname === "/v1/runs") { res.end(JSON.stringify(await listRuns())); return; }
+    // The wizard in Paperclip renders its form from this catalog, so options and presets have one definition (ADR 0009).
+    if (req.method === "GET" && url.pathname === "/v1/bootstrap/catalog") { res.end(JSON.stringify({ ...catalogPayload(), templates: templateSummaries() })); return; }
+    if (req.method === "POST" && url.pathname === "/v1/bootstrap/resolve") { const body = z.object({ options: z.record(z.string(), z.unknown()).default({}) }).parse(await readJsonBody(req)); res.end(JSON.stringify(resolveOptions(body.options))); return; }
     if (req.method === "POST" && url.pathname === "/v1/runs") {
       const payload = startSchema.parse(await readJsonBody(req));
       assertNoTestFlags(payload);
-      const project = projects.get(payload.projectId ?? defaultProject.id);
+      // A bootstrap task (ADR 0009) creates the project, so there is no manifest to look up yet.
+      const early = resolveTaskType({ ...(payload.taskType !== undefined ? { apiType: payload.taskType } : {}), labels: payload.labels, ...(parseTaskDirectives(payload.prompt).taskType ? { directive: parseTaskDirectives(payload.prompt).taskType! } : {}), ...(payload.profile ? { profile: payload.profile } : {}) });
+      if (early.type === "bootstrap") {
+        const runInput = await prepareBootstrapRun(payload, { isProjectKnown: async id => (await findProject(id)) !== undefined, config: await loadBootstrapConfig(), dataRoot: process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data"), ...(process.env.ORCHESTRATOR_PROJECTS_ROOT ? { projectsRoot: process.env.ORCHESTRATOR_PROJECTS_ROOT } : {}) });
+        res.writeHead(202); res.end(JSON.stringify(await startRun(runInput))); return;
+      }
+      const project = await findProject(payload.projectId ?? defaultProject.id);
       if (!project) throw new Error(`project '${payload.projectId}' is not configured in the orchestrator`);
       const parsedPrompt = parseTaskDirectives(payload.prompt);
       if (parsedPrompt.error) throw new Error(parsedPrompt.error);
@@ -63,32 +89,20 @@ const server = createServer(async (req, res) => {
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
       const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";
-      let repository;
+      let repository; let projectContract: string | undefined;
       if (codeWorkflow || readsRepository) {
         if (!project.repository) throw new Error(`project '${project.id}' has no GitHub repository configuration (remote and targetBranch); refusing patch-only execution`);
         if (!project.containerRoot) throw new Error(`project '${project.id}' has no containerRoot bind mount configured for Git admission`);
         const gitRoot = path.resolve(project.containerRoot);
         const admitted = await admitRepository({ projectRoot: gitRoot, remote: project.repository.remote, targetBranch: project.repository.targetBranch });
         const branch = taskBranch(payload.taskId, payload.revision ?? "1", payload.attempt ?? 1);
-        let baseSha = admitted.baseSha; let prBaseBranch = project.repository.targetBranch;
-        if (payload.parentPublications.length === 1) {
-          const parent = payload.parentPublications[0]!;
-          const resolved = await resolveRemoteBranch(gitRoot, project.repository.remote, parent.branch);
-          if (resolved !== parent.headSha) throw new Error(`dependency ${parent.issueId} branch moved since its published run; human stack recovery is required`);
-          baseSha = parent.headSha; prBaseBranch = parent.branch;
-        } else if (payload.parentPublications.length > 1) {
-          const integrated = project.repository.integratedBaseBranch;
-          if (!integrated) throw new Error("multiple blockers require repository.integratedBaseBranch containing every prerequisite commit");
-          const integratedSha = await resolveRemoteBranch(gitRoot, project.repository.remote, integrated);
-          const { runCommand } = await import("./workspaces.js");
-          for (const parent of payload.parentPublications) {
-            await runCommand("git", ["merge-base", "--is-ancestor", parent.headSha, integratedSha], gitRoot).catch(() => { throw new Error(`integrated base '${integrated}' does not contain blocker ${parent.issueId} commit ${parent.headSha}`); });
-          }
-          baseSha = integratedSha; prBaseBranch = integrated;
-        } else if (payload.blockers.length) throw new Error("resolved dependency metadata is missing; refusing to start a dependent task on an unrelated base");
-        repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch, baseSha, prBaseBranch, taskTitle: payload.taskTitle ?? payload.taskId, requiredSourcePaths: project.repository.requiredSourcePaths };
+        // Several blockers without a configured integration branch: the worker assembles the base (ADR 0011); the values here are the ones it will confirm.
+        const stack = await resolveStackBase({ gitRoot, remote: project.repository.remote, targetBranch: project.repository.targetBranch, ...(project.repository.integratedBaseBranch ? { integratedBaseBranch: project.repository.integratedBaseBranch } : {}), branch, admittedBaseSha: admitted.baseSha, hasBlockers: payload.blockers.length > 0, parents: payload.parentPublications });
+        repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch, baseSha: stack.baseSha, prBaseBranch: stack.prBaseBranch, taskTitle: payload.taskTitle ?? payload.taskId, requiredSourcePaths: project.repository.requiredSourcePaths, ...(stack.integrateParents ? { integrateParents: true } : {}) };
+        const contractSettings = (await loadBootstrapConfig()).contract;
+        projectContract = codeWorkflow ? await projectContractBlock({ gitRoot, baseSha: stack.baseSha, settings: contractSettings }) : undefined;
       }
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands });
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: parsedPrompt.prompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
     const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject))?$/);

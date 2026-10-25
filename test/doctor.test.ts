@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { formatDoctor, manifestProviders, parseNodeVersion, runDoctor, type DoctorDeps } from "../src/doctor.js";
+import { formatDoctor, manifestProviders, manifestsWithUnity, parseNodeVersion, pluginProblem, runDoctor, unityChecks, type DoctorDeps } from "../src/doctor.js";
 
 function deps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
   return {
@@ -107,5 +107,72 @@ describe("running workflows", () => {
   it("does not check for a browser when no project uses screenshots", async () => {
     const checks = await runDoctor(deps({ visualProjects: async () => [], findBrowser: () => undefined }));
     expect(checks.some(item => item.name === "visual:browser")).toBe(false);
+  });
+});
+
+describe("project bootstrap plugin", () => {
+  it("accepts a built plugin whose SDK pin matches the Paperclip checkout, with or without the tag's v", () => {
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1", hostVersion: "v2026.916.1" })).toBeUndefined();
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1" })).toBeUndefined();
+  });
+  it("names the fix for an unbuilt plugin and for an SDK pin that no longer matches Paperclip", () => {
+    expect(pluginProblem({ built: false })).toContain("npm run plugin:build");
+    expect(pluginProblem({ built: true, sdkPin: "2026.916.1", hostVersion: "v2026.1001.0" })).toContain("update the pin");
+  });
+  it("is reported only when the plugin folder exists, as a warning that never blocks a run", async () => {
+    expect((await runDoctor(deps())).some(item => item.name.startsWith("plugin:"))).toBe(false);
+    const stale = await runDoctor(deps({ env: { ORCHESTRATOR_API_TOKEN: "t" }, pluginStatus: async () => ({ built: true, sdkPin: "1", hostVersion: "v2" }) }));
+    expect(stale.find(item => item.name === "plugin:project-bootstrap")).toMatchObject({ ok: false, severity: "warn" });
+    expect(stale.find(item => item.name === "bootstrap:worker-env")).toMatchObject({ ok: false, severity: "warn" });
+    expect(failures(stale)).toEqual([]);
+    const healthy = await runDoctor(deps({ env: { ORCHESTRATOR_API_TOKEN: "t", ORCHESTRATOR_PROJECTS_ROOT: "C:\p", PAPERCLIP_API_TOKEN: "x" }, pluginStatus: async () => ({ built: true, sdkPin: "2", hostVersion: "v2" }) }));
+    expect(healthy.find(item => item.name === "plugin:project-bootstrap")?.ok).toBe(true);
+    expect(healthy.find(item => item.name === "bootstrap:worker-env")?.ok).toBe(true);
+  });
+});
+
+describe("unity checks", () => {
+  const dirs: string[] = [];
+  afterAll(async () => { await Promise.all(dirs.map(dir => rm(dir, { recursive: true, force: true }))); });
+  const ready = { cliVersion: "1.0.0-beta.13", loggedIn: true, editors: [{ version: "6000.3.11f1", androidModule: true }], pluginDir: { path: "C:/plugin", exists: true } };
+  it("passes when the CLI, licence, Editor, Android module and plugin are all there", () => {
+    const checks = unityChecks(["tile-merge"], ready);
+    expect(checks.map(check => check.name)).toEqual(["unity:cli", "unity:licence", "unity:editor", "unity:android", "unity:plugin", "unity:adb"]);
+    expect(checks.filter(check => check.severity === "error").every(check => check.ok)).toBe(true);
+    expect(checks.find(check => check.name === "unity:adb")).toMatchObject({ ok: false, severity: "warn" });
+  });
+  it("checks the worktree path, the free disk, running Editors and adb when the status has them", () => {
+    const status = { ...ready, worktreesRoot: "C:/w", freeDiskBytes: 80 * 1024 ** 3, runningEditors: 0, adbVersion: "1.0.41" };
+    const good = unityChecks(["g"], status);
+    expect(good.map(check => check.name)).toEqual(["unity:cli", "unity:licence", "unity:editor", "unity:android", "unity:plugin", "unity:worktree-path", "unity:disk", "unity:adb"]);
+    expect(good.every(check => check.ok)).toBe(true);
+    const bad = Object.fromEntries(unityChecks(["g"], { ...status, worktreesRoot: "C:/Users/someone/AppData/Local/orchestration/data/worktrees/with/a/very/long/path", freeDiskBytes: 3 * 1024 ** 3, runningEditors: 2, adbVersion: undefined }).map(check => [check.name, check]));
+    expect(bad["unity:worktree-path"]).toMatchObject({ ok: false, severity: "error" });
+    expect(bad["unity:worktree-path"]!.detail).toContain("ORCHESTRATOR_WORKTREES_DIR");
+    expect(bad["unity:disk"]).toMatchObject({ ok: false, severity: "error" });
+    expect(bad["unity:editors"]).toMatchObject({ ok: false, severity: "warn" });
+    expect(bad["unity:adb"]).toMatchObject({ ok: false, severity: "warn" });
+  });
+  it("makes a missing licence an error that names the symptom, and a missing plugin or module a warning", () => {
+    const checks = unityChecks(["tile-merge"], { ...ready, loggedIn: false, editors: [{ version: "6000.3.11f1", androidModule: false }], pluginDir: undefined });
+    const byName = Object.fromEntries(checks.map(check => [check.name, check]));
+    expect(byName["unity:licence"]).toMatchObject({ ok: false, severity: "error" });
+    expect(byName["unity:licence"]!.detail).toContain("No valid Unity Editor license found");
+    expect(byName["unity:android"]).toMatchObject({ ok: false, severity: "warn" });
+    expect(byName["unity:plugin"]).toMatchObject({ ok: false, severity: "warn" });
+  });
+  it("fails without the CLI or an installed Editor, and wants the manifest's own Editor version when given", () => {
+    const none = unityChecks(["g"], { loggedIn: false, editors: [] });
+    expect(none.find(check => check.name === "unity:cli")).toMatchObject({ ok: false, severity: "error" });
+    expect(none.find(check => check.name === "unity:editor")).toMatchObject({ ok: false });
+    expect(unityChecks(["g"], ready, "6000.4.0f1").find(check => check.name === "unity:editor")!.detail).toContain("6000.4.0f1");
+  });
+  it("lists the projects whose manifest uses the unity-mobile profile", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "orch-doctor-unity-")); dirs.push(dir);
+    const base = { name: "G", root: "g", defaultProfile: "implementation" };
+    await writeFile(path.join(dir, "a.json"), JSON.stringify({ ...base, id: "unity-game", stack: { profile: "unity-mobile" } }));
+    await writeFile(path.join(dir, "b.json"), JSON.stringify({ ...base, id: "web-app" }));
+    await writeFile(path.join(dir, "c.json"), "{ not json");
+    expect(await manifestsWithUnity([dir])).toEqual(["unity-game"]);
   });
 });

@@ -25,3 +25,5 @@
 | ../../examples/dino-runner.tasks.json | example task chain for the e2e driver |
 | ../../docs/adr/0005-optional-analysis-stage.md | ADR for the optional analysis stage |
 | ../../docs/adr/0006-uniform-structured-stage-recovery.md | ADR for the uniform recovery policy |
+
+- Recovering tasks (Paperclip locks, late failures, resume, reconcile, worker restarts): `docs/engineering/runbooks/recover-tasks.md`

@@ -54,6 +54,7 @@ describe("Git workspace admission and publication", () => {
           throw new Error("no pull requests found for branch 'codex/fixture-a1'");
         }
         if (command === "gh" && args[0] === "pr" && args[1] === "create") { pushed = true; return "https://github.com/example/project/pull/7"; }
+        if (command === "gh" && args[0] === "pr" && args[1] === "list") return "[]";
         return runCommand(command, args, cwd);
       };
       const repository = { remote: "origin", targetBranch: "main", branch: "codex/fixture-a1", baseSha: sha, prBaseBranch: "main", taskTitle: "Fixture feature" };

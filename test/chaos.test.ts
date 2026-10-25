@@ -14,6 +14,9 @@ import { changeOnlyContext } from "../src/handoffs.js";
 import { FakeProvider } from "../src/providers.js";
 import { applyReviewAssessment } from "../src/review.js";
 import { projectWorkflow } from "../src/workflows.js";
+import { randomUUID } from "node:crypto";
+import { DEFAULT_BOOTSTRAP_CONFIG } from "../src/bootstrap.js";
+import { BootstrapFormSchema, resolveOptions } from "../src/bootstrap-options.js";
 
 const CONTEXT = "### openspec/changes/c1/proposal.md\n\n## Why\nThe game needs a fair difficulty curve.\n\n### openspec/changes/c1/specs/dino/spec.md\n\n## ADDED Requirements\n\n### Requirement: Ramp\nThe system SHALL ramp speed gradually. The system MUST NOT exceed the cap.\n\n#### Scenario: Ramp\n- **WHEN** time passes\n- **THEN** speed grows\n\n### Requirement: Gap\nThe system SHALL keep every gap jumpable.\n\n#### Scenario: Gap\n- **WHEN** at maximum speed\n- **THEN** a jump clears the gap\n";
 
@@ -34,6 +37,7 @@ const DEFECTS: Record<string, Defect> = {
 type RunState = { calls: StageInput[]; stage?: string; defect?: Defect; mode?: "first" | "always"; reviewScript?: Array<"block" | "pass">; failStage?: { stage: string; times: number } };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
+const prComments: Array<{ prUrl: string; body: string }> = [];
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
 
 const ok = (input: StageInput, summary: string): StageOutput => ({ stage: input.stage, ok: true, summary, findings: [], artifactRefs: [], provider: "fake", durationMs: 0 });
@@ -51,7 +55,12 @@ beforeAll(async () => {
     validateOpenSpec: async () => ({ context: CONTEXT, artifactRef: path.join(tmp, "context.md"), version: "1.14.3" }),
     archiveOpenSpecChange: async () => ({ archivedPath: "archive/c1", artifactRef: path.join(tmp, "archive.json") }),
     writeAnalysisDocument: async () => path.join(tmp, "analysis.md"),
+    // Project bootstrap (ADR 0009): the model stages are the subject here, so the host-side steps only answer.
+    prepareBootstrapSandbox: async () => tmp,
+    scaffoldProject: async () => ({ projectRoot: path.join(tmp, "shop"), repositoryUrl: "https://github.com/example/shop", commit: "e".repeat(40), manifestPath: path.join(tmp, "m.json"), template: "vite-react-ts", verified: true, warnings: [] }),
+    materializeIssues: async (request: { issues: Array<{ key: string; title: string; kind: "milestone" | "task" }> }) => request.issues.map((issue, index) => ({ key: issue.key, id: `I-${index}`, title: issue.title, kind: issue.kind, status: "backlog" })),
     collectWorktree: async () => path.join(tmp, "w.patch"),
+    commentOnPullRequest: async (input: { prUrl: string; body: string }) => { prComments.push(input); },
     publishWorktree: async ({ repository }: { repository: { branch: string; baseSha: string; prBaseBranch: string } }) => ({ branch: repository.branch, baseSha: repository.baseSha, headSha: "b".repeat(40), prUrl: "https://github.com/example/p/pull/1", prBaseBranch: repository.prBaseBranch }),
     executeStage: async (input: StageInput): Promise<StageOutput> => {
       const state = runs.get(input.runId)!;
@@ -119,6 +128,42 @@ describe("structured stages never kill a run", () => {
   }, 90_000);
 });
 
+describe("bootstrap stages never kill a run", () => {
+  const ids = { companyId: randomUUID(), projectId: randomUUID() };
+  async function bootstrap(state: RunState, extra: Record<string, string | boolean> = {}) {
+    const id = `chaos-${++sequence}`;
+    runs.set(id, state);
+    const options = { approval: "auto", ...extra };
+    const resolved = resolveOptions(options);
+    const form = BootstrapFormSchema.parse({ name: "Shop Demo", description: "A small storefront prototype with landing and checkout pages.", options, paperclip: ids });
+    return env.client.workflow.execute(projectWorkflow, { taskQueue: "chaos", workflowId: id, args: [{ runId: id, taskId: "BS-1", projectId: ids.projectId, profile: "bootstrap", prompt: "Set up", taskType: "bootstrap", provider: "fake", projectRoot: tmp, artifactsDir: tmp, approval: false, plugins: [], qualityCommands: [], bootstrap: { form, options: resolved.values, provenance: resolved.provenance }, providerRouting: DEFAULT_BOOTSTRAP_CONFIG.stages }] });
+  }
+  type Case = ["first" | "always", string, string];
+  const cases: Case[] = ["stack", "charter", "blueprint"].flatMap(stage => Object.keys(DEFECTS).flatMap((defect): Case[] => [["always", stage, defect], ...(["truncated", "proseOnly", "empty"].includes(defect) ? [["first", stage, defect] as Case] : [])]));
+  it.each(cases)("%s answer from %s is %s: the project is still created", async (mode, stage, defect) => {
+    const result = await bootstrap({ calls: [], stage, defect: DEFECTS[defect]!, mode });
+    expect(result.status, `${stage}/${defect}/${mode}: ${result.message}`).toBe("completed");
+    expect(result.bootstrap?.issues.length).toBeGreaterThan(0);
+    if (mode === "first") expect(result.metadata?.warnings ?? []).toEqual([]);
+  }, 90_000);
+  // The game design stage (docs/engineering/research/unity-game-support.md) is a structured stage like the others, so it gets the same treatment.
+  const gameCases: Case[] = Object.keys(DEFECTS).flatMap((defect): Case[] => [["always", "design", defect], ...(["truncated", "proseOnly", "empty"].includes(defect) ? [["first", "design", defect] as Case] : [])]);
+  it.each(gameCases)("%s answer from %s is %s: the game project is still created", async (mode, stage, defect) => {
+    const result = await bootstrap({ calls: [], stage, defect: DEFECTS[defect]!, mode }, { product_kind: "game" });
+    expect(result.status, `${stage}/${defect}/${mode}: ${result.message}`).toBe("completed");
+    expect(result.bootstrap?.issues.length).toBeGreaterThan(0);
+    if (mode === "first") expect(result.metadata?.warnings ?? []).toEqual([]);
+  }, 90_000);
+  it("records a warning when the game design fell back to the requester's own words", async () => {
+    const result = await bootstrap({ calls: [], stage: "design", defect: DEFECTS.proseOnly!, mode: "always" }, { product_kind: "game" });
+    expect(result.metadata?.warnings?.some(w => w.stage === "design" && w.message.includes("deterministic fallback"))).toBe(true);
+  }, 90_000);
+  it("records a warning when a deterministic fallback replaced an unusable plan", async () => {
+    const result = await bootstrap({ calls: [], stage: "blueprint", defect: DEFECTS.proseOnly!, mode: "always" });
+    expect(result.metadata?.warnings?.some(w => w.stage === "blueprint" && w.message.includes("deterministic fallback"))).toBe(true);
+  }, 90_000);
+});
+
 describe("review gate", () => {
   it.each(["fenced", "prose", "extraKeys"])("reads a %s review answer and passes it", async defect => {
     const { result } = await run({ calls: [], stage: "review", defect: DEFECTS[defect]!, mode: "always" });
@@ -151,9 +196,14 @@ describe("review gate", () => {
     expect(three.result.status, three.result.message).toBe("completed");
     expect(three.result.metadata?.review.repairCount).toBe(2);
     const stuck = await run({ calls: [], reviewScript: ["block"] }, { maxReviewRounds: 2 });
-    expect(stuck.result.status).toBe("failed");
-    expect(stuck.result.metadata?.review.stopReason).toBe("blocking_findings_remain_after_final_review");
+    // The deterministic gates passed, so the change is published as a draft and the open finding goes to a human as a PR comment instead of failing the run.
+    expect(stuck.result.status).toBe("needs_review");
+    expect(stuck.result.publish?.prUrl).toContain("pull/1");
+    expect(stuck.result.metadata?.review.stopReason).toBe("review_findings_unresolved");
     expect(stuck.result.metadata?.review.unresolvedFindings[0]?.title).toBe("Gap can be impossible");
+    expect(prComments.at(-1)).toMatchObject({ prUrl: "https://github.com/example/p/pull/1" });
+    expect(prComments.at(-1)!.body).toContain("Gap can be impossible");
+    expect(prComments.at(-1)!.body).toContain("accept the change as it is, or ask for a fix");
   }, 120_000);
 });
 

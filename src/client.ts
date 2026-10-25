@@ -1,7 +1,8 @@
 import { Client, Connection } from "@temporalio/client";
 import { randomUUID } from "node:crypto";
 import type { RunInput, RunResult } from "./contracts.js";
-import { projectWorkflow, approveSignal, progressQuery } from "./workflows.js";
+import { waiveCriteria, type Waiver } from "./acceptance.js";
+import { projectWorkflow, approveSignal, bootstrapStateQuery, progressQuery } from "./workflows.js";
 
 export async function withTemporal<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const connection = await Connection.connect({ address: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233" });
@@ -30,7 +31,7 @@ export async function startRun(input: Omit<RunInput, "runId"> & { runId?: string
   const started = await withTemporal(client => startOrAttach(client, id, full));
   return { workflowId: id, ...started };
 }
-export async function inspectRun(id: string): Promise<unknown> { return withTemporal(async c => { const h = c.workflow.getHandle(id); const d = await h.describe(); const progress = d.status.name === "RUNNING" ? await h.query(progressQuery).catch(() => undefined) : undefined; return { workflowId: id, status: d.status.name, startTime: d.startTime, closeTime: d.closeTime, progress, result: d.status.name === "COMPLETED" ? await h.result() : undefined }; }); }
+export async function inspectRun(id: string): Promise<unknown> { return withTemporal(async c => { const h = c.workflow.getHandle(id); const d = await h.describe(); const progress = d.status.name === "RUNNING" ? await h.query(progressQuery).catch(() => undefined) : undefined; const bootstrap = d.status.name === "RUNNING" ? await h.query(bootstrapStateQuery).catch(() => undefined) : undefined; return { workflowId: id, status: d.status.name, startTime: d.startTime, closeTime: d.closeTime, progress, ...(bootstrap ? { bootstrap } : {}), result: d.status.name === "COMPLETED" ? await h.result() : undefined }; }); }
 export async function cancelRun(id: string): Promise<void> { await withTemporal(async c => c.workflow.getHandle(id).cancel()); }
 export async function signalApproval(id: string, approved: boolean): Promise<void> { await withTemporal(async c => c.workflow.getHandle(id).signal(approveSignal, approved)); }
 export async function waitRun(id: string): Promise<RunResult> { return withTemporal(async c => c.workflow.getHandle(id).result()); }
@@ -38,4 +39,37 @@ export async function listRuns(): Promise<unknown[]> { return withTemporal(async
 export async function runAndWait(input: Omit<RunInput, "runId"> & { runId?: string }): Promise<RunResult> {
   const runId = input.runId ?? randomUUID(); const full = { ...input, runId } as RunInput; const id = workflowId(full);
   return withTemporal(async c => c.workflow.execute(projectWorkflow, { taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? "orchestration", workflowId: id, args: [full], workflowIdReusePolicy: "ALLOW_DUPLICATE_FAILED_ONLY", workflowExecutionTimeout: executionTimeoutMs() }));
+}
+
+/** `<id>-resume1`, `<id>-resume2` ...: the next free id for resuming a workflow (a resumed run keeps the original run id and input, only the Temporal workflow id is new). */
+export function nextResumeId(originalId: string, existing: string[]): string {
+  const base = originalId.replace(/-resume\d+$/, "");
+  const prefix = `${base}-resume`;
+  const used = existing.filter(id => id.startsWith(prefix)).map(id => Number(id.slice(prefix.length))).filter(Number.isInteger);
+  return `${prefix}${Math.max(0, ...used) + 1}`;
+}
+
+/**
+ * Resume a finished (failed) run from where it stopped. The new workflow gets the original input and the original run id, so the activities find the preserved worktree and the
+ * saved stage results (`artifacts/<task>/<run id>/<stage>-<n>.json`) and skip every stage whose input is unchanged; only the stage that failed, and what follows it, executes.
+ * The workflow id keeps the issue-id prefix, so `reconcile` reports the result to Paperclip like any other run.
+ */
+export async function resumeRun(originalId: string, options: { waive?: Waiver[] } = {}): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean; waived: string[] }> {
+  return withTemporal(async client => {
+    const history = await client.workflow.getHandle(originalId).fetchHistory();
+    const started = history.events?.find(event => event.workflowExecutionStartedEventAttributes)?.workflowExecutionStartedEventAttributes;
+    const payload = started?.input?.payloads?.[0];
+    if (!payload?.data) throw new Error(`workflow ${originalId} has no readable start input`);
+    const input = JSON.parse(Buffer.from(payload.data).toString("utf8")) as RunInput;
+    // A waived criterion changes the task prompt, so the stages after the plan run again, but on the preserved worktree they only have to finish and verify what is already there.
+    const waiver = options.waive?.length ? waiveCriteria(input.prompt, options.waive) : { prompt: input.prompt, waived: [] as string[] };
+    if (options.waive?.length && waiver.waived.length !== options.waive.length) throw new Error(`criteria not found in the task prompt: ${options.waive.filter(item => !waiver.waived.includes(item.id)).map(item => item.id).join(", ")}`);
+    input.prompt = waiver.prompt;
+    const base = originalId.replace(/-resume\d+$/, "");
+    const existing: string[] = [];
+    for await (const row of client.workflow.list({ query: `WorkflowId STARTS_WITH "${base}"` })) existing.push(row.workflowId);
+    const id = nextResumeId(originalId, existing);
+    const result = await startOrAttach(client, id, input);
+    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted, waived: waiver.waived };
+  });
 }

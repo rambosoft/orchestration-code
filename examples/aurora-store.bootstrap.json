@@ -1,0 +1,16 @@
+{
+  "name": "Aurora Store",
+  "description": "A modern e-commerce storefront prototype, frontend only, built with React. It has at most five pages: a landing page with featured products, a search and listing page, a product detail page, a checkout page, and one extra page (order confirmation). Products are mock data kept in the repository; there is no backend, no payment processing and no user accounts. The look is a current, polished e-commerce design: strong product imagery areas, clean typography, responsive from phone to desktop, accessible, with sensible loading, empty and error states.",
+  "options": {
+    "maturity": "prototype",
+    "platform": "web",
+    "architecture": "frontend_only",
+    "stack": "React",
+    "autostart": "all",
+    "approval": "required",
+    "repo_visibility": "private",
+    "out_of_scope": "Real payment processing\nUser accounts and login\nA backend or database\nMore than five pages",
+    "constraints": "Frontend only; all data is mock data kept in the repository\nExactly these pages: landing, search, product detail, checkout, order confirmation\nKeep dependencies few and well known"
+  },
+  "repoName": "aurora-store"
+}

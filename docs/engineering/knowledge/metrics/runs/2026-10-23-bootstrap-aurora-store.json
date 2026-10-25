@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-23",
+  "what": "Project bootstrap (ADR 0009) end to end through Paperclip with real providers: Codex for stack, charter, blueprint and review, Claude for implementation. Prompt: a frontend-only React e-commerce prototype, at most five pages (landing, search, product detail, checkout, order confirmation), modern UI, maturity prototype.",
+  "path": "bootstrap-e2e CLI (does what the wizard does through Paperclip's REST API) -> Paperclip task LOC-58 -> adapter -> bridge -> Temporal -> host worker; then the generated tasks LOC-60..67 ran through the normal pipeline",
+  "attempts": [
+    { "n": 1, "result": "refused: the bootstrap form in the task was not valid JSON (Paperclip turns literal backslash-n sequences into newlines)", "fix": "base64url form (FM-040)" },
+    { "n": 2, "result": "planning ok in about 3 minutes; scaffold refused: the worker has no ORCHESTRATOR_PROJECTS_ROOT", "fix": "the bridge passes the projects folder to the workflow" },
+    { "n": 3, "result": "completed: private repository, verified scaffold, manifest, 8 issues; then two tasks of one milestone started in parallel and the last task listed five blockers", "fix": "plans are strictly sequential (each task has exactly one blocker)" },
+    { "n": 4, "result": "completed: rambosoft/aurora-store (private), 9 issues (3 milestones, 6 tasks), all six tasks built and published as stacked draft PRs #1..#8", "fix": "none needed; the machine was switched off during the last tasks and the result was recovered with the new reconcile command (FM-043)" }
+  ],
+  "found_before_the_run_by_probing_the_real_tool": ["Codex refuses to run outside a git repository (FM-041)"],
+  "bootstrap_timing_seconds": { "stack": 14, "charter": 16, "blueprint": "12-15 (one repair pass in attempt 3)", "scaffold_with_npm_install_and_checks": "under 90" },
+  "result": {
+    "repository": "https://github.com/rambosoft/aurora-store (private)",
+    "tasks": ["landing page", "search and listing", "product detail", "demo checkout", "order confirmation", "accessibility, responsive and state polish"],
+    "final_branch_checks": { "npm_ci": "ok", "tests": "29 passed in 6 files", "build": "ok (274 kB js, 8.6 kB css)", "dependencies_added": ["react-router"], "pages": "5 routes plus a 404 page" },
+    "journey_check": "Playwright walk at 1280px and 390px: landing, search (filter and empty state), detail, add to cart, checkout validation, order confirmation; no console errors, no horizontal scroll",
+    "open_review_findings_accepted": 1,
+    "quality_notes": "Landing page has a gradient hero and product cards; detail, checkout and confirmation pages still use default link and button styling. The plan had no design-foundation task, so the blueprint prompt now asks for one (first task for a UI product) and a late visual-polish task."
+  },
+  "not_verified": ["the wizard inside a signed-in browser (browser pane not signed in; tested with a stubbed host)", "the plugin worker calling the bridge with a real secret (the secret has to be created by a person)", "usage and cost per stage (not captured in this run)"]
+}

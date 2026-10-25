@@ -9,11 +9,12 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { buildContextPack as buildContextPackActivity, changedPaths, verifyReproduction } from "../src/activities.js";
 import { diagnosisBlock, diagnosisConstraints, needsInfoMessage, regressionGate, reproductionCommandProblem, salvageDiagnosis, validateDiagnosis, validateReproduction, type ReproVerification } from "../src/bug.js";
-import type { RunInput, RunResult, StageInput, StageOutput } from "../src/contracts.js";
+import type { ReviewFinding, RunInput, RunResult, StageInput, StageOutput } from "../src/contracts.js";
 import { buildContextPack } from "../src/context-pack.js";
 import { redactSecrets } from "../src/redact.js";
+import { declaredUnmetAcceptance, parseReviewAssessment, requireSubstantiatedBlockers } from "../src/review.js";
 import { FakeProvider } from "../src/providers.js";
-import { deterministicScope, rawReport, validateReport } from "../src/research.js";
+import { deterministicScope, formatReportMarkdown, rawReport, validateReport } from "../src/research.js";
 import { projectWorkflow } from "../src/workflows.js";
 
 const hypothesis = { id: "H1", kind: "root_cause", title: "Cache key omits locale", mechanism: "key uses id only", evidence: ["src/cache.ts:12 - key built without locale"], observable_failure: "wrong language", confidence: "high" };
@@ -79,6 +80,17 @@ describe("reproduction", () => {
     expect(validateReproduction(JSON.stringify({ outcome: "not_reproduced", summary: "s", attempts: ["a"], blockers: ["needs data"] })).outcome).toBe("not_reproduced");
     expect(() => validateReproduction("not json")).toThrow("not valid JSON");
   });
+  it("treats blank optional fields as absent (a real Codex run answered expected_failure \"\" for a bug it could not reproduce)", () => {
+    const real = { outcome: "not_reproduced", summary: "The defect is not present.", test_files: [], command: { executable: "npm", args: ["test", "--", "src/runner.test.ts"] }, expected_failure: "", attempts: ["Ran the suite: 29 passed"], blockers: ["No genuine failure output"] };
+    const parsed = validateReproduction(JSON.stringify(real));
+    expect(parsed.outcome).toBe("not_reproduced");
+    expect(parsed.expected_failure).toBeUndefined();
+    expect(parsed.attempts).toEqual(["Ran the suite: 29 passed"]);
+    expect(validateReproduction(JSON.stringify({ outcome: "not_reproduced", summary: "  " })).summary).toBe("No summary given.");
+    expect(validateDiagnosis(JSON.stringify({ ...diagnosis, chosen_fix: { ...diagnosis.chosen_fix, workaround_justification: "" } })).chosen_fix?.workaround_justification).toBeUndefined();
+    const report = { summary: "s", findings: [{ question: "q", answer: "a", evidence: [], confidence: "high" }], recommendation: "", decision: "" };
+    expect(validateReport(JSON.stringify(report), "research").recommendation).toBeUndefined();
+  });
   it("parses git porcelain output including renames", () => {
     expect(changedPaths(" M src/a.ts\0?? test/new.test.ts\0R  src/b.ts\0src/old.ts\0A  c.md\0")).toEqual([{ file: "src/a.ts", untracked: false }, { file: "test/new.test.ts", untracked: true }, { file: "src/b.ts", untracked: false }, { file: "c.md", untracked: false }]);
   });
@@ -108,6 +120,13 @@ describe("verifyReproduction activity", () => {
     expect((await readFile(path.join(repo, "src", "lib.js"), "utf8")).replace(/\r\n/g, "\n")).toBe("module.exports = 1;\n");
     await expect(readFile(path.join(repo, "src", "extra.js"))).rejects.toThrow();
   });
+  it("matches the signature through ANSI colour codes and reports the failure, not the banner (a real vitest run was rejected because of both)", async () => {
+    const script = "console.log('> p@1 test\\n> vitest run\\n' + 'x'.repeat(1500)); console.error('\\x1b[31m\\x1b[1mAssertionError\\x1b[22m\\x1b[39m: expected 590 to be less than 590'); process.exit(1);";
+    const result = await run(script, "AssertionError: expected 590 to be less than 590");
+    expect(result.reproduced).toBe(true);
+    expect(result.evidence).toContain("AssertionError: expected 590 to be less than 590");
+    expect(result.evidence).not.toContain("\u001b");
+  });
   it("does not accept a passing test, or a failure for another reason", async () => {
     expect(await run("process.exit(0);", "anything")).toMatchObject({ reproduced: false, exitCode: 0 });
     const other = await run("console.error('SyntaxError: unexpected token'); process.exit(1);", "LOCALE_MISMATCH");
@@ -131,6 +150,13 @@ describe("research report", () => {
     expect(() => validateReport(JSON.stringify({ ...report, options: [option("a"), option("b")], recommendation: undefined }), "architecture")).toThrow("decision or recommendation");
     expect(() => validateReport(JSON.stringify({ ...report, options: [option("a"), option("b")] }), "architecture")).toThrow("consequences");
     expect(validateReport(JSON.stringify({ ...report, options: [option("a"), option("b")], decision: "d", consequences: ["c"] }), "architecture").decision).toBe("d");
+  });
+  it("does not repeat a type prefix that the task title already carries", () => {
+    const report = { summary: "s", findings: [{ question: "q", answer: "a", evidence: [], confidence: "high" as const }], options: [], consequences: [], risks: [], open_questions: [], follow_up_tasks: [] };
+    const scope = deterministicScope("q");
+    expect(formatReportMarkdown(report, scope, { taskId: "T-1", title: "Research: how routing works", kind: "research", filesConsulted: [] })).toContain("# Research: how routing works\n");
+    expect(formatReportMarkdown(report, scope, { taskId: "T-1", title: "Architecture - where tuning lives", kind: "architecture", filesConsulted: [] })).toContain("# Architecture: where tuning lives\n");
+    expect(formatReportMarkdown(report, scope, { taskId: "T-1", kind: "research", filesConsulted: [] })).toContain("# Research: T-1\n");
   });
   it("keeps an unreadable answer as a redacted, marked report and derives a scope from the request alone", () => {
     const raw = rawReport("The key is password=hunter2hunter2 and routing is in router.ts", deterministicScope("How is routing done?"));
@@ -180,7 +206,7 @@ describe("context pack", () => {
 
 type Doc = { dir?: string; docsDir?: string; name?: string; taskId?: string; markdown: string };
 type Defect = { stage: string; apply: (summary: string) => string; mode: "first" | "always" };
-type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; defect?: Defect };
+type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
@@ -200,10 +226,12 @@ beforeAll(async () => {
     buildContextPack: async (input: { terms: string[]; paths: string[] }) => { currentRun.packRequests.push(input); return { text: "PACK_MARKER: router.ts matches", files: ["src/router.ts"], truncated: false }; },
     verifyReproduction: async (): Promise<ReproVerification> => currentRun.verifications.shift() ?? NOT_REPRODUCED,
     collectWorktree: async () => path.join(tmp, "w.patch"),
+    commentOnPullRequest: async (input: { prUrl: string; body: string }) => { currentRun.comments.push(input); },
     publishWorktree: async (input: { repository: { branch: string; baseSha: string; prBaseBranch: string } }) => { currentRun.published.push(input); return { branch: input.repository.branch, baseSha: input.repository.baseSha, headSha: "b".repeat(40), prUrl: "https://github.com/example/p/pull/1", prBaseBranch: input.repository.prBaseBranch }; },
     executeStage: async (input: StageInput): Promise<StageOutput> => {
       const state = runs.get(input.runId)!;
       state.calls.push(input);
+      if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY]")) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["1 test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       const out = { ...(await fake.run(input)), stage: input.stage };
       const nth = state.calls.filter(call => call.stage === input.stage).length;
       return state.defect?.stage === input.stage && (state.defect.mode === "always" || nth === 1) ? { ...out, summary: state.defect.apply(out.summary) } : out;
@@ -217,7 +245,7 @@ afterAll(async () => { worker.shutdown(); await running; await env.teardown(); a
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
 async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
-  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], ...(defect ? { defect } : {}) };
+  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}) };
   runs.set(id, state); currentRun = state;
   const full: RunInput = { runId: id, taskId: `T-${sequence}`, projectId: "p", profile: "bugfix", provider: "fake", projectRoot: tmp, artifactsDir: tmp, repository, qualityCommands: [{ executable: "npm", args: ["test"] }], ...input };
   const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "typed", workflowId: id, args: [full] });
@@ -358,4 +386,95 @@ describe("structured stages of the typed flows never kill a run", () => {
     expect(result.status).toBe("completed");
     expect(result.metadata?.warnings?.some(warning => warning.stage === "diagnose")).toBe(true);
   }, 90_000);
+});
+
+describe("acceptance checks the implementer declares unmet", () => {
+  const declare = (summary: string) => `${summary}\n\nUNMET_ACCEPTANCE:\n- two obstacles on screen at score 3000 (the world is too narrow)`;
+  it("parses the marker line in its usual spellings and ignores 'none'", () => {
+    expect(declaredUnmetAcceptance("done.\nUNMET_ACCEPTANCE: none")).toEqual([]);
+    expect(declaredUnmetAcceptance("done.\n**UNMET_ACCEPTANCE:** None.")).toEqual([]);
+    expect(declaredUnmetAcceptance("done, nothing else")).toEqual([]);
+    const found = declaredUnmetAcceptance("done.\nUNMET_ACCEPTANCE:\n- check A\n* check B\n1. check C");
+    expect(found.map(finding => finding.title)).toEqual(["Declared unmet by the implementation: check A", "Declared unmet by the implementation: check B", "Declared unmet by the implementation: check C"]);
+    expect(found.every(finding => finding.severity === "high" && finding.category === "acceptance" && finding.fixableInCode)).toBe(true);
+    expect(declaredUnmetAcceptance("UNMET_ACCEPTANCE: the 3000 case")).toHaveLength(1);
+  });
+  it("sends the work back for rework instead of publishing a weaker variant, and the repair prompt names the item", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time" }, [], { stage: "implement", apply: declare, mode: "first" });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.metadata?.review.repairCount).toBe(1);
+    expect(state.calls.filter(call => call.stage === "implement")[1]!.prompt).toContain("Declared unmet by the implementation: two obstacles on screen at score 3000");
+  });
+  it("publishes the draft with the unmet item as a PR comment when it is still declared after the last review round, instead of failing", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time" }, [], { stage: "implement", apply: declare, mode: "always" });
+    expect(result.status).toBe("needs_review");
+    expect(result.message).toContain("1 unresolved review finding");
+    expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
+    expect(result.metadata?.review.unresolvedFindings[0]?.title).toContain("two obstacles on screen at score 3000");
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments).toHaveLength(1);
+    expect(state.comments[0]!.prUrl).toBe(result.publish!.prUrl);
+    expect(state.comments[0]!.body).toContain("Open review findings");
+    expect(state.comments[0]!.body).toContain("two obstacles on screen at score 3000");
+  });
+  it("still fails, with no PR, when the deterministic checks fail after the repair", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]", injectReviewFailure: true });
+    expect(result.status).toBe("failed");
+    expect(result.metadata?.review.stopReason).toBe("deterministic_checks_failed_after_repair");
+    expect(result.publish).toBeUndefined();
+    expect(state.comments).toEqual([]);
+  });
+  it("posts no comment when the review is clean", async () => {
+    const clean = await run({ profile: "implementation", prompt: "Add a button" });
+    expect(clean.result.status).toBe("completed");
+    expect(clean.state.comments).toEqual([]);
+  });
+  it("asks every implementation for the marker line", async () => {
+    const { state } = await run({ profile: "implementation", prompt: "Add a button" });
+    expect(state.calls.find(call => call.stage === "implement")!.prompt).toContain("UNMET_ACCEPTANCE: none");
+  });
+});
+
+describe("follow-up reviews may only block on what they can substantiate", () => {
+  const finding = (over: Partial<ReviewFinding> = {}): ReviewFinding => ({ severity: "high", category: "tests", title: "Clearability test does not verify time at the capped speed", evidence: "The test could be stricter.", fixableInCode: true, ...over });
+  const reviewed = (findings: ReviewFinding[]): StageOutput => ({ stage: "review", ok: findings.length === 0, summary: "", findings: [], review: { verdict: findings.length ? "needs_changes" : "pass", findings, notes: [] }, artifactRefs: [], provider: "fake", durationMs: 0 });
+  const prior = finding({ title: "Clearability test does not cover every progression stage or generated sequence", acceptanceCriterion: "Add deterministic sequence-clearability coverage for all stages" });
+
+  it("turns a blocker without a concrete scenario into a note (the LOC-45 round-2 finding: 'could be stricter')", () => {
+    const out = requireSubstantiatedBlockers(reviewed([finding()]), [prior]);
+    expect(out.ok).toBe(true);
+    expect(out.review?.verdict).toBe("pass");
+    expect(out.review?.findings).toEqual([]);
+    expect(out.review?.notes[0]).toMatchObject({ severity: "medium", title: "Clearability test does not verify time at the capped speed" });
+    expect(out.metadata?.demotedUnsubstantiated).toEqual(["Clearability test does not verify time at the capped speed"]);
+  });
+  it("keeps a blocker that shows a scenario", () => {
+    const out = requireSubstantiatedBlockers(reviewed([finding({ scenario: "With seed 7 the gap after the 3rd spawn is 318 px at 420 px/s, but the test only asserts >= 0.75 s, so it passes" })]), [prior]);
+    expect(out.ok).toBe(false);
+    expect(out.review?.findings).toHaveLength(1);
+  });
+  it("keeps a blocker that restates a prior one, by criterion or by title, so an unfixed problem is never waved through", () => {
+    expect(requireSubstantiatedBlockers(reviewed([finding({ title: "Something else", acceptanceCriterion: prior.acceptanceCriterion })]), [prior]).ok).toBe(false);
+    expect(requireSubstantiatedBlockers(reviewed([finding({ title: "Clearability test still does not cover every progression stage or sequence" })]), [prior]).ok).toBe(false);
+  });
+  it("leaves passes, notes, external blockers and already-substantiated outputs untouched", () => {
+    const pass = reviewed([]);
+    expect(requireSubstantiatedBlockers(pass, [prior])).toBe(pass);
+    const external = reviewed([finding({ category: "environment", fixableInCode: false })]);
+    expect(requireSubstantiatedBlockers(external, [prior]).ok).toBe(false);
+  });
+  it("keeps the scenario when the reviewer's answer is parsed, under its usual names", () => {
+    const parse = (extra: object) => parseReviewAssessment(JSON.stringify({ verdict: "needs_changes", findings: [{ severity: "high", category: "functional", title: "t", evidence: "e", fixableInCode: true, ...extra }] }))!.findings[0]!;
+    expect(parse({ scenario: "input X gives Y" }).scenario).toBe("input X gives Y");
+    expect(parse({ counterexample: "input Z gives W" }).scenario).toBe("input Z gives W");
+    expect(parse({}).scenario).toBeUndefined();
+  });
+  it("tells reviewers to list every blocker in the first pass, to prove each blocker, and not to ask for stricter tests in follow-ups", async () => {
+    const first = await run({ profile: "implementation", prompt: "Add a button" }, [], { stage: "review", apply: summary => summary, mode: "first" });
+    const prompt = first.state.calls.find(call => call.stage === "review")!.prompt;
+    expect(prompt).toContain("Report EVERY blocking problem");
+    expect(prompt).toContain("must carry a scenario");
+    const followUp = await run({ profile: "implementation", prompt: "Add a button", injectReviewFailure: true, maxReviewRounds: 2 });
+    expect(followUp.state.calls.filter(call => call.stage === "review").some(call => call.prompt.includes("is not a defect"))).toBe(true);
+  });
 });

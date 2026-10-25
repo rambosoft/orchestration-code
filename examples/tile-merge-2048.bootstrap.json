@@ -1,0 +1,28 @@
+{
+  "name": "Tile Merge 2048",
+  "repoName": "tile-merge-2048",
+  "description": "A production-quality mobile game for phones in the style of 2048, built with Unity: the player swipes to slide numbered tiles on a square board, two tiles with the same number that meet merge into one tile showing the sum of both numbers, and a new tile appears after every move. The game ends when no move is possible. The tile with the highest number reached so far wears a special icon (a crown-like emblem) that is clearly different from the other tiles and moves to whichever tile currently holds the highest number. Before any task is planned, analyse the game: write down the exact rules, the boundaries and every edge case (spawn odds, what a move that changes nothing does, merge order when three or four equal tiles line up, only one merge per tile per move, score, win and loss conditions and whether play continues after the target tile, saving the best score, what happens when the app is interrupted), and derive the tasks and milestones from those rules so that every rule has a test. The result must be completely finished and release-ready, not a prototype: a polished main menu, play screen, pause, settings (sound, haptics, theme, colour-blind friendly mode, reduced motion), game over and win screens, undo, best score and statistics, smooth tile animations, haptic and sound feedback, tasteful particle effects for merges and records, a distinctive original visual identity with a coherent theme, high-end UI and UX that works on small and tall phones with notches, large touch targets, readable numbers at every size, and stable 60 fps on a mid-range phone. All art and audio are produced procedurally or from free-licence sources; no paid services.",
+  "options": {
+    "product_kind": "game",
+    "engine": "unity",
+    "maturity": "production",
+    "platform": "mobile_android",
+    "ui_ux": true,
+    "design_direction": "bold_expressive",
+    "accessibility": "wcag_aa",
+    "game_orientation": "portrait",
+    "game_art": "procedural",
+    "game_fps": "60",
+    "openspec": false,
+    "analysis": false,
+    "granularity": "normal",
+    "review_rounds": "2",
+    "ci": "none",
+    "autostart": "all",
+    "approval": "required",
+    "repo_create": true,
+    "repo_visibility": "private",
+    "constraints": "Unity 6 with C#\nAndroid first; no iOS build\nNo third-party paid assets or services",
+    "out_of_scope": "Ads and in-app purchases\nOnline leaderboards and accounts\nMultiplayer"
+  }
+}

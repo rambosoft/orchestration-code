@@ -6,5 +6,7 @@ export const profiles: Record<string, WorkflowProfile> = {
   // bug: diagnose + reproduce run before these stages; investigation: read-only phases that end in a committed document, so no delivery stages (src/task-types.ts).
   bug: { id: "bug", stages: ["plan", "brief", "implement", "review", "verify"], approvalBeforeMerge: true, qualityGates: ["review", "verify"] },
   investigation: { id: "investigation", stages: [], approvalBeforeMerge: false, qualityGates: [] },
+  // bootstrap: model stages stack, charter and blueprint, then scaffold and issue activities (ADR 0009); no delivery stages.
+  bootstrap: { id: "bootstrap", stages: [], approvalBeforeMerge: false, qualityGates: [] },
   refactor: { id: "refactor", stages: ["plan", "brief", "implement", "review", "verify"], approvalBeforeMerge: true, qualityGates: ["review", "verify"] },
 };

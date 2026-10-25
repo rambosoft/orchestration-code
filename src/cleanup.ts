@@ -1,6 +1,7 @@
 import { readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { runCommand, type CommandRunner } from "./command.js";
+import { worktreesDir } from "./env.js";
 
 export type CleanupResult = { removed: string[]; kept: string[]; errors: string[] };
 
@@ -10,7 +11,7 @@ export type CleanupResult = { removed: string[]; kept: string[]; errors: string[
  */
 export async function cleanupWorktrees(options: { dataDir: string; olderThanDays?: number; all?: boolean; dryRun?: boolean; now?: number; run?: CommandRunner }): Promise<CleanupResult> {
   const run = options.run ?? runCommand;
-  const base = path.join(path.resolve(options.dataDir), "worktrees");
+  const base = worktreesDir(options.dataDir);
   const cutoff = (options.now ?? Date.now()) - (options.olderThanDays ?? 7) * 86_400_000;
   const result: CleanupResult = { removed: [], kept: [], errors: [] };
   let entries: string[];

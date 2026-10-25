@@ -6,6 +6,10 @@ import { parseJsonLoose } from "./json-extract.js";
 // Bug flow (ADR 0008). Two read/write-separated stages run side by side: DIAGNOSE reads the code and names the real defects plus a fix design, REPRODUCE writes
 // a failing test. Each feeds the other when only one succeeds; the run stops for a human only when neither produced anything.
 const text = (max: number) => clampedText(max);
+/** Models answer "" for a field that does not apply (for example expected_failure when nothing was reproduced); that means absent, not invalid. */
+const optionalText = (max: number) => z.preprocess(value => typeof value === "string" && value.trim() ? value : undefined, text(max).optional());
+/** A required sentence that a model may leave blank gets a neutral default instead of failing an otherwise valid answer. */
+const softText = (max: number, fallback: string) => z.preprocess(value => typeof value === "string" && value.trim() ? value : fallback, text(max));
 const strings = (max: number, each: number, min = 0) => z.preprocess(value => (value == null ? [] : Array.isArray(value) ? value : [value]).filter(item => typeof item === "string" && item.trim()).slice(0, max), z.array(text(each)).min(min));
 const level = <T extends string>(values: readonly [T, ...T[]], fallback: T) => z.preprocess(value => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : value, z.enum(values).catch(fallback));
 
@@ -23,12 +27,12 @@ const FixOptionSchema = z.object({ name: text(80), kind: level(["root_cause", "w
 const grounded = (value: unknown) => Array.isArray(value) ? value.filter(item => item && typeof item === "object" && (Array.isArray((item as { evidence?: unknown }).evidence) ? (item as { evidence: unknown[] }).evidence.length > 0 : typeof (item as { evidence?: unknown }).evidence === "string" && (item as { evidence: string }).evidence.trim() !== "")).slice(0, 5) : [];
 
 const DiagnosisBase = z.object({
-  summary: text(400),
+  summary: softText(400, "No summary given."),
   hypotheses: z.preprocess(grounded, z.array(HypothesisSchema)),
   /** Concrete inputs or sequences worth trying, including edge cases noticed while reading; handed to the reproduction stage. */
   reproduction_scenarios: strings(5, 200),
   fix_options: z.preprocess(value => Array.isArray(value) ? value.slice(0, 4) : value, z.array(FixOptionSchema).default([])),
-  chosen_fix: z.object({ option: text(80), rationale: text(400), addresses: strings(5, 24), workaround_justification: text(240).optional() }).optional(),
+  chosen_fix: z.object({ option: text(80), rationale: text(400), addresses: strings(5, 24), workaround_justification: optionalText(240) }).optional(),
   validation_properties: strings(8, 200),
   implementation_requirements: strings(8, 200),
 });
@@ -84,11 +88,11 @@ export function salvageDiagnosis(raw: string): Diagnosis | undefined {
 
 export const ReproductionSchema = z.object({
   outcome: level(["reproduced", "not_reproduced"], "not_reproduced"),
-  summary: text(300),
+  summary: softText(300, "No summary given."),
   test_files: strings(6, 200),
   command: QualityCommandSchema.pick({ executable: true, args: true, cwd: true }).optional(),
   /** A distinctive piece of the failure output; the orchestrator re-runs the command and requires it, so a test that fails for another reason does not count. */
-  expected_failure: text(200).optional(),
+  expected_failure: optionalText(200),
   attempts: strings(6, 200),
   blockers: strings(4, 200),
 });
@@ -108,6 +112,8 @@ export function reproductionCommandProblem(command: Pick<QualityCommand, "execut
   if (cwd !== undefined && escapes(cwd)) return "cwd must be a relative path inside the repository";
   if (args.some(arg => FORBIDDEN_FLAG.test(arg))) return "inline code, preload and loader flags are not allowed";
   if (args.some(arg => !arg.startsWith("-") && /[\\/]/.test(arg) && escapes(arg))) return "paths must be relative and stay inside the repository";
+  // The model chooses this command without the manifest's stack profile in view, so the Unity CLI is not accepted for reproductions yet.
+  if (executable === "unity") return "unity is not supported for reproduction commands; use a node or npm test";
   if (executable === "node") {
     if (args[0] === "--test") return args.slice(1).some(arg => arg.startsWith("-") && !/^--test-/.test(arg)) ? "only --test-* options may follow --test" : undefined;
     return args[0] !== undefined && NODE_SCRIPT.test(args[0]) ? undefined : "node may only run `--test <path>` or a relative script file";

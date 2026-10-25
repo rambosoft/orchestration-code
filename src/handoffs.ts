@@ -179,14 +179,14 @@ export function validateOpenSpecDigest(raw: string, context: string, actualToken
   return digest;
 }
 
-export function planningPrompt(taskText: string, optimizedOpenSpec: string, _uiUxContext = "", analysisDecisions = ""): string {
+export function planningPrompt(taskText: string, optimizedOpenSpec: string, _uiUxContext = "", analysisDecisions = "", contractContext = ""): string {
   // The task text is the only part that can be shortened without losing protected content (the digest and the analysis decisions are already bounded);
   // if everything together would still exceed the planning context, the task text is cut with an explicit marker instead of failing the run.
-  const fixedChars = optimizedOpenSpec.length + analysisDecisions.length + 400;
+  const fixedChars = optimizedOpenSpec.length + analysisDecisions.length + contractContext.length + 400;
   const room = Math.max(2_000, HANDOFF_BUDGETS.planningContext * 3 - fixedChars);
   const task = taskText.length > room ? `${taskText.slice(0, room)}
 [task text truncated at ${room} characters for the planning stage; the full task is in the OpenSpec change and the brief]` : taskText;
-  const source = ["Task:", task, optimizedOpenSpec ? `Semantically optimized, coverage-validated OpenSpec:\n${optimizedOpenSpec}` : "", analysisDecisions].filter(Boolean).join("\n\n");
+  const source = ["Task:", task, optimizedOpenSpec ? `Semantically optimized, coverage-validated OpenSpec:\n${optimizedOpenSpec}` : "", analysisDecisions, contractContext].filter(Boolean).join("\n\n");
   return `${source}\n\nChoose one implementation approach. Return only one JSON object matching this schema: {"task_goal":"string","approach":"string","important_decisions":["string"],"risks":["string"],"acceptance_criteria":["testable string"],"hard_constraints":["exact source constraint"]}. Keep the complete response within ${HANDOFF_BUDGETS.plan} tokens. Acceptance criteria must cover every explicit task and OpenSpec requirement, grouped into at most 5 concise, non-overlapping checks. Combine related requirements in a single testable sentence; do not create separate checks for requirement titles or visual details. Keep task_goal and approach to one concise sentence each, important_decisions to at most 4, and concrete risks to at most 2. Put only non-negotiable prohibitions, privacy rules, and factual guardrails in hard_constraints; place positive implementation and validation requirements in acceptance_criteria. Do not repeat a hard constraint as a separate acceptance criterion when one check can cover it. Copy all normative OpenSpec constraints (MUST/SHALL/NEVER/DO NOT/AVOID) verbatim into hard_constraints; do not invent constraints.`;
 }
 

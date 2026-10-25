@@ -1,0 +1,32 @@
+{
+  "stages": {
+    "stack": { "provider": "codex" },
+    "charter": { "provider": "codex" },
+    "blueprint": { "provider": "codex" }
+  },
+  "manifest": {
+    "providers": { "default": "codex" },
+    "providerRouting": {
+      "plan": { "provider": "codex" },
+      "research": { "provider": "codex" },
+      "review": { "provider": "codex" },
+      "verify": { "provider": "codex" },
+      "implement": { "provider": "claude" },
+      "analyze": { "provider": "codex" },
+      "openspec": { "provider": "codex" }
+    },
+    "providerTimeouts": { "implement": 900000, "openspec": 720000 },
+    "containerProjectsRoot": "/workspace/projects",
+    "targetBranch": "main"
+  },
+  "contract": {
+    "file": "docs/PROJECT_CONTRACT.md",
+    "maxChars": 6000,
+    "rules": [
+      "Read the project contract and CLAUDE.md before changing anything.",
+      "Do not add features, services, dependencies or tooling that the current task's acceptance criteria do not require.",
+      "Do not weaken, skip or delete tests to make a check pass.",
+      "If the task cannot be done within the contract's goals, non-goals and boundaries, stop and say which boundary is in the way instead of working around it."
+    ]
+  }
+}
