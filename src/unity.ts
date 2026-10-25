@@ -154,7 +154,8 @@ export type ProcessInfo = { pid: number; commandLine: string };
 const normalizePath = (value: string): string => value.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
 /** Unity Editor processes (and their import workers) whose command line opens exactly this project. */
 export function editorPidsFor(processes: ProcessInfo[], projectRoot: string): number[] {
-  const root = normalizePath(path.resolve(projectRoot));
+  // A Windows path ("C:\w\x") is already absolute: path.resolve would prefix it with the working directory on a POSIX host (the Linux CI runner).
+  const root = normalizePath(/^[A-Za-z]:[\\/]|^[\\/]/.test(projectRoot) ? projectRoot : path.resolve(projectRoot));
   // The command line names the project in several spellings (-projectPath C:\w\x, "C:/w/x/", a path inside it); a hit needs a path boundary after the root so a sibling like x-copy is never touched.
   const names = (line: string): boolean => {
     for (let from = line.indexOf(root); from >= 0; from = line.indexOf(root, from + 1)) {
