@@ -32,7 +32,8 @@ export function acceptanceProblem(prompt: string, testTexts: string[]): string |
   return `acceptance criteria without a test: ${missing.join(", ")}. Add a test (EditMode for rules, PlayMode for screens and flows) for each, and put "Covers: ${missing[0]}" in a comment on the test that proves it. A criterion this task truly cannot meet because it depends on a later task is declared in a test file comment as "Deferred: ${missing[0]} -> T<later task> reason" and is shown to the reviewer; never delete or weaken a criterion.`;
 }
 
-export type Waiver = { id: string; reason: string };
+/** `replacement`: the part of the criterion an automated run can still prove. The criterion keeps its id (so it still needs a test) and the device-only remainder is declared waived in its text. */
+export type Waiver = { id: string; reason: string; replacement?: string };
 /**
  * The operator's decision that a criterion cannot be verified by an automated run (it needs a physical device, a store account, a person): its line is rewritten so that it is no longer
  * a numbered criterion (the verify gate stops asking for a test) and the reviewer is told it was waived on purpose and why. The rest of the task prompt is unchanged. Returns the prompt and the ids that were found.
@@ -43,7 +44,10 @@ export function waiveCriteria(prompt: string, waivers: Waiver[]): { prompt: stri
   for (const waiver of waivers) {
     const line = new RegExp(`^(\\s*[-*]\\s*)${waiver.id}\\s*:\\s*(.*)$`, "m");
     if (!line.test(next)) continue;
-    next = next.replace(line, (_, bullet: string, text: string) => `${bullet}Waived by the operator, not verified by this task (${waiver.reason.replace(/\s+/g, " ").trim()}): ${text}`);
+    const reason = waiver.reason.replace(/\s+/g, " ").trim();
+    next = next.replace(line, (_, bullet: string, text: string) => waiver.replacement
+      ? `${bullet}${waiver.id}: ${waiver.replacement.replace(/\s+/g, " ").trim()} (Narrowed by the operator: what needs a physical device is not verified by this task - ${reason}. Original: ${text})`
+      : `${bullet}Waived by the operator, not verified by this task (${reason}): ${text}`);
     waived.push(waiver.id);
   }
   return { prompt: next, waived };

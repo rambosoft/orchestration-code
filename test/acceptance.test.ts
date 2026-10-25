@@ -87,3 +87,16 @@ describe("waiving a criterion", () => {
     expect(result.prompt).toBe(text);
   });
 });
+
+describe("narrowing a criterion", () => {
+  const text = "Acceptance criteria:\n- T16-AC1: Frame time, build size and startup are measured on Android\n- T16-AC2: The release build launches on a device\n\nProof is required.";
+  it("keeps the id so the gate still wants a test, says what was narrowed away and keeps the original wording", async () => {
+    const { waiveCriteria } = await import("../src/acceptance.js");
+    const result = waiveCriteria(text, [{ id: "T16-AC1", reason: "no device here", replacement: "The release build size and the PlayMode frame time and GC allocation are measured and recorded" }, { id: "T16-AC2", reason: "no device here" }]);
+    expect(result.waived).toEqual(["T16-AC1", "T16-AC2"]);
+    expect(acceptanceIds(result.prompt)).toEqual(["T16-AC1"]);
+    expect(result.prompt).toContain("- T16-AC1: The release build size and the PlayMode frame time and GC allocation are measured and recorded (Narrowed by the operator");
+    expect(result.prompt).toContain("Original: Frame time, build size and startup are measured on Android");
+    expect(result.prompt).toContain("Waived by the operator, not verified by this task (no device here): The release build launches on a device");
+  });
+});
