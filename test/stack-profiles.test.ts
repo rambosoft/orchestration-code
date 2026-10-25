@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ProjectManifestSchema } from "../src/contracts.js";
 import { reproductionCommandProblem } from "../src/bug.js";
-import { allowedExecutables, parseUnityEditorVersion, stackCommandProblems, unityCommandProblem } from "../src/stack-profiles.js";
+import { allowedExecutables, isGeneratedPath, parseUnityEditorVersion, stackCommandProblems, unityCommandProblem } from "../src/stack-profiles.js";
 
 const base = { id: "demo-project", name: "Demo", root: "demo", defaultProfile: "implementation" };
 const unityStack = { profile: "unity-mobile", unity: { editorVersion: "6000.3.11f1", executeMethods: ["Builder.Android"] } };
@@ -81,6 +81,19 @@ describe("unityCommandProblem", () => {
       { where: "c", command: { executable: "python", args: ["x.py"] } },
     ]);
     expect(problems.map(item => item.where)).toEqual(["b", "c"]);
+  });
+});
+
+describe("isGeneratedPath", () => {
+  it("lists the Unity Editor and build output at the repository root, in either slash style", () => {
+    for (const generated of [".utmp/RelWithDebInfo/a/b.json", "Library/Bee/x.dll", "Temp/UnityLockfile", "Obj/x", "Logs/screenshots/a.png", "UserSettings/x.asset", "Builds/game.aab", "MemoryCaptures/a.snap", "Recordings/a.mp4", ".gradle/x", "release/app.aab", "keys/upload.keystore", "Game.csproj", "Game.sln", "Library\\Bee\\x.dll"]) expect(isGeneratedPath("unity-mobile", generated), generated).toBe(true);
+  });
+  it("never lists source, project settings, packages or look-alike folders deeper in the tree", () => {
+    for (const source of ["Assets/Scripts/Game.cs", "Assets/Library/Cards.cs", "Assets/Builds/readme.md", "Assets/Tests/EditMode/A.cs", "ProjectSettings/ProjectSettings.asset", "Packages/manifest.json", "docs/Library/notes.md", "Assets/Scripts/Logs.cs"]) expect(isGeneratedPath("unity-mobile", source), source).toBe(false);
+  });
+  it("lists nothing for the default web profile", () => {
+    expect(isGeneratedPath("node-web", "Library/x.js")).toBe(false);
+    expect(isGeneratedPath("node-web", "Builds/game.aab")).toBe(false);
   });
 });
 

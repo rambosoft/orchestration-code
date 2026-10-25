@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { isGeneratedPath, type StackProfileId } from "./stack-profiles.js";
 import { runCommand, type CommandRunner } from "./command.js";
 import { SECRET_CONTENT } from "./redact.js";
 export { SECRET_CONTENT };
@@ -12,6 +14,18 @@ export const SENSITIVE_PATH = [
   /(^|\/)(\.envrc|\.netrc|\.npmrc|credentials\.json)$/i,
   /(^|\/)node_modules\//,
 ];
+/** The stack profile of a worktree, detected from its files like the dependency step does (the workflow input carries no stack). */
+export const worktreeProfile = (worktree: string): StackProfileId => existsSync(path.join(worktree, "ProjectSettings", "ProjectVersion.txt")) ? "unity-mobile" : "node-web";
+/**
+ * Takes build output and caches that this run ADDED (against the base) out of the index, including files the agent committed itself, and returns their paths. Files the base already tracks are never touched.
+ * Dropping them is cheaper than failing the publish at the very end of a task.
+ */
+export async function excludeGeneratedPaths(worktree: string, baseRef: string, profile: StackProfileId, runner: CommandRunner = runCommand): Promise<string[]> {
+  const added = (await runner("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=A", baseRef], worktree)).split("\0").filter(Boolean);
+  const generated = added.filter(name => isGeneratedPath(profile, name));
+  for (let from = 0; from < generated.length; from += 100) await runner("git", ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ...generated.slice(from, from + 100)], worktree);
+  return generated;
+}
 /** Inspect staged changes before they are committed and pushed. Returns path-level violations; never echoes secret content. */
 export async function findPublishViolations(worktree: string, baseRef: string, runner: CommandRunner = runCommand): Promise<string[]> {
   const names = (await runner("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=AMR", baseRef], worktree)).split("\0").filter(Boolean);

@@ -7,6 +7,8 @@ import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutp
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { acceptanceProblem } from "./acceptance.js";
+import { unityPreflight } from "./preflight.js";
+import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestSources, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
@@ -125,10 +127,15 @@ async function prepareUnityProject(root: string, editorVersion: string, run: typ
 async function prepareProjectDependenciesImpl(
   projectRoot: string,
   run: typeof runCheck = runCheck,
+  preflight: typeof unityPreflight = unityPreflight,
 ): Promise<{ installed: boolean; summary: string }> {
   const root = path.resolve(projectRoot);
   const unity = await detectUnityProject(root);
-  const unitySummary = unity ? await prepareUnityProject(root, unity.editorVersion, run) : undefined;
+  // Environment problems (a long path, a full disk, an Editor or lock left on the worktree) are fixed or named here, before the import spends minutes on them.
+  const checked = unity ? await preflight(root) : undefined;
+  if (checked?.problems.length) throw ApplicationFailure.nonRetryable(`Unity preflight failed: ${checked.problems.join("; ")}`, "UnityPreflightError");
+  const prepared = unity ? await prepareUnityProject(root, unity.editorVersion, run) : undefined;
+  const unitySummary = prepared && checked?.fixed.length ? `${prepared} Preflight fixed: ${checked.fixed.join(", ")}.` : prepared;
   try {
     await access(path.join(root, "package.json"));
     await access(path.join(root, "package-lock.json"));
@@ -185,9 +192,14 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       return { ok: false, summary: "quality gate failed: no deterministic quality commands are configured", findings: ["Configure at least one deterministic verification command."], artifactRefs: [], provider: "quality-gate", durationMs, metadata: { checks: [], passed: false, activityDurationMs: durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     }
     const results: NonNullable<typeof qualityChecks> = [];
+    // The same commands on the same files gave a pass before (an activity retry, a resumed run, a repair round that changed nothing): the verdict is reused instead of running the suite again. Failures are never reused.
+    const reuseKey = qualityKey(checks);
+    const fingerprintBefore = checks.length && qualityReuseEnabled() ? await treeFingerprint(input.projectRoot) : undefined;
+    const reusable = fingerprintBefore ? findReusable(await readPasses(artifactsDir), reuseKey, fingerprintBefore) : undefined;
+    if (reusable) { results.push(...reusable.checks.map(check => ({ ...check, durationMs: 0 }))); qualityWarnings.push(...reusable.warnings, `reused the passing result of verify attempt ${reusable.attempt}: the commands and every file of the working tree are unchanged`); }
     // An Editor the agent left open on this worktree makes every Unity command fail with "instances cannot open the same project".
-    if (checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
-    for (const check of checks) {
+    if (!reusable && checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
+    for (const check of reusable ? [] : checks) {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
@@ -211,6 +223,11 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
         return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
+    }
+    if (!reusable && fingerprintBefore) {
+      // The checks may create files (Unity writes .meta files), so the tree after the run counts too: the next verify of an untouched tree then matches.
+      const fingerprintAfter = await treeFingerprint(input.projectRoot);
+      await writePass(artifactsDir, { key: reuseKey, fingerprints: [...new Set([fingerprintBefore, ...(fingerprintAfter ? [fingerprintAfter] : [])])], attempt: input.attempt, checks: results, warnings: qualityWarnings.filter(warning => warning.includes("non-blocking by configuration")) }).catch(() => undefined);
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {

@@ -166,7 +166,7 @@ export function editorPidsFor(processes: ProcessInfo[], projectRoot: string): nu
   return processes.filter(item => names(normalizePath(item.commandLine))).map(item => item.pid);
 }
 export type EditorProcessDeps = { list?: () => Promise<ProcessInfo[]>; kill?: (pid: number) => void };
-async function listEditorProcesses(): Promise<ProcessInfo[]> {
+export async function listEditorProcesses(): Promise<ProcessInfo[]> {
   if (process.platform !== "win32") return [];
   const result = await new Promise<string>(resolve => {
     const child = spawn("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"name = 'Unity.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"], { windowsHide: true });

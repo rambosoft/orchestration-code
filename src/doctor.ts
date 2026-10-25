@@ -1,4 +1,4 @@
-import { access, readdir, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { NODE_EXECUTABLE } from "./node-path.js";
 import { runCommand, type CommandRunner } from "./command.js";
@@ -6,6 +6,8 @@ import { worktreesDir } from "./env.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { concurrencyError, temporalAddressError } from "./env-validation.js";
 import { findBrowser } from "./visual.js";
+import { diskProblem, MAX_WORKTREE_PATH_CHARS, worktreePathProblem } from "./preflight.js";
+import { listEditorProcesses } from "./unity.js";
 
 export type DoctorCheck = { name: string; ok: boolean; severity: "error" | "warn"; detail: string };
 export type DoctorDeps = {
@@ -27,7 +29,7 @@ export type DoctorDeps = {
   unityStatus?: () => Promise<UnityStatus>;
 };
 export type PluginStatus = { built: boolean; sdkPin?: string; hostVersion?: string };
-export type UnityStatus = { cliVersion?: string; loggedIn: boolean; editors: Array<{ version: string; androidModule: boolean }>; pluginDir?: { path: string; exists: boolean } };
+export type UnityStatus = { cliVersion?: string; loggedIn: boolean; editors: Array<{ version: string; androidModule: boolean }>; pluginDir?: { path: string; exists: boolean }; /** Free bytes where task worktrees are created, the folder itself, Unity Editor processes running now, and the adb version (undefined: adb not installed). */ freeDiskBytes?: number; worktreesRoot?: string; runningEditors?: number; adbVersion?: string };
 
 /** One check per thing a Unity project needs on the worker; a missing licence is the one that stops a scaffold, so it is an error. */
 export function unityChecks(projects: string[], status: UnityStatus, required?: string): DoctorCheck[] {
@@ -40,6 +42,17 @@ export function unityChecks(projects: string[], status: UnityStatus, required?: 
   if (editor) checks.push(editor.androidModule ? pass("unity:android", "the Android build module is installed") : fail("unity:android", `the Android module is not installed for ${editor.version}; Android builds fail`, "warn"));
   if (status.pluginDir) checks.push(status.pluginDir.exists ? pass("unity:plugin", `Unity agent plugin at ${status.pluginDir.path}`) : fail("unity:plugin", `UNITY_AGENT_PLUGIN_DIR points at ${status.pluginDir.path}, which does not exist; Claude runs without Unity's official skills`, "warn"));
   else checks.push(fail("unity:plugin", "UNITY_AGENT_PLUGIN_DIR is not set, so Claude runs without Unity's official skills; clone Unity-Technologies/unity-agent-plugin and set it", "warn"));
+  // The same limits the task preflight enforces (src/preflight.ts), reported once before any task is queued.
+  if (status.worktreesRoot) {
+    const reach = worktreePathProblem(`${status.worktreesRoot}/${"x".repeat(36)}`);
+    checks.push(reach ? fail("unity:worktree-path", reach) : pass("unity:worktree-path", `${status.worktreesRoot} (task worktrees stay under ${MAX_WORKTREE_PATH_CHARS} characters)`));
+  }
+  if (status.freeDiskBytes !== undefined) {
+    const low = diskProblem(status.freeDiskBytes);
+    checks.push(low ? fail("unity:disk", low) : pass("unity:disk", `${(status.freeDiskBytes / 1024 ** 3).toFixed(0)} GB free for task worktrees`));
+  }
+  if (status.runningEditors) checks.push(fail("unity:editors", `${status.runningEditors} Unity Editor process(es) are running; fine while you work in one, but a task on the same project fails with "instances cannot open the same project" (the task preflight stops Editors on its own worktree only)`, "warn"));
+  checks.push(status.adbVersion ? pass("unity:adb", `adb ${status.adbVersion}`) : fail("unity:adb", "adb is not on PATH: a built AAB cannot be installed on a phone by the orchestrator, device-only criteria stay a manual checklist", "warn"));
   return checks;
 }
 
@@ -241,7 +254,17 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
     const editors = [...doctor.matchAll(/^editor\.\d+\t(\S+)\t\S+\t(.+)$/gm)].map(match => ({ version: match[1]!, editor: match[2]!.trim() }));
     const withModules = await Promise.all(editors.map(async item => ({ version: item.version, androidModule: await access(path.join(path.dirname(item.editor), "Data", "PlaybackEngines", "AndroidPlayer")).then(() => true, () => false) })));
     const pluginPath = env.UNITY_AGENT_PLUGIN_DIR;
-    return { ...(field("cliVersion") ? { cliVersion: field("cliVersion")! } : {}), loggedIn: field("auth\\.loggedIn") === "true", editors: withModules, ...(pluginPath ? { pluginDir: { path: pluginPath, exists: await access(pluginPath).then(() => true, () => false) } } : {}) };
+    const root = path.resolve(worktreesDir(env.ORCHESTRATOR_DATA_DIR ?? "data", env));
+    const free = await statfs(await access(root).then(() => root, () => path.parse(root).root)).then(stats => Number(stats.bavail) * Number(stats.bsize), () => undefined);
+    // adb is on PATH only when the Android SDK is installed separately; the Unity Android module ships its own copy, which is what a device stage would use.
+    const bundledAdb = editors.map(item => path.join(path.dirname(item.editor), "Data", "PlaybackEngines", "AndroidPlayer", "SDK", "platform-tools", process.platform === "win32" ? "adb.exe" : "adb"));
+    let adb: string | undefined;
+    for (const candidate of ["adb", ...bundledAdb]) {
+      const version = (await runCommand(candidate, ["version"], process.cwd()).catch(() => "")).match(/Android Debug Bridge version (\S+)/)?.[1];
+      if (version) { adb = candidate === "adb" ? version : `${version} (bundled with Unity: ${candidate})`; break; }
+    }
+    const running = (await listEditorProcesses().catch(() => [])).length;
+    return { ...(field("cliVersion") ? { cliVersion: field("cliVersion")! } : {}), loggedIn: field("auth\\.loggedIn") === "true", editors: withModules, worktreesRoot: root.split("\\").join("/"), runningEditors: running, ...(free !== undefined ? { freeDiskBytes: free } : {}), ...(adb ? { adbVersion: adb } : {}), ...(pluginPath ? { pluginDir: { path: pluginPath, exists: await access(pluginPath).then(() => true, () => false) } } : {}) };
   },
   pluginStatus: async () => {
     const folder = path.resolve("plugins", "project-bootstrap");

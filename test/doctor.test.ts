@@ -137,8 +137,21 @@ describe("unity checks", () => {
   const ready = { cliVersion: "1.0.0-beta.13", loggedIn: true, editors: [{ version: "6000.3.11f1", androidModule: true }], pluginDir: { path: "C:/plugin", exists: true } };
   it("passes when the CLI, licence, Editor, Android module and plugin are all there", () => {
     const checks = unityChecks(["tile-merge"], ready);
-    expect(checks.map(check => check.name)).toEqual(["unity:cli", "unity:licence", "unity:editor", "unity:android", "unity:plugin"]);
-    expect(checks.every(check => check.ok)).toBe(true);
+    expect(checks.map(check => check.name)).toEqual(["unity:cli", "unity:licence", "unity:editor", "unity:android", "unity:plugin", "unity:adb"]);
+    expect(checks.filter(check => check.severity === "error").every(check => check.ok)).toBe(true);
+    expect(checks.find(check => check.name === "unity:adb")).toMatchObject({ ok: false, severity: "warn" });
+  });
+  it("checks the worktree path, the free disk, running Editors and adb when the status has them", () => {
+    const status = { ...ready, worktreesRoot: "C:/w", freeDiskBytes: 80 * 1024 ** 3, runningEditors: 0, adbVersion: "1.0.41" };
+    const good = unityChecks(["g"], status);
+    expect(good.map(check => check.name)).toEqual(["unity:cli", "unity:licence", "unity:editor", "unity:android", "unity:plugin", "unity:worktree-path", "unity:disk", "unity:adb"]);
+    expect(good.every(check => check.ok)).toBe(true);
+    const bad = Object.fromEntries(unityChecks(["g"], { ...status, worktreesRoot: "C:/Users/someone/AppData/Local/orchestration/data/worktrees/with/a/very/long/path", freeDiskBytes: 3 * 1024 ** 3, runningEditors: 2, adbVersion: undefined }).map(check => [check.name, check]));
+    expect(bad["unity:worktree-path"]).toMatchObject({ ok: false, severity: "error" });
+    expect(bad["unity:worktree-path"]!.detail).toContain("ORCHESTRATOR_WORKTREES_DIR");
+    expect(bad["unity:disk"]).toMatchObject({ ok: false, severity: "error" });
+    expect(bad["unity:editors"]).toMatchObject({ ok: false, severity: "warn" });
+    expect(bad["unity:adb"]).toMatchObject({ ok: false, severity: "warn" });
   });
   it("makes a missing licence an error that names the symptom, and a missing plugin or module a warning", () => {
     const checks = unityChecks(["tile-merge"], { ...ready, loggedIn: false, editors: [{ version: "6000.3.11f1", androidModule: false }], pluginDir: undefined });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { findPublishViolations } from "../src/publish-guard.js";
+import { excludeGeneratedPaths, findPublishViolations, worktreeProfile } from "../src/publish-guard.js";
 import { publishWorktree, runCommand } from "../src/workspaces.js";
 
 const roots: string[] = [];
@@ -46,6 +46,56 @@ describe("guard edge cases", () => {
     await runCommand("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "agent commit"], root);
     expect((await findPublishViolations(root, base)).join()).toContain(".env");
     await expect(publishWorktree({ repository: { remote: "origin", targetBranch: "main", branch: "codex/x-a1", baseSha: base, prBaseBranch: "main", taskTitle: "t" }, worktree: root, taskId: "x", prompt: "p" })).rejects.toThrow(/publish guard/);
+  });
+});
+
+describe("generated build output (Unity)", () => {
+  const unityFiles = { "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.3.11f1\n", "Assets/Scripts/A.cs": "class A {}\n", "Assets/Library/Cards.cs": "class Cards {}\n" };
+  const generated = { ".utmp/RelWithDebInfo/x/cache.json": "{}", "Library/Bee/x.dll": "x", "Builds/game.aab": "x", "Logs/screenshots/a.png": "x", "Game.csproj": "<x/>" };
+
+  it("detects a Unity worktree from its project version file", async () => {
+    const root = await repo();
+    expect(worktreeProfile(root)).toBe("node-web");
+    await stage(root, unityFiles);
+    expect(worktreeProfile(root)).toBe("unity-mobile");
+  });
+  it("drops what the run added from the index and keeps source, including a game folder named Library under Assets", async () => {
+    const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await stage(root, { ...unityFiles, ...generated });
+    const dropped = await excludeGeneratedPaths(root, base, "unity-mobile");
+    expect(dropped.sort()).toEqual(Object.keys(generated).sort());
+    const staged = (await runCommand("git", ["diff", "--cached", "--name-only", base], root)).split(/\r?\n/).sort();
+    expect(staged).toEqual(["Assets/Library/Cards.cs", "Assets/Scripts/A.cs", "ProjectSettings/ProjectVersion.txt"]);
+  });
+  it("leaves a node project alone and never drops a file the base already tracks", async () => {
+    const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await stage(root, { "Library/x.js": "x" });
+    expect(await excludeGeneratedPaths(root, base, "node-web")).toEqual([]);
+    await runCommand("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "tracked"], root);
+    const tracked = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await writeFile(path.join(root, "Library", "x.js"), "changed");
+    await runCommand("git", ["add", "--all"], root);
+    expect(await excludeGeneratedPaths(root, tracked, "unity-mobile")).toEqual([]);
+    expect(await runCommand("git", ["diff", "--cached", "--name-only", tracked], root)).toBe("Library/x.js");
+  });
+  it("removes generated files the agent committed itself, and the commit that publishWorktree makes no longer contains them", async () => {
+    const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await stage(root, { ...unityFiles, ...generated });
+    await runCommand("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "agent commit"], root);
+    const runner = async (command: string, args: string[], cwd: string) => { if (command === "git" && args[0] === "push") throw new Error("stop before push"); return runCommand(command, args, cwd); };
+    await expect(publishWorktree({ repository: { remote: "origin", targetBranch: "main", branch: "codex/x-a1", baseSha: base, prBaseBranch: "main", taskTitle: "t" }, worktree: root, taskId: "x", prompt: "p" }, runner)).rejects.toThrow("stop before push");
+    const files = (await runCommand("git", ["diff", "--name-only", base, "HEAD"], root)).split(/\r?\n/).sort();
+    expect(files).toEqual(["Assets/Library/Cards.cs", "Assets/Scripts/A.cs", "ProjectSettings/ProjectVersion.txt"]);
+  });
+  it("fails the publish gate when nothing but generated files was added", async () => {
+    const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await stage(root, { "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.3.11f1\n" });
+    await runCommand("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "project"], root);
+    const projectBase = await runCommand("git", ["rev-parse", "HEAD"], root);
+    await stage(root, generated);
+    const runner = async (command: string, args: string[], cwd: string) => { if (command === "git" && args[0] === "push") throw new Error("must not reach push"); return runCommand(command, args, cwd); };
+    await expect(publishWorktree({ repository: { remote: "origin", targetBranch: "main", branch: "codex/x-a1", baseSha: projectBase, prBaseBranch: "main", taskTitle: "t" }, worktree: root, taskId: "x", prompt: "p" }, runner)).rejects.toThrow(/no changes were committed/);
+    expect(base).not.toBe(projectBase);
   });
 });
 

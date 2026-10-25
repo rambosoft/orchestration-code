@@ -2,7 +2,7 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ParentPublication, RepositoryContext, PublishResult } from "./contracts.js";
 import { isSafeContractPath } from "./contract-text.js";
-import { findPublishViolations } from "./publish-guard.js";
+import { excludeGeneratedPaths, findPublishViolations, worktreeProfile } from "./publish-guard.js";
 
 import { runCommand, type CommandRunner } from "./command.js";
 import { worktreesDir } from "./env.js";
@@ -92,12 +92,16 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
   const { repository: repo, worktree } = input;
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
   if (status) await git(["add", "--all"], worktree, runner);
+  // Build output the run added (for Unity: Library, Builds, .utmp...) is not part of the change; it is kept out of the commit, also when the agent committed it itself.
+  const excluded = input.kind === "document" ? [] : await excludeGeneratedPaths(worktree, repo.baseSha, worktreeProfile(worktree), runner);
   // Inspect everything that would be published, including commits the agent made itself.
   const violations = await findPublishViolations(worktree, repo.baseSha, runner);
   if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);
-  if (status) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", input.kind === "document" ? `docs(${input.taskId}): orchestrated report` : `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
+  // After an exclusion the index may hold nothing but deletions or nothing at all; commit only when something is staged, and let the gate below report an empty change.
+  const commitNeeded = excluded.length ? Boolean(await git(["diff", "--cached", "--name-only"], worktree, runner)) : Boolean(status);
+  if (commitNeeded) await git(["-c", "user.name=Paperclip Orchestrator", "-c", "user.email=paperclip-orchestrator@localhost", "commit", "-m", input.kind === "document" ? `docs(${input.taskId}): orchestrated report` : `chore(${input.taskId}): orchestrated implementation`], worktree, runner);
   const headSha = await git(["rev-parse", "HEAD"], worktree, runner);
-  if (headSha === repo.baseSha) throw new Error("publish gate failed: no changes were committed");
+  if (headSha === repo.baseSha || (excluded.length && !(await git(["diff", "--name-only", repo.baseSha, headSha], worktree, runner)))) throw new Error("publish gate failed: no changes were committed");
   await git(["push", "--set-upstream", repo.remote, repo.branch], worktree, runner);
   const title = `Draft: ${repo.taskTitle}`.slice(0, 240);
   const existing = await runner("gh", ["pr", "view", repo.branch, "--json", "url,baseRefName,state,isDraft"], worktree).catch(error => {
@@ -113,7 +117,7 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
     if (parsed.isDraft === false) await runner("gh", ["pr", "ready", repo.branch, "--undo"], worktree);
     pr = { url: parsed.url, baseRefName: parsed.baseRefName };
   } else {
-    const body = `Paperclip task: ${input.taskId}\n\n${input.kind === "document" ? "Read-only exploration: this pull request only adds the report document; no code was changed." : "Automated review and deterministic quality gates passed."}\n\n${input.prompt.slice(0, 6000)}`;
+    const body = `Paperclip task: ${input.taskId}\n\n${input.kind === "document" ? "Read-only exploration: this pull request only adds the report document; no code was changed." : "Automated review and deterministic quality gates passed."}${excluded.length ? `\n\nKept out of this PR: ${excluded.length} generated build file(s), for example \`${excluded[0]}\`.` : ""}\n\n${input.prompt.slice(0, 6000)}`;
     const created = await runner("gh", ["pr", "create", "--draft", "--base", repo.prBaseBranch, "--head", repo.branch, "--title", title, "--body", body], worktree);
     const url = created.match(/https:\/\/\S+/)?.[0];
     if (!url) throw new Error(`gh pr create did not return a PR URL: ${created.slice(0, 500)}`);
@@ -121,7 +125,7 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
   }
   // A rerun of the same task (Paperclip's review path, a retry) has its own branch; the earlier attempt's PR must not stay open next to it. Best effort: publishing already succeeded.
   const superseded = await closeSupersededPullRequests({ taskId: input.taskId, currentBranch: repo.branch, currentUrl: pr.url, worktree }, runner).catch(() => [] as string[]);
-  return { branch: repo.branch, baseSha: repo.baseSha, headSha, prUrl: pr.url, prBaseBranch: pr.baseRefName, ...(superseded.length ? { superseded } : {}) };
+  return { branch: repo.branch, baseSha: repo.baseSha, headSha, prUrl: pr.url, prBaseBranch: pr.baseRefName, ...(superseded.length ? { superseded } : {}), ...(excluded.length ? { excludedGenerated: excluded.length } : {}) };
 }
 
 export type OpenPullRequest = { number: number; url: string; headRefName: string; body?: string };
