@@ -27,7 +27,7 @@ export function checkUnityHygiene(root, { strictRules = false } = {}) {
 
   // generated folders must be ignored by git
   const ignore = read(".gitignore") ?? "";
-  for (const generated of ["Library", "Temp", "Obj", "Logs", "UserSettings", "Builds"]) {
+  for (const generated of ["Library", "Temp", "Obj", "Logs", "UserSettings", "Builds", ".utmp"]) {
     if (!new RegExp(`^/?${generated}/?\\s*$`, "m").test(ignore)) p("gitignore", `.gitignore does not ignore ${generated}/`);
   }
 

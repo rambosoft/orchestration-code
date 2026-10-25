@@ -4,6 +4,7 @@
 /Logs/
 /UserSettings/
 /Builds/
+/.utmp/
 /MemoryCaptures/
 /Recordings/
 *.csproj

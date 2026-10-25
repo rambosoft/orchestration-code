@@ -18,7 +18,7 @@ async function cleanProject() {
   await put(root, "ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.3.11f1\n");
   await put(root, "ProjectSettings/EditorSettings.asset", "EditorSettings:\n  m_SerializationMode: 2\n  m_ExternalVersionControlSupport: Visible Meta Files\n");
   await put(root, "Packages/manifest.json", JSON.stringify({ dependencies: { "com.unity.test-framework": "1.6.0" } }));
-  await put(root, ".gitignore", "/Library/\n/Temp/\n/Obj/\n/Logs/\n/UserSettings/\n/Builds/\n");
+  await put(root, ".gitignore", "/Library/\n/Temp/\n/Obj/\n/Logs/\n/UserSettings/\n/Builds/\n/.utmp/\n");
   await put(root, "Assets.meta", "x");
   await asset(root, "Assets/Scripts.meta".replace(".meta", "") + "/Logic/Spike.Logic.asmdef", JSON.stringify({ name: "Spike.Logic", noEngineReferences: true }));
   await asset(root, "Assets/Scripts/Logic/Merge.cs", "namespace Spike { public static class Merge { } }");

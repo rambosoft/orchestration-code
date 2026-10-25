@@ -50,7 +50,7 @@ describe("hygiene: wall-clock assertions", () => {
     await put("ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.3.11f1\n");
     await put("ProjectSettings/EditorSettings.asset", "EditorSettings:\n  m_SerializationMode: 2\n");
     await put("Packages/manifest.json", JSON.stringify({ dependencies: { "com.unity.test-framework": "1.6.0" } }));
-    await put(".gitignore", "/Library/\n/Temp/\n/Obj/\n/Logs/\n/UserSettings/\n/Builds/\n");
+    await put(".gitignore", "/Library/\n/Temp/\n/Obj/\n/Logs/\n/UserSettings/\n/Builds/\n/.utmp/\n");
     await put("Assets/Tests/PlayMode/SwipeTests.cs", testCode); await put("Assets/Tests/PlayMode/SwipeTests.cs.meta", "x"); await put("Assets/Tests.meta", "x"); await put("Assets/Tests/PlayMode.meta", "x");
     return root;
   }
