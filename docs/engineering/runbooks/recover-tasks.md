@@ -6,7 +6,7 @@ Everything here was met in the first live Unity game run (Tile Merge 2048, 2026-
 
 - **Temporal owns the task.** A task run is one workflow (`pc-<issue id>-<revision>-a<attempt>`). It survives a machine restart, a Docker restart and a worker restart; activities that were running are retried (`MaximumAttempts` 2 for stage activities).
 - **Paperclip is the board.** Its adapter starts the workflow, waits for it and reports the result as a comment (with a publication marker `<!-- orchestration-publish {...} -->`) and a status. If the adapter is gone (machine off, Docker restarted, Paperclip restarted) the workflow still finishes, but nobody reports it: the issue shows **blocked** ("requires reconciliation") while the work goes on.
-- **`reconcile` is the reporter of last resort.** It reports finished workflows of issues that are `blocked`, `in_progress` or `in_review` (comment with marker, then the status). The worker supervisor runs `reconcile --apply` at start and every 3 minutes. By hand: `npm run reconcile` (dry run) and `npm run reconcile -- --apply`.
+- **`reconcile` is the reporter of last resort.** It reports finished workflows of issues that are `blocked`, `in_progress` or `in_review` (comment with marker, then the status). The worker supervisor runs `reconcile --apply` once at start; its periodic background job was added but **never logged anything in the live run, so do not rely on it**. While tasks run, keep `npm run reconcile:watch` running (a terminal or a scheduled task; every 2 minutes). By hand: `npm run reconcile` (dry run) and `npm run reconcile -- --apply`.
 - **The next task starts when its blocker is `done` with a verified publication.** Paperclip's dependency check wants the marker comment of the blocker. A blocker set to `done` by hand without the marker makes the next task fail at once ("Blocker ... is done but has no verified orchestration draft PR metadata").
 - **A failed run stays reusable.** The preserved worktree (`<worktrees dir>/<run id>`) and the stage results (`data/artifacts/<issue id>/<run id>/<stage>-<n>.json`) are kept.
 
@@ -22,7 +22,7 @@ Everything here was met in the first live Unity game run (Tile Merge 2048, 2026-
 | Symptom | Cause | Do |
 |---|---|---|
 | Issue **blocked**, workflow still **Running** | Adapter lost after a machine, Docker or Paperclip restart | Nothing: wait. The result is reported by reconcile when the workflow ends. Do not restart it. |
-| Workflow **Completed** but issue still blocked or in progress | Not reported yet | `npm run reconcile -- --apply` (or wait up to 3 minutes). |
+| Workflow **Completed** but issue still blocked or in progress | Not reported yet | `npm run reconcile -- --apply` (or wait for the watcher (2 minutes) or run it by hand). |
 | Workflow **failed**, early or late stage, worktree preserved | Provider timeout, a flaky test, a gate, a crash | Read why (section 5), then **resume** (section 4). A full restart is only for a lost worktree. |
 | Result `needs_review` ("N unresolved review findings", draft PR published) | The review still had blocking findings after the last round | Decide as operator (section 7). The task is `in_review`; the chain waits for you. |
 | Next task **failed within seconds**, issue shows an execution lock ("Automatic recovery stopped", `executionBlocker`) | A wakeup ran while a dependency was not verified, or the adapter run was lost | Section 8 (resolve the lock), then make the dependency verified (section 9). |
@@ -118,5 +118,5 @@ Prompt, workflow and gate changes only take effect after this restart. A bridge 
 
 - Before a long run: `npm run doctor`, no running workflows you forgot, `.env` loaded by the supervisor.
 - While it runs: do not touch finished issues, do not comment on waiting ones.
-- After any restart: wait 3 minutes, `npm run reconcile`, then look at the board.
+- After any restart: `npm run reconcile`, then look at the board.
 - After a failure: reason (section 5), resume (section 4), let reconcile report, next task.
