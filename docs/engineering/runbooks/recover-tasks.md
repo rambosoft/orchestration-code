@@ -120,3 +120,12 @@ Prompt, workflow and gate changes only take effect after this restart. A bridge 
 - While it runs: do not touch finished issues, do not comment on waiting ones.
 - After any restart: `npm run reconcile`, then look at the board.
 - After a failure: reason (section 5), resume (section 4), let reconcile report, next task.
+
+## 14. Merging the stack of draft PRs
+
+Every task is published as a draft PR whose **base is the previous task's branch** (ADR 0004), so the PRs form a chain (`main` <- T2 <- T3 <- ... <- Tn). Each branch contains all earlier tasks. Merging the PRs one by one from the bottom puts each task into its parent branch only: after the first PR, the rest still point at branches that never reach `main`, and GitHub shows their mergeability as "unknown" for a long time (seen with PRs 2 to 15 of Tile Merge 2048; only the first one reached `main`).
+
+Do one of these instead:
+- **Merge the tip once (recommended).** Open one PR from the last branch of the stack into `main`, check it is mergeable (`gh pr view <n> --json mergeable,mergeStateStatus`), merge it with a merge commit (keeps one commit per task), and close the older stacked PRs as superseded with a comment. Check beforehand: `git rev-list --count origin/main..<tip>` (the commits you expect), `git merge-tree --write-tree origin/main <tip>` (no conflicts), and that each stack branch is an ancestor of the tip.
+- **Merge from the top down:** merge the last PR into its parent, then that parent into its own parent, and so on up to `main`. Every merge must target a branch that is still part of the chain.
+- Tasks published later (a new task after a merge) are based on the previous task's branch again: repeat the first option for them.
