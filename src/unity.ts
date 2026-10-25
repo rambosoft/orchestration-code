@@ -218,3 +218,28 @@ export async function waitForProjectUnlock(projectRoot: string, timeoutMs = 90_0
   }
   return now() - started;
 }
+
+// Editor-log lines that are facts about this machine, not about the project. The Editor cannot verify the signature of the Hub's licensing client ("Code 10", Windows ERROR_BAD_ENVIRONMENT) and says
+// "ignoring": the licence still works and every build and test succeeds. The Unity CLI repeats such lines under "The build succeeded, but the Editor log reported the following errors", which cluttered the
+// output of every gate (and could send an agent off to "fix" licensing). They are removed from check output; `doctor` reports the condition once.
+const BENIGN_EDITOR_LOG = [/LicensingClient has failed validation; ignoring/, /Access token is unavailable; failed to update/, /Code 10 while verifying Licensing Client signature/];
+const EDITOR_LOG_HEADER = /^The [\w ]+ (?:succeeded|completed|passed)?,? ?but the Editor log reported the following errors:\s*$/i;
+/** The output without benign Editor-log lines; the "reported the following errors" header goes with them when nothing real is left under it. */
+export function stripBenignEditorNoise(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const out: string[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (EDITOR_LOG_HEADER.test(line.trim())) {
+      let end = index + 1;
+      const items: string[] = [];
+      while (end < lines.length && /^\s+\S/.test(lines[end]!)) items.push(lines[end++]!);
+      const real = items.filter(item => !BENIGN_EDITOR_LOG.some(pattern => pattern.test(item)));
+      if (real.length) out.push(line, ...real);
+      index = end - 1;
+      continue;
+    }
+    if (!BENIGN_EDITOR_LOG.some(pattern => pattern.test(line))) out.push(line);
+  }
+  return out.join("\n");
+}

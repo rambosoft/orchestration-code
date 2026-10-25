@@ -34,7 +34,7 @@ export function unityChecks(projects: string[], status: UnityStatus, required?: 
   const used = projects.join(", ");
   const checks: DoctorCheck[] = [];
   checks.push(status.cliVersion ? pass("unity:cli", `Unity CLI ${status.cliVersion} (used by ${used})`) : fail("unity:cli", `the unity command is not on PATH (needed by ${used}); install the Unity CLI`));
-  checks.push(status.loggedIn ? pass("unity:licence", "signed in; Editor batch runs can activate a licence") : fail("unity:licence", `not signed in to Unity: Editor batch runs fail with "No valid Unity Editor license found" (${used}); sign in once through Unity Hub or "unity auth"`));
+  checks.push(status.loggedIn ? pass("unity:licence", "signed in; Editor batch runs can activate a licence (an Editor log line \"LicensingClient has failed validation; ignoring\" / \"Code 10 while verifying Licensing Client signature\" is a known harmless message of this machine and is filtered from check output)") : fail("unity:licence", `not signed in to Unity: Editor batch runs fail with "No valid Unity Editor license found" (${used}); sign in once through Unity Hub or "unity auth"`));
   const editor = required ? status.editors.find(item => item.version === required) : status.editors.find(item => item.version.startsWith("6000."));
   checks.push(editor ? pass("unity:editor", `${editor.version}${required ? "" : " (newest 6000.x found)"}`) : fail("unity:editor", `${required ? `Unity ${required}` : "a Unity 6 Editor"} is not installed (needed by ${used})`));
   if (editor) checks.push(editor.androidModule ? pass("unity:android", "the Android build module is installed") : fail("unity:android", `the Android module is not installed for ${editor.version}; Android builds fail`, "warn"));
