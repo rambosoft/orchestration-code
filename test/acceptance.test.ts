@@ -69,3 +69,21 @@ describe("game task descriptions", () => {
     expect(app[0]!.description).toContain("Acceptance criteria:\n- ok");
   });
 });
+
+describe("waiving a criterion", () => {
+  const text = "Task id: T14\n\nAcceptance criteria:\n- T14-AC1: tests pass\n- T14-AC2: A device run shows feedback within 100ms\n- T14-AC3: screens are captured\n\nProof is required.";
+  it("rewrites only that criterion so the gate no longer asks for its test, and tells the reviewer why", async () => {
+    const { waiveCriteria } = await import("../src/acceptance.js");
+    const result = waiveCriteria(text, [{ id: "T14-AC2", reason: "needs a physical Android device; verified at release" }]);
+    expect(result.waived).toEqual(["T14-AC2"]);
+    expect(acceptanceIds(result.prompt)).toEqual(["T14-AC1", "T14-AC3"]);
+    expect(result.prompt).toContain("Waived by the operator, not verified by this task (needs a physical Android device; verified at release): A device run shows feedback within 100ms");
+    expect(result.prompt).toContain("- T14-AC1: tests pass");
+  });
+  it("reports ids it did not find and leaves the prompt alone", async () => {
+    const { waiveCriteria } = await import("../src/acceptance.js");
+    const result = waiveCriteria(text, [{ id: "T14-AC9", reason: "x" }]);
+    expect(result.waived).toEqual([]);
+    expect(result.prompt).toBe(text);
+  });
+});

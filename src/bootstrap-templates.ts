@@ -48,7 +48,7 @@ const viteReactTs: ScaffoldTemplate = {
 const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
   const unity = (args: string[], severity?: "warn"): QualityCommand => ({ executable: "unity", args, ...(severity ? { severity } : {}) });
   const gates: QualityCommand[] = [{ executable: "node", args: ["scripts/check-unity-hygiene.mjs"] }, unity(["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"])];
-  if (testDepth !== "none" && testDepth !== "smoke") gates.push(unity(["test", "--mode", "PlayMode", "--output", "Logs/playmode-results.xml"]));
+  if (testDepth !== "none" && testDepth !== "smoke") gates.push(unity(["test", "--mode", "PlayMode", "--retries", "1", "--output", "Logs/playmode-results.xml"]));
   if (maturity === "production") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"]));
   else if (maturity === "mvp") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"], "warn"));
   return gates;

@@ -31,3 +31,20 @@ export function acceptanceProblem(prompt: string, testTexts: string[]): string |
   if (!missing.length) return undefined;
   return `acceptance criteria without a test: ${missing.join(", ")}. Add a test (EditMode for rules, PlayMode for screens and flows) for each, and put "Covers: ${missing[0]}" in a comment on the test that proves it. A criterion this task truly cannot meet because it depends on a later task is declared in a test file comment as "Deferred: ${missing[0]} -> T<later task> reason" and is shown to the reviewer; never delete or weaken a criterion.`;
 }
+
+export type Waiver = { id: string; reason: string };
+/**
+ * The operator's decision that a criterion cannot be verified by an automated run (it needs a physical device, a store account, a person): its line is rewritten so that it is no longer
+ * a numbered criterion (the verify gate stops asking for a test) and the reviewer is told it was waived on purpose and why. The rest of the task prompt is unchanged. Returns the prompt and the ids that were found.
+ */
+export function waiveCriteria(prompt: string, waivers: Waiver[]): { prompt: string; waived: string[] } {
+  const waived: string[] = [];
+  let next = prompt;
+  for (const waiver of waivers) {
+    const line = new RegExp(`^(\\s*[-*]\\s*)${waiver.id}\\s*:\\s*(.*)$`, "m");
+    if (!line.test(next)) continue;
+    next = next.replace(line, (_, bullet: string, text: string) => `${bullet}Waived by the operator, not verified by this task (${waiver.reason.replace(/\s+/g, " ").trim()}): ${text}`);
+    waived.push(waiver.id);
+  }
+  return { prompt: next, waived };
+}

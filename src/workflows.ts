@@ -380,7 +380,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       currentStage = "blueprint";
       const limits = planLimits(String(run.options.granularity));
       let lastBlueprint = "";
-      const blueprint = (await structuredStage<Blueprint>({ stage: "blueprint", prompt: blueprintPrompt(run, stack, charter, limits, template !== undefined, design), parse: output => { lastBlueprint = output.summary; return validateBlueprint(output.summary, limits); }, repairPrompt: (previous, diagnostic) => repairBlueprintPrompt(previous.summary, diagnostic, limits), repairs: 2, fallback: () => salvageBlueprint(lastBlueprint, limits) ?? deterministicBlueprint(run.form, template !== undefined) })).value;
+      const blueprint = (await structuredStage<Blueprint>({ stage: "blueprint", prompt: blueprintPrompt(run, stack, charter, limits, template !== undefined, design), parse: output => { lastBlueprint = output.summary; return validateBlueprint(output.summary, limits, game); }, repairPrompt: (previous, diagnostic) => repairBlueprintPrompt(previous.summary, diagnostic, limits), repairs: 2, fallback: () => salvageBlueprint(lastBlueprint, limits) ?? deterministicBlueprint(run.form, template !== undefined) })).value;
       state.blueprint = blueprint; completedStages.push("blueprint");
       const docs = { form: run.form, options: run.options, provenance: run.provenance, stack, charter, blueprint, ...(design ? { design } : {}), ...(template ? { template } : {}) };
       state.summary = renderPlanSummary(docs, { warnings: warningLines() });

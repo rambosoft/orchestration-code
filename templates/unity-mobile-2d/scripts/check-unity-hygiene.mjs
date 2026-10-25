@@ -69,6 +69,16 @@ export function checkUnityHygiene(root, { strictRules = false } = {}) {
     if (!isTest && /\bvoid\s+Update\s*\([^)]*\)\s*\{[^}]*\bnew\s+(?!WaitFor)[A-Z]\w*\s*[(\[<]/.test(text)) p("hot-path", `${where} allocates with new inside Update(); pool or reuse`);
   }
 
+  // A test that asserts on wall-clock time fails on a loaded machine and says nothing about the code (a 100ms swipe test failed at 113 and 128ms and cost two tasks a rerun): count frames or use a fake clock.
+  for (const entry of files.filter(file => file.name.endsWith(".cs") && /(^|\/)Tests?\//.test(rel(file.full)))) {
+    const lines = readFileSync(entry.full, "utf8").split(/\r?\n/);
+    lines.forEach((line, index) => {
+      if (!/\bAssert\.(?:Less|LessOrEqual|Greater|GreaterOrEqual|That)\b/.test(line)) return;
+      const nearby = lines.slice(Math.max(0, index - 4), index + 1).join(" ");
+      if (/\b(?:Time\.realtimeSinceStartup|Time\.unscaledTime|Stopwatch|DateTime\.(?:UtcNow|Now))\b/.test(nearby) && !/Covers: .*wall-clock-ok/.test(nearby)) p("wall-clock", `${rel(entry.full)}:${index + 1} asserts on wall-clock time; count frames (Time.frameCount) or use a controllable clock instead`);
+    });
+  }
+
   // rule traceability: every rule id of the rules spec appears in a test file
   const spec = read("docs/RULES_SPEC.md");
   if (spec !== undefined) {

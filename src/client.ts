@@ -1,6 +1,7 @@
 import { Client, Connection } from "@temporalio/client";
 import { randomUUID } from "node:crypto";
 import type { RunInput, RunResult } from "./contracts.js";
+import { waiveCriteria, type Waiver } from "./acceptance.js";
 import { projectWorkflow, approveSignal, bootstrapStateQuery, progressQuery } from "./workflows.js";
 
 export async function withTemporal<T>(fn: (client: Client) => Promise<T>): Promise<T> {
@@ -53,18 +54,22 @@ export function nextResumeId(originalId: string, existing: string[]): string {
  * saved stage results (`artifacts/<task>/<run id>/<stage>-<n>.json`) and skip every stage whose input is unchanged; only the stage that failed, and what follows it, executes.
  * The workflow id keeps the issue-id prefix, so `reconcile` reports the result to Paperclip like any other run.
  */
-export async function resumeRun(originalId: string): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean }> {
+export async function resumeRun(originalId: string, options: { waive?: Waiver[] } = {}): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean; waived: string[] }> {
   return withTemporal(async client => {
     const history = await client.workflow.getHandle(originalId).fetchHistory();
     const started = history.events?.find(event => event.workflowExecutionStartedEventAttributes)?.workflowExecutionStartedEventAttributes;
     const payload = started?.input?.payloads?.[0];
     if (!payload?.data) throw new Error(`workflow ${originalId} has no readable start input`);
     const input = JSON.parse(Buffer.from(payload.data).toString("utf8")) as RunInput;
+    // A waived criterion changes the task prompt, so the stages after the plan run again, but on the preserved worktree they only have to finish and verify what is already there.
+    const waiver = options.waive?.length ? waiveCriteria(input.prompt, options.waive) : { prompt: input.prompt, waived: [] as string[] };
+    if (options.waive?.length && waiver.waived.length !== options.waive.length) throw new Error(`criteria not found in the task prompt: ${options.waive.filter(item => !waiver.waived.includes(item.id)).map(item => item.id).join(", ")}`);
+    input.prompt = waiver.prompt;
     const base = originalId.replace(/-resume\d+$/, "");
     const existing: string[] = [];
     for await (const row of client.workflow.list({ query: `WorkflowId STARTS_WITH "${base}"` })) existing.push(row.workflowId);
     const id = nextResumeId(originalId, existing);
     const result = await startOrAttach(client, id, input);
-    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted };
+    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted, waived: waiver.waived };
   });
 }

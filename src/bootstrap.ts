@@ -152,7 +152,18 @@ function checkBlueprint(blueprint: Blueprint, limits: PlanLimits, lenient: boole
   if (!result.length) throw new Error("Blueprint has no tasks");
   return { summary: blueprint.summary, milestones: result };
 }
-export function validateBlueprint(raw: string, limits: PlanLimits): Blueprint { return checkBlueprint(parseWith(raw, BlueprintSchema, "Blueprint"), limits, false); }
+/** A criterion that only a person with a physical device can check. No automated run can meet it (the first live game run stopped on one: "a device run shows feedback within 100ms"). */
+const DEVICE_ONLY = /\b(?:on|from|with|using)\s+(?:a|an|the|real|physical|actual)\s+(?:(?:real|physical|actual|android|ios)\s+)*(?:device|phone|handset|tablet)\b|\bdevice[- ]runs?\b|\b(?:real|physical) (?:device|hardware|phone)\b|\bon[- ]device\b|\b(?:play|app) store\b/i;
+export function deviceOnlyCriteria(blueprint: Blueprint): string[] {
+  return blueprint.milestones.flatMap(milestone => milestone.tasks.flatMap(task => task.acceptance.filter(item => DEVICE_ONLY.test(item)).map(item => `${task.key}: ${item.slice(0, 90)}`)));
+}
+/** `game`: also reject criteria that need a physical device; they belong in the release checklist, with an automated proxy as the criterion. */
+export function validateBlueprint(raw: string, limits: PlanLimits, game = false): Blueprint {
+  const blueprint = checkBlueprint(parseWith(raw, BlueprintSchema, "Blueprint"), limits, false);
+  const device = game ? deviceOnlyCriteria(blueprint) : [];
+  if (device.length) throw new Error(`Blueprint is not usable: acceptance criteria that only a physical device can verify cannot be met by an automated run (${device.slice(0, 4).join("; ")}). State what a test can prove instead (a frame count, an event raised, a recorded platform call) and leave the device check to the release checklist`);
+  return blueprint;
+}
 /** Keep what is usable of an answer that failed validation: truncate to the limits and drop dependencies that point nowhere. */
 export function salvageBlueprint(raw: string, limits: PlanLimits): Blueprint | undefined {
   try { return checkBlueprint(parseWith(raw, BlueprintSchema, "Blueprint"), limits, true); } catch { return undefined; }
