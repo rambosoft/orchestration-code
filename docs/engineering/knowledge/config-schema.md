@@ -51,5 +51,5 @@
 - Manifest `visual`: `engine` ("web" default | "unity"), `command` and `url` are required for web only, `unityFilter` for unity; `readyTimeoutMs` max is now 1,800,000 (Unity captures wait for an Editor run).
 - Stage name `design` (game design): usable in `providerRouting`, `providerTimeouts` and `bootstrap.global.json` `stages`; default timeout 15 minutes.
 - Options: `product_kind` (app|game), `engine` (auto|unity), `game_orientation`, `game_art`, `game_fps`. A game derives `platform` mobile_android (from web, cli or api), `engine` unity, `architecture` frontend_only and at least unit tests.
-- Env: `ORCHESTRATOR_WORKTREES_DIR` (short worktree folder), `UNITY_AGENT_PLUGIN_DIR` (checkout pinned by `npm run unity:plugin`), `UNITY_EDITOR_PATH`, `UNITY_EDITORS_ROOT`, `UNITY_IMPORT_TIMEOUT_SECONDS`, `ORCHESTRATOR_TEMPLATES_DIR`.
+- Env: `ORCHESTRATOR_WORKTREES_DIR` (short worktree folder), `ORCHESTRATOR_QUALITY_REUSE` (set 0 to always rerun the quality checks; default reuses a pass for an unchanged tree), `UNITY_AGENT_PLUGIN_DIR` (checkout pinned by `npm run unity:plugin`), `UNITY_EDITOR_PATH`, `UNITY_EDITORS_ROOT`, `UNITY_IMPORT_TIMEOUT_SECONDS`, `ORCHESTRATOR_TEMPLATES_DIR`.
 - Templates live in `templates/<id>/` and are copied by the scaffold with `{{NAME}}`, `{{PACKAGE}}`, `{{ORIENTATION}}`, `{{FPS}}` replaced.
