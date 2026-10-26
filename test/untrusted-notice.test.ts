@@ -48,3 +48,37 @@ describe("model selection for CLI providers", () => {
     expect(claudeExecutionArgs("t", "implement", {})).not.toContain("--model");
   });
 });
+
+describe("agent commands follow the stacks in the repository", () => {
+  const tools = (stack: Parameters<typeof claudeExecutionArgs>[5]) => claudeExecutionArgs("go", "implement", {}, undefined, undefined, stack).find(arg => arg.startsWith("--allowedTools="))!;
+  it("lets a Spring Boot project run Maven and Gradle, a .NET project dotnet, and gives a project with no detected stack only the base set", () => {
+    expect(tools([{ family: "jvm", root: "server" }])).toContain("Bash(mvn:*)");
+    expect(tools([{ family: "jvm", root: "server" }])).toContain("PowerShell(gradlew:*)");
+    expect(tools([{ family: "dotnet", root: "" }])).toContain("Bash(dotnet:*)");
+    expect(tools([{ family: "python", root: "" }, { family: "go", root: "svc" }])).toMatch(/pytest.*go:\*/);
+    expect(tools([])).not.toContain("mvn");
+    expect(tools([])).toContain("Bash(npm:*)");
+  });
+  it("combines the stacks of a monorepo, lists each command once and always allows rtk", () => {
+    const list = tools([{ family: "unity", root: "client" }, { family: "jvm", root: "server" }, { family: "node", root: "web" }]).split("=")[1]!.split(",");
+    expect(list).toContain("Bash(unity:*)");
+    expect(list).toContain("Bash(mvn:*)");
+    expect(list).toContain("Bash(pnpm:*)");
+    expect(list).toContain("Bash(rtk:*)");
+    expect(new Set(list).size).toBe(list.length);
+  });
+  it("gives no write tools at all to a stage that only reads", () => {
+    expect(claudeExecutionArgs("go", "review", {}, undefined, undefined, [{ family: "jvm", root: "" }]).join(" ")).not.toContain("allowedTools");
+  });
+});
+
+describe("output filter hint", () => {
+  it("tells an agent that runs commands to prefix long-output ones with rtk err, and keeps the full output reachable", () => {
+    const text = cliInstruction("implement", "Add feature X", false, true);
+    expect(text).toContain("rtk err <command>");
+    expect(text).toContain("rtk recall <id>");
+    expect(text).toContain("Task: Add feature X");
+    expect(cliInstruction("implement", "Add feature X", false)).not.toContain("rtk");
+    expect(cliInstruction("implement", "Add feature X", true)).toContain("rtk bypass");
+  });
+});

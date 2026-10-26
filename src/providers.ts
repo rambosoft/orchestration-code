@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { type StageInput, type StageOutput } from "./contracts.js";
 import { parseReviewAssessment, reviewOutcome } from "./review.js";
-import { resolveRtkStatus } from "./rtk.js";
+import { isRtkInstalled, resolveRtkStatus } from "./rtk.js";
+import { agentCommands, detectStack, type StackInfo } from "./stack-traits.js";
 import { childEnv } from "./env.js";
 import { NODE_EXECUTABLE } from "./node-path.js";
 import { activitySignal, killOnAbort, killProcessTree } from "./process-control.js";
@@ -84,20 +85,23 @@ export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], e
   return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" || stage === "reproduce" ? "workspace-write" : "read-only", "-"];
 }
 const UNITY_TOOLS = ["unity"].flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
-const WRITE_TOOLS = ["npm", "npx", "node", "git status", "git diff", "git log", "ls"].flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
+const toolRules = (commands: string[]): string[] => commands.flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
+const WRITE_TOOLS = toolRules(["npm", "npx", "node", "git status", "git diff", "git log", "ls"]);
+/** rtk filters a command's output (src/rtk.ts); allowing it is harmless when it is not installed. */
+const RTK_TOOLS = toolRules(["rtk"]);
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
-export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string, unity?: UnityAgentContext): string[] {
+export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string, unity?: UnityAgentContext, stack: StackInfo = []): string[] {
   const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
   const writes = stage === "implement" || stage === "reproduce";
   return ["-p", "--permission-mode", writes ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
     // On Windows Claude Code runs commands through its PowerShell tool, which has its own rules: without them every test command was denied and the agent delivered code it never ran.
-    ...(writes ? [`--allowedTools=${[...WRITE_TOOLS, ...(unity ? UNITY_TOOLS : [])].join(",")}`] : []),
+    ...(writes ? [`--allowedTools=${[...new Set([...WRITE_TOOLS, ...(unity ? UNITY_TOOLS : []), ...toolRules(agentCommands(stack)), ...RTK_TOOLS])].join(",")}`] : []),
     ...(unity?.pluginDir ? ["--plugin-dir", unity.pluginDir] : []),
     ...(model ? ["--model", model] : []), "--output-format", "json", prompt];
 }
 const specs: Record<string, ProviderSpec> = {
   // ECC_GATEGUARD=off: an interactive "state the facts first" hook of the operator's own Claude plugins must not deny the first tool call of an unattended run.
-  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot)), env: { ECC_GATEGUARD: "off" } },
+  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot), projectRoot ? detectStack(projectRoot) : []), env: { ECC_GATEGUARD: "off" } },
   codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" || stage === "reproduce" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
@@ -140,9 +144,15 @@ export function defaultProviderTimeoutMs(stage: StageInput["stage"]): number {
   return minutes[stage] * 60_000;
 }
 
-export function cliInstruction(stage: StageInput["stage"], prompt: string, rtkActive: boolean): string {
-  return `${stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands unrelated to the task. Work only in this isolated project worktree.${rtkActive ? " RTK command-output filtering is enabled; if a compact result omits needed detail, rerun that command with `rtk bypass <command>`." : ""} Task: ${prompt}`;
+/** Any build or test command, any stack: `rtk err` shows only errors and warnings, keeps the exit code, and prints a recall id so the full output is one command away. */
+export const OUTPUT_FILTER_HINT = " Commands with long output (builds, test runs, installs): run them as `rtk err <command>` to see only the errors and warnings; the last line names a recall id and `rtk recall <id>` prints the full output when you need it.";
+export function cliInstruction(stage: StageInput["stage"], prompt: string, rtkActive: boolean, outputFilter = false): string {
+  return `${stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands unrelated to the task. Work only in this isolated project worktree.${rtkActive ? " RTK command-output filtering is enabled; if a compact result omits needed detail, rerun that command with `rtk bypass <command>`." : ""}${outputFilter ? OUTPUT_FILTER_HINT : ""} Task: ${prompt}`;
 }
+
+let rtkProbe: Promise<boolean> | undefined;
+/** Whether the rtk CLI is on this worker's PATH, asked once per process. ORCHESTRATOR_RTK=0 turns the hint off. */
+const rtkAvailable = (): Promise<boolean> => process.env.ORCHESTRATOR_RTK === "0" ? Promise.resolve(false) : (rtkProbe ??= isRtkInstalled().catch(() => false));
 
 export class CliProvider implements AgentProvider {
   constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs?: number) {}
@@ -151,7 +161,9 @@ export class CliProvider implements AgentProvider {
     const rtk = this.id === "codex" && input.stage === "implement"
       ? await resolveRtkStatus({ plugins: input.plugins, stage: input.stage, provider: this.id, projectRoot: input.projectRoot })
       : { active: false as const, reason: "unsupported-stage-or-provider" as const };
-    const instruction = cliInstruction(input.stage, input.prompt, rtk.active);
+    // Without the Codex hook, an agent that runs commands is told to filter long output with rtk when it is installed (any stack: rtk err is not tied to a toolchain).
+    const outputFilter = !rtk.active && (input.stage === "implement" || input.stage === "reproduce") && await rtkAvailable();
+    const instruction = cliInstruction(input.stage, input.prompt, rtk.active, outputFilter);
     return new Promise((resolve, reject) => {
       const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort, input.model, input.images, input.projectRoot), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
       const stdout: Buffer[] = []; const stderr: Buffer[] = []; let size = 0; let timedOut = false;

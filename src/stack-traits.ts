@@ -70,3 +70,18 @@ const TEST_FILE = [
 ];
 export const isTestFile = (repoPath: string): boolean => TEST_FILE.some(pattern => pattern.test(repoPath.split("\\").join("/")));
 export const isDocFile = (repoPath: string): boolean => /(?:^|\/)(?:docs?|openspec)\/|\.(?:md|mdx|txt|rst|csv|svg)$/i.test(repoPath.split("\\").join("/"));
+
+/**
+ * Commands the implementing agent may run, per family, on top of the base set every project gets (node, npm, npx, read-only git, ls). A build tool runs project code just as an npm script does, and
+ * the same gates run these tools anyway; what a family needs is listed here so a Spring Boot or .NET project is not blocked by a list written for Unity and Node.
+ */
+const AGENT_COMMANDS: Record<Family, string[]> = {
+  unity: ["unity"],
+  node: ["pnpm", "yarn"],
+  jvm: ["mvn", "./mvnw", "mvnw", "gradle", "./gradlew", "gradlew", "java"],
+  dotnet: ["dotnet"],
+  python: ["python", "python3", "pytest"],
+  go: ["go"],
+  rust: ["cargo"],
+};
+export const agentCommands = (stack: StackInfo): string[] => [...new Set(stack.flatMap(({ family }) => AGENT_COMMANDS[family]))];

@@ -12,9 +12,10 @@ import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
 import { compactLog } from "./log-compact.js";
+import { readReport, summarizeFailures } from "./test-report.js";
 import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
-import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
+import { clearUnityEvidence, readUnityTestFiles, unityTestResultPath, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -246,7 +247,17 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
       }
-      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: compactLog(result.output, { maxChars: CHECK_STORE_CHARS }), stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
+      let storedOutput = compactLog(result.output, { maxChars: CHECK_STORE_CHARS });
+      // A failed check with a test report: the list of failing tests leads, the console output follows shortened (src/test-report.ts).
+      if (result.code !== 0) {
+        const spec = check.report ?? (check.executable === "unity" && unityTestResultPath(check, checkCwd) ? { format: "nunit" as const, path: path.relative(checkCwd, unityTestResultPath(check, checkCwd)!) } : undefined);
+        const digest = spec ? summarizeFailures(await readReport(spec, checkCwd).catch(() => ({ failures: [], failed: 0 }))) : "";
+        if (digest) storedOutput = `${digest}
+
+--- console output (shortened) ---
+${compactLog(result.output, { maxChars: 1500 })}`;
+      }
+      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
