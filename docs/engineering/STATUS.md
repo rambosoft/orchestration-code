@@ -86,3 +86,8 @@
 - Done: Unity preflight + doctor checks, per-stack publish exclusion of generated output, reuse of a passing quality run. Analysis and plan: research/unity-run-learnings.md. Full suite 686 passed; replay fixture unchanged.
 - Not verified live: needs `npm run deploy:worker` and a Unity task; the tile-merge-2048 `.utmp/` cleanup is draft PR rambosoft/tile-merge-2048#21 (not merged).
 - Next (from the analysis): failure classifier with auto-resume and gate repair pass (B-057, needs patched() and replay fixture), reconcile as a service, vertical-slice gate, cheaper review, milestone PRs, token budgets, Unity feature library.
+
+## 2026-10-26 update (Tier 1b and Tier 2, B-063..B-066, B-079)
+- Done: gate repair pass (B-057), failure classifier and automatic resume, reconcile service in the worker (first real cycle ran), vertical-slice gate, review prefilter and coverage table, stack-pr, token accounting and budgets. Status table: research/unity-run-learnings.md section 8.
+- Verified: unit and workflow tests, the slice harness in a real Unity Editor on a copy of tile-merge-2048, the usage report on the real run data. Not verified: a live Unity task through the new gates; the bridge container still runs the old server.ts (budget not passed until it is rebuilt).
+- Next: feature library (ADR 0014, other session), device stage, eval harness, a cheaper review model tier.
