@@ -1,0 +1,3 @@
+// One rule for the shape of every answer a structured stage gives (analysis, diagnosis, reproduction, scope, exploration, stack, charter, blueprint, game design). The size of the answer is set by each
+// stage's own token budget, so the big phases stay complete; this rule only keeps the individual strings short and grounded, which is what makes a long answer cheap to carry to the next stage.
+export const ANSWER_SHAPE = "Answer shape: follow the numbered steps in order and answer each question asked; every string is one short phrase or sentence (no paragraphs, no preamble, no restating the request); cite evidence as path:line; where you do not know, say \"unknown\" or leave the list empty instead of guessing or padding.";

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANSWER_SHAPE } from "./answer-shape.js";
 import { QualityCommandSchema, type QualityCommand } from "./contracts.js";
 import { assertTokenBudget, clampedText, HANDOFF_BUDGETS } from "./handoffs.js";
 import { parseJsonLoose } from "./json-extract.js";
@@ -62,7 +63,7 @@ DIAGNOSE stage. Find out WHY this happens, and decide how to fix it properly. Re
 5. List reproduction_scenarios: concrete inputs or sequences, including edge cases you noticed, that would trigger each hypothesis. They are handed to a stage that writes a failing test.
 6. List validation_properties (testable statements, including that the reported case now behaves correctly and nearby behaviour is unchanged) and 1 to 8 concise implementation_requirements.
 If honest analysis finds no defect (the code behaves as designed, or the report lacks what is needed), return an empty hypotheses list and say so and what is missing in summary.
-Return only one JSON object, no prose and no code fence, matching exactly: ${DIAGNOSIS_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.diagnosis} tokens.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${DIAGNOSIS_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.diagnosis} tokens.`;
 }
 
 export function repairDiagnosisPrompt(bugReport: string, previous: string, diagnostic: string): string {
@@ -133,7 +134,7 @@ REPRODUCE stage. Prove the reported defect with an automated test. You may creat
 3. command: the executable (node, npm, pnpm or yarn) and arguments that run just this test, for example npm test -- path/to/file, or node --test path/to/file. Only existing test runners or relative scripts; no -e/--eval, no installs, no network.
 4. Try the reproduction scenarios from any hints, including edge cases, before giving up. Do not invent a failure: never assert behaviour the report does not expect to make a test fail.
 5. If you cannot reproduce it after honest attempts (needs data you do not have, depends on a UI or environment, flaky), return outcome not_reproduced with the attempts and what blocks it.
-Return only one JSON object, no prose and no code fence, matching exactly: ${REPRODUCTION_HINT}. Keep it under ${HANDOFF_BUDGETS.reproduction} tokens.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${REPRODUCTION_HINT}. Keep it under ${HANDOFF_BUDGETS.reproduction} tokens.`;
 }
 
 export function repairReproductionPrompt(previous: string, diagnostic: string): string {

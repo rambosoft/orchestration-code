@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANSWER_SHAPE } from "./answer-shape.js";
 import { redactSecrets } from "./redact.js";
 import { assertTokenBudget, clampedText, HANDOFF_BUDGETS } from "./handoffs.js";
 import { parseJsonLoose } from "./json-extract.js";
@@ -48,7 +49,7 @@ SCOPE stage (${kind}). Decide what has to be found out before anything is explor
 1. Restate the request in one or two sentences, and split it into 1 to 6 concrete, answerable questions.${kind === "architecture" ? " For an architecture request include the decision to be made, the forces and constraints that apply, and the options worth comparing." : ""}
 2. List the identifiers, phrases and file or folder names to search for so a bounded context pack can be built (search_terms up to 12, paths_of_interest up to 10). Prefer specific names over generic words.
 3. Say what is out of scope.
-Return only one JSON object, no prose and no code fence, matching exactly: ${SCOPE_HINT}. Keep it under ${HANDOFF_BUDGETS.scope} tokens.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${SCOPE_HINT}. Keep it under ${HANDOFF_BUDGETS.scope} tokens.`;
 }
 
 export function repairScopePrompt(task: string, previous: string, diagnostic: string): string {
@@ -87,7 +88,7 @@ EXPLORE stage (${kind}). Answer the questions from the pack. Read-only: you may 
 - Ground every answer in evidence: a reference like path/to/file.ts:LINE with a short paraphrase. Never paste long code or any secret, token or credential; refer to it instead.
 - Separate what you verified in the code from what you infer. Mark inference with low confidence. Anything you could not find out goes in open_questions; do not guess to fill a gap.${architecture}
 - follow_up_tasks: only concrete work that the findings justify (for example a bug found while exploring, or an implementation task for the decision); not general improvements.
-Return only one JSON object, no prose and no code fence, matching exactly: ${REPORT_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.exploration} tokens.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${REPORT_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.exploration} tokens.`;
 }
 
 export function repairReportPrompt(task: string, previous: string, diagnostic: string): string {

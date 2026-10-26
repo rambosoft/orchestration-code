@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANSWER_SHAPE } from "./answer-shape.js";
 import { parseJsonLoose } from "./json-extract.js";
 import type { OptionValue } from "./bootstrap-options.js";
 import { level, objects, strings, text } from "./schema-helpers.js";
@@ -98,7 +99,7 @@ GAME DESIGN stage. Analyse the game before anything is planned: its rules, bound
 - test_cases: for every rule at least one case: a starting state or input and the exact expected result, so a test can be written from it without asking anything.
 - risks and open_questions: real gaps only; do not guess to fill them.
 ${KNOWLEDGE_NOTE}
-Return only one JSON object, no prose and no code fence, matching exactly: ${GAME_DESIGN_HINT}.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${GAME_DESIGN_HINT}.`;
 }
 const KNOWLEDGE_NOTE = "Use your knowledge of the genre and of established implementations of this kind of game; where implementations differ, choose one behaviour and record it as a rule.";
 export function repairGameDesignPrompt(previous: string, diagnostic: string): string {

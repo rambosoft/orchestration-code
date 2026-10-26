@@ -76,6 +76,7 @@ describe("game design", () => {
   });
   it("puts the requester's text in a data block and asks for exact values, boundaries and test cases", () => {
     const prompt = gameDesignPrompt(runInput(), "Charter vision");
+    expect(prompt).toContain("Answer shape: follow the numbered steps");
     expect(prompt).toContain('"""');
     expect(prompt).toContain("GAME DESIGN stage");
     expect(prompt).toContain("exact values");
