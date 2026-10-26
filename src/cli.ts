@@ -8,6 +8,7 @@ import { cleanupWorktrees } from "./cleanup.js";
 import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
 import { paperclipClient, startReconcileService } from "./reconcile-service.js";
+import { stackPr } from "./stack-pr.js";
 import { formatDrain, waitForDrain } from "./drain.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
@@ -86,6 +87,14 @@ async function main() {
     process.once("SIGINT", () => { stop(); process.exit(0); });
     await new Promise<never>(() => undefined);
   }
+  if (command === "stack-pr") {
+    // One merge for a stack of task PRs (src/stack-pr.ts): retargets the tip onto the real base. Dry run unless --apply; never merges.
+    const repoIndex = args.indexOf("--repo"); const throughIndex = args.indexOf("--through");
+    if ((repoIndex >= 0 && !args[repoIndex + 1]) || (throughIndex >= 0 && !args[throughIndex + 1])) throw new Error("usage: dev stack-pr [--repo <project clone>] [--through <PR number|task id|branch>] [--apply] [--close-stacked]");
+    const result = await stackPr({ cwd: repoIndex >= 0 ? args[repoIndex + 1]! : process.cwd(), ...(throughIndex >= 0 ? { through: args[throughIndex + 1]! } : {}), apply: args.includes("--apply"), closeStacked: args.includes("--close-stacked") });
+    console.log(result.lines.join("\n"));
+    return;
+  }
   if (command === "cleanup") {
     const daysIndex = args.indexOf("--days");
     const result = await cleanupWorktrees({ dataDir: data, olderThanDays: daysIndex >= 0 ? Number(args[daysIndex + 1]) : 7, all: args.includes("--all"), dryRun: args.includes("--dry-run") });
@@ -123,6 +132,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });
