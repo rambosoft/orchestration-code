@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { excludeGeneratedPaths, findPublishViolations, worktreeProfile } from "../src/publish-guard.js";
+import { excludeGeneratedPaths, findPublishViolations, worktreeStack } from "../src/publish-guard.js";
 import { publishWorktree, runCommand } from "../src/workspaces.js";
 
 const roots: string[] = [];
+const UNITY = [{ family: "unity" as const, root: "" }]; const NODE = [{ family: "node" as const, root: "" }];
 async function repo() {
   const root = await mkdtemp(path.join(os.tmpdir(), "orch-guard-")); roots.push(root);
   await runCommand("git", ["init", "-b", "main"], root);
@@ -53,16 +54,16 @@ describe("generated build output (Unity)", () => {
   const unityFiles = { "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.3.11f1\n", "Assets/Scripts/A.cs": "class A {}\n", "Assets/Library/Cards.cs": "class Cards {}\n" };
   const generated = { ".utmp/RelWithDebInfo/x/cache.json": "{}", "Library/Bee/x.dll": "x", "Builds/game.aab": "x", "Logs/screenshots/a.png": "x", "Game.csproj": "<x/>" };
 
-  it("detects a Unity worktree from its project version file", async () => {
+  it("detects a Unity worktree from its project folder", async () => {
     const root = await repo();
-    expect(worktreeProfile(root)).toBe("node-web");
+    expect(worktreeStack(root)).toEqual([]);
     await stage(root, unityFiles);
-    expect(worktreeProfile(root)).toBe("unity-mobile");
+    expect(worktreeStack(root)).toEqual([{ family: "unity", root: "" }]);
   });
   it("drops what the run added from the index and keeps source, including a game folder named Library under Assets", async () => {
     const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
     await stage(root, { ...unityFiles, ...generated });
-    const dropped = await excludeGeneratedPaths(root, base, "unity-mobile");
+    const dropped = await excludeGeneratedPaths(root, base, UNITY);
     expect(dropped.sort()).toEqual(Object.keys(generated).sort());
     const staged = (await runCommand("git", ["diff", "--cached", "--name-only", base], root)).split(/\r?\n/).sort();
     expect(staged).toEqual(["Assets/Library/Cards.cs", "Assets/Scripts/A.cs", "ProjectSettings/ProjectVersion.txt"]);
@@ -70,12 +71,12 @@ describe("generated build output (Unity)", () => {
   it("leaves a node project alone and never drops a file the base already tracks", async () => {
     const root = await repo(); const base = await runCommand("git", ["rev-parse", "HEAD"], root);
     await stage(root, { "Library/x.js": "x" });
-    expect(await excludeGeneratedPaths(root, base, "node-web")).toEqual([]);
+    expect(await excludeGeneratedPaths(root, base, NODE)).toEqual([]);
     await runCommand("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "tracked"], root);
     const tracked = await runCommand("git", ["rev-parse", "HEAD"], root);
     await writeFile(path.join(root, "Library", "x.js"), "changed");
     await runCommand("git", ["add", "--all"], root);
-    expect(await excludeGeneratedPaths(root, tracked, "unity-mobile")).toEqual([]);
+    expect(await excludeGeneratedPaths(root, tracked, UNITY)).toEqual([]);
     expect(await runCommand("git", ["diff", "--cached", "--name-only", tracked], root)).toBe("Library/x.js");
   });
   it("removes generated files the agent committed itself, and the commit that publishWorktree makes no longer contains them", async () => {

@@ -10,9 +10,12 @@ import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js"
 import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
-import { worktreeProfile } from "./publish-guard.js";
+import { worktreeStack } from "./publish-guard.js";
+import { compactLog } from "./log-compact.js";
+import { readReport, summarizeFailures } from "./test-report.js";
+import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
-import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
+import { clearUnityEvidence, readUnityTestFiles, unityTestResultPath, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -89,17 +92,45 @@ export function runCheck(executable: string, args: string[], cwd: string, maxOut
   return new Promise((resolve, reject) => {
     const { command, args: commandArgs } = toolCommand(executable, args);
     const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
-    child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
+    child.stdout.on("data", (b: Buffer) => { if (outBytes < Math.max(100_000, maxOutputChars)) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
     child.on("error", error => { stopKill(); reject(error); }); child.on("close", code => { stopKill(); if (signal?.aborted) return reject(new Error("cancelled: process killed")); resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }); });
   });
 }
 
 export const REVIEW_DIFF_LIMIT = 60_000;
+/** A gate command's output is captured whole (a runner prints its failure summary last, a trace's project frames often come last) and then compacted: the artifact keeps up to CHECK_STORE_CHARS of it, the workflow gets a shorter finding. */
+const CHECK_CAPTURE_CHARS = 150_000;
+const CHECK_STORE_CHARS = 20_000;
 /** The reviewer always sees the list of changed files; a truncated diff says so and tells the reviewer to read the rest itself. */
 export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles = ""): string {
   const truncated = diff.length > REVIEW_DIFF_LIMIT;
   return `${prompt}${changedFiles ? `\n\nChanged files:\n${changedFiles}` : ""}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, REVIEW_DIFF_LIMIT)}${truncated ? `\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters: inspect the remaining changes yourself with git diff and by reading the files before you decide]` : ""}`;
+}
+
+/** The digest in place of a raw diff; it carries its own scope header and budget, so nothing is cut here. */
+export function reviewPromptWithDigest(prompt: string, digest: string): string {
+  return `${prompt}\n\nImplementation under review (review this code against the task requirements):\n${digest}`;
+}
+
+/**
+ * The reviewer's view of the change: every changed file listed, reviewable ones in priority order inside a budget (src/diff-digest.ts). Round N compares with the hashes saved for round N-1, so a file the
+ * repair did not touch is listed as unchanged instead of being sent again; a retry of the same round reads the same previous hashes and sends the same digest.
+ */
+export async function collectReviewDigest(root: string, artifactsDir: string, attempt: number, run: typeof runCheck = runCheck): Promise<Digest> {
+  const stack = worktreeStack(root);
+  const git = ["-c", "core.quotepath=false", "diff"];
+  // The whole file list, generated files included (they are counted in the digest, not printed): runCheck captures as much as it is asked for.
+  const numstat = await run("git", [...git, "--numstat", "HEAD"], root, 8_000_000);
+  if (numstat.code !== 0) throw new Error(`could not list the changed files for review: ${numstat.stderr || numstat.output.slice(0, 500)}`);
+  const previous = attempt > 1 ? await readFile(path.join(artifactsDir, `review-diff-${attempt - 1}.json`), "utf8").then(text => (JSON.parse(text) as { hashes?: Record<string, string> }).hashes, () => undefined) : undefined;
+  const digest = await buildDigest({
+    changes: parseNumstat(numstat.output), stack,
+    ...(previous ? { previous } : {}),
+    readDiff: async file => (await run("git", [...git, "--no-color", "-U3", "HEAD", "--", file], root, 200_000)).output,
+  });
+  await writeFile(path.join(artifactsDir, `review-diff-${attempt}.json`), JSON.stringify({ hashes: digest.hashes }));
+  return digest;
 }
 
 /** A Unity project has ProjectSettings/ProjectVersion.txt and an Assets folder. The stack profile is detected from the worktree so the workflow input stays unchanged. */
@@ -207,7 +238,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
       if (isUnity) { await waitForProjectUnlock(checkCwd); await clearUnityEvidence(check, checkCwd); }
-      let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, isUnity ? 20_000 : undefined);
+      let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, CHECK_CAPTURE_CHARS);
       if (isUnity) {
         // Editor-log lines that describe this machine (the licensing client signature check) are not findings about the project: drop them before anything reads or stores the output.
         result = { ...result, output: stripBenignEditorNoise(result.output), stderr: stripBenignEditorNoise(result.stderr) };
@@ -216,7 +247,17 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
       }
-      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: result.output, stderr: result.stderr });
+      let storedOutput = compactLog(result.output, { maxChars: CHECK_STORE_CHARS });
+      // A failed check with a test report: the list of failing tests leads, the console output follows shortened (src/test-report.ts).
+      if (result.code !== 0) {
+        const spec = check.report ?? (check.executable === "unity" && unityTestResultPath(check, checkCwd) ? { format: "nunit" as const, path: path.relative(checkCwd, unityTestResultPath(check, checkCwd)!) } : undefined);
+        const digest = spec ? summarizeFailures(await readReport(spec, checkCwd).catch(() => ({ failures: [], failed: 0 }))) : "";
+        if (digest) storedOutput = `${digest}
+
+--- console output (shortened) ---
+${compactLog(result.output, { maxChars: 1500 })}`;
+      }
+      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
@@ -224,7 +265,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
-        return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+        return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => compactLog([r.output, r.stderr].filter(Boolean).join("\n"))), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
     }
     if (!reusable && fingerprintBefore) {
@@ -249,7 +290,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (checks.length && prefilterEnabled()) {
       await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
       const added = await runCheck("git", ["diff", "--no-color", "-U0", "HEAD"], input.projectRoot, 1_000_000);
-      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output, worktreeProfile(input.projectRoot))) : undefined;
+      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output, worktreeStack(input.projectRoot))) : undefined;
       if (flagged) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
@@ -277,10 +318,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     // Give every real reviewer the implementation itself, including newly
     // created files, rather than asking it to review only the task summary.
     await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
-    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, REVIEW_DIFF_LIMIT + 1);
-    const changed = await runCheck("git", ["diff", "--stat", "--stat-width=140", "HEAD"], input.projectRoot, 6_000);
-    if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
-    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
+    // The reviewer gets a digest, not `git diff` (src/diff-digest.ts): source first, generated output counted and left out, and on a follow-up round only what changed since the last one.
+    stageInput.prompt = reviewPromptWithDigest(input.prompt, (await collectReviewDigest(input.projectRoot, artifactsDir, input.attempt)).text);
     // Numbered criteria (game tasks): tell the reviewer which test covers each, so it judges the proof instead of hunting for it.
     const criteria = [...new Set(input.prompt.match(/\bT\d+-AC\d+\b/g) ?? [])];
     const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;

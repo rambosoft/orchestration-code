@@ -99,3 +99,12 @@ All three live in activities and helpers, so no `patched()` and no new workflow 
 | 12 | Eval harness | not started |
 
 Not verified live: none of 3 to 9 has run on a real Unity task yet; each is covered by unit and workflow tests, the slice harness by a real PlayMode run on a copy of the finished game, and the reconcile service by its first real cycle in the worker.
+
+## 9. Input and output trimming (2026-10-26)
+
+Measured from the stored artifacts of the first game, not assumed:
+
+- **The review saw build output, not code.** The 16 task patches average 904 000 characters; 44% is object files, 17% PNG, 4.7% C#. The review diff was the first 60 000 characters of `git diff --binary`, sorted by path, so `.utmp/` filled it. 13 of 16 diffs were over the cap. Fixed by the review digest (B-080).
+- **Stage outputs were already small** (1 to 3 thousand characters per stage); output terseness is not where the tokens go. Cost units split: cache read 57%, cache write 22%, output 20%.
+- **A failing check kept the first 5 000 characters** of its output, where a runner prints its failures last. Gate output is now captured whole and compacted (B-081), and a test report leads with the failing tests (B-082).
+- **Tools:** Graphify (code knowledge graph) is not adopted: our cost is the context an agent re-reads, not searching a 200-file game, and a controlled study reports more tokens with a structural graph. rtk is already installed and now used through `rtk err`; `rtk test` is not (it dropped a FAIL line on an unknown runner). Everything new is stack-agnostic: one table in `src/stack-traits.ts`.

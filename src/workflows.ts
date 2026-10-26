@@ -80,13 +80,20 @@ export function externalBlockers(output: StageOutput): ReviewFinding[] {
   return output.review?.findings.filter(isExternalBlocker) ?? [];
 }
 
+/** The implementer's last message is read by the reviewer in every round, so its shape is fixed and short: facts, not narrative. The work itself is never shortened. */
+export const REPORT_STYLE = `FINAL MESSAGE (read by the reviewer; keep it short): at most 12 bullet lines, no code listings, no restating of the task. Sections in this order: Changed (file: what, one line each); Verified (each command you ran and its result counts); Decisions (only what a reviewer could not infer); UNMET_ACCEPTANCE: none, or one bullet per item you could not meet and why.`;
+/** A summary longer than this is cut when it is shown to the reviewer; the head holds the changes, the tail the unmet items, so both ends are kept. */
+export const REVIEW_SUMMARY_LIMIT = 2500;
+const cutSummary = (summary: string): string => summary.length <= REVIEW_SUMMARY_LIMIT ? summary : `${summary.slice(0, Math.floor(REVIEW_SUMMARY_LIMIT * 0.6))}\n[... ${summary.length - REVIEW_SUMMARY_LIMIT} characters left out ...]\n${summary.slice(-Math.floor(REVIEW_SUMMARY_LIMIT * 0.4))}`;
 export function implementationPrompt(taskPrompt: string, repairFindings?: ReviewFinding[], qualityCommands: StageInput["qualityCommands"] = [], uiUxContext = "", analysisDecisions = "", contractContext = ""): string {
   const configuredChecks = qualityCommands.length
     ? `\nThe orchestration will run these configured deterministic checks as a publication gate after implementation/review${repairFindings?.length ? "; after repair it runs them before the follow-up review" : ""}:\n${qualityCommands.map(check => `- ${check.executable} ${check.args.join(" ")}${check.cwd ? ` (cwd: ${check.cwd})` : ""}`).join("\n")}`
     : "\nNo deterministic checks are configured; report this as a blocking delivery risk.";
   const deliveryContract = `Implement the brief and satisfy every acceptance_check. Follow existing project patterns; make the smallest complete change. Deliver production-ready work: clean code that reads like its surroundings, and meaningful tests (regression coverage plus the edge cases and boundaries of the behaviour). Run the checks yourself before you finish: the project's full test suite and its build or typecheck (for example npm test and npm run build). Fix every failure; never leave a test broken, skipped, weakened or deleted, and never rely on the orchestration's gates to find problems for you. If you cannot run a check in this environment, say so plainly with the exact reason and do not claim it passed. Inspect the diff and report changed files and test results accurately. Do not decide on your own that a requirement is unnecessary or infeasible and ship a weaker variant: if you could not satisfy an acceptance check, say which one and why. End your answer with one line, "UNMET_ACCEPTANCE: none", or "UNMET_ACCEPTANCE:" followed by one line per unmet check; unmet checks are sent back for rework. The orchestration runs configured quality gates again afterwards.
 
-${SIMPLICITY_POLICY}${configuredChecks}\n\n${testStrategy(qualityCommands)}`;
+${SIMPLICITY_POLICY}${configuredChecks}\n\n${testStrategy(qualityCommands)}
+
+${REPORT_STYLE}`;
   const guidance = [uiUxContext, analysisDecisions, contractContext].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
   const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}${finding.scenario ? `\n   Scenario: ${finding.scenario}` : ""}`).join("\n");
@@ -104,7 +111,7 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
     }
   } catch { /* compatibility for callers that supply a plain checklist */ }
   const implementations = stageResults.filter(result => result.stage === "implement");
-  const summaries = implementations.map((result, index) => `Implementation ${index + 1}: ${result.summary}`).join("\n\n");
+  const summaries = implementations.map((result, index) => `Implementation ${index + 1}: ${cutSummary(result.summary)}`).join("\n\n");
   const priorReview = [...stageResults].reverse().find(result => result.stage === "review");
   const previousFindings = priorReview?.review?.findings.length
     ? priorReview.review.findings.filter(f => (f.severity === "critical" || f.severity === "high") && f.fixableInCode).map(f => `- [${f.severity}/${f.category}] ${f.title}: ${f.evidence}${f.acceptanceCriterion ? ` (criterion: ${f.acceptanceCriterion})` : ""}`).join("\n")

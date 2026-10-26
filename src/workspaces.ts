@@ -2,7 +2,7 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ParentPublication, RepositoryContext, PublishResult } from "./contracts.js";
 import { isSafeContractPath } from "./contract-text.js";
-import { excludeGeneratedPaths, findPublishViolations, worktreeProfile } from "./publish-guard.js";
+import { excludeGeneratedPaths, findPublishViolations, worktreeStack } from "./publish-guard.js";
 
 import { runCommand, type CommandRunner } from "./command.js";
 import { worktreesDir } from "./env.js";
@@ -93,7 +93,7 @@ export async function publishWorktree(input: { repository: RepositoryContext; wo
   const status = await git(["status", "--porcelain", "--untracked-files=all"], worktree, runner);
   if (status) await git(["add", "--all"], worktree, runner);
   // Build output the run added (for Unity: Library, Builds, .utmp...) is not part of the change; it is kept out of the commit, also when the agent committed it itself.
-  const excluded = input.kind === "document" ? [] : await excludeGeneratedPaths(worktree, repo.baseSha, worktreeProfile(worktree), runner);
+  const excluded = input.kind === "document" ? [] : await excludeGeneratedPaths(worktree, repo.baseSha, worktreeStack(worktree), runner);
   // Inspect everything that would be published, including commits the agent made itself.
   const violations = await findPublishViolations(worktree, repo.baseSha, runner);
   if (violations.length) throw new Error(`publish guard blocked the commit; nothing was pushed: ${violations.join("; ")}`);

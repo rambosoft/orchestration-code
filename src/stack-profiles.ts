@@ -4,19 +4,6 @@ export type StackProfileId = (typeof STACK_PROFILE_IDS)[number];
 
 export const CORE_EXECUTABLES = ["node", "npm", "pnpm", "yarn"] as const;
 const STACK_EXECUTABLES: Record<StackProfileId, readonly string[]> = { "node-web": CORE_EXECUTABLES, "unity-mobile": [...CORE_EXECUTABLES, "unity"] };
-
-/**
- * Paths a build or the Editor generates, relative to the repository root, per profile. The publish step keeps such files a run ADDED out of the commit (the first game run committed 757 files of `.utmp/` Android build
- * temp output). Unity folders are anchored at the root so a game folder like Assets/Library/ is never mistaken for the Editor's Library.
- */
-const GENERATED_PATHS: Record<StackProfileId, readonly RegExp[]> = {
-  "node-web": [],
-  "unity-mobile": [/^(?:Library|Temp|Obj|Logs|UserSettings|Builds|MemoryCaptures|Recordings|\.utmp|\.gradle)\//, /\.(?:apk|aab|keystore)$/i, /\.(?:csproj|sln)$/i],
-};
-export function isGeneratedPath(profile: StackProfileId, repoPath: string): boolean {
-  return GENERATED_PATHS[profile].some(pattern => pattern.test(repoPath.split("\\").join("/")));
-}
-
 export function allowedExecutables(profile: StackProfileId = "node-web"): readonly string[] { return STACK_EXECUTABLES[profile]; }
 
 type CommandLike = { executable: string; args: string[]; cwd?: string };

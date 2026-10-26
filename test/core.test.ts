@@ -5,7 +5,7 @@ import { PluginRegistry } from "../src/plugins.js";
 import { cliProviderEnvironment, codexExecutionArgs, FakeProvider, OpenRouterProvider, parseCodexTelemetry } from "../src/providers.js";
 import { StageOutputSchema } from "../src/contracts.js";
 import { workflowId } from "../src/client.js";
-import { blockingFindings, effectiveMaxReviewRounds, externalBlockers, failureDetails, implementationPrompt, reviewPrompt, stageRoute } from "../src/workflows.js";
+import { blockingFindings, effectiveMaxReviewRounds, externalBlockers, failureDetails, implementationPrompt, REPORT_STYLE, REVIEW_SUMMARY_LIMIT, reviewPrompt, stageRoute } from "../src/workflows.js";
 import { executeStage, reviewPromptWithDiff } from "../src/activities.js";
 import { resolveRtkStatus } from "../src/rtk.js";
 import { DEFAULT_UI_UX_CONFIG, resolveUiUxConfig, selectUiUxSkills, uiUxGuidance } from "../src/uiux.js";
@@ -345,5 +345,29 @@ describe("fake provider", () => {
     const a = await provider.run(base); const b = await provider.run(base); expect(a).toEqual(b); expect(a.ok).toBe(false);
     expect(StageOutputSchema.safeParse(a).success).toBe(true);
     expect(StageOutputSchema.safeParse({ ...a, durationMs: -1 }).success).toBe(false);
+  });
+});
+
+describe("short, fixed-shape reports", () => {
+  it("asks the implementer for a short final message in a fixed order, in the first pass and in a repair pass", () => {
+    const first = implementationPrompt("BRIEF", undefined, []);
+    const repair = implementationPrompt("BRIEF", [{ severity: "high", category: "functional", title: "t", evidence: "e", fixableInCode: true }], []);
+    for (const prompt of [first, repair]) {
+      expect(prompt).toContain("FINAL MESSAGE");
+      expect(prompt).toContain("at most 12 bullet lines");
+      expect(prompt).toContain("UNMET_ACCEPTANCE: none");
+    }
+    expect(REPORT_STYLE.length).toBeLessThan(500);
+  });
+  it("keeps the head and the tail of a long implementation summary in the review prompt, so the unmet items at the end survive", () => {
+    const long = `Changed: ${"x".repeat(REVIEW_SUMMARY_LIMIT * 3)}\nUNMET_ACCEPTANCE: the Continue button is not wired`;
+    const stages = [{ stage: "implement" as const, ok: true, summary: long, findings: [], artifactRefs: [], provider: "claude", durationMs: 1 }];
+    const prompt = reviewPrompt("BRIEF", stages, 1);
+    expect(prompt).toContain("characters left out");
+    expect(prompt).toContain("the Continue button is not wired");
+    expect(prompt.length).toBeLessThan(long.length);
+    const short = reviewPrompt("BRIEF", [{ ...stages[0]!, summary: "Changed: a.cs" }], 1);
+    expect(short).toContain("Implementation 1: Changed: a.cs");
+    expect(short).not.toContain("characters left out");
   });
 });
