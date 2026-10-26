@@ -11,6 +11,7 @@ import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
+import { compactLog } from "./log-compact.js";
 import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
@@ -97,6 +98,9 @@ export function runCheck(executable: string, args: string[], cwd: string, maxOut
 }
 
 export const REVIEW_DIFF_LIMIT = 60_000;
+/** A gate command's output is captured whole (a runner prints its failure summary last, a trace's project frames often come last) and then compacted: the artifact keeps up to CHECK_STORE_CHARS of it, the workflow gets a shorter finding. */
+const CHECK_CAPTURE_CHARS = 150_000;
+const CHECK_STORE_CHARS = 20_000;
 /** The reviewer always sees the list of changed files; a truncated diff says so and tells the reviewer to read the rest itself. */
 export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles = ""): string {
   const truncated = diff.length > REVIEW_DIFF_LIMIT;
@@ -233,7 +237,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
       if (isUnity) { await waitForProjectUnlock(checkCwd); await clearUnityEvidence(check, checkCwd); }
-      let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, isUnity ? 20_000 : undefined);
+      let result = await runCheck(check.executable, isUnity ? withUnityDefaults(check.args) : check.args, checkCwd, CHECK_CAPTURE_CHARS);
       if (isUnity) {
         // Editor-log lines that describe this machine (the licensing client signature check) are not findings about the project: drop them before anything reads or stores the output.
         result = { ...result, output: stripBenignEditorNoise(result.output), stderr: stripBenignEditorNoise(result.stderr) };
@@ -242,7 +246,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
       }
-      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: result.output, stderr: result.stderr });
+      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: compactLog(result.output, { maxChars: CHECK_STORE_CHARS }), stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
@@ -250,7 +254,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
-        return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+        return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => compactLog([r.output, r.stderr].filter(Boolean).join("\n"))), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
     }
     if (!reusable && fingerprintBefore) {
