@@ -65,6 +65,25 @@ export function sliceProblem(prompt: string, files: TestFile[]): string | undefi
   return problems.length ? `reachability criteria not proven from the running game: ${problems.join("; ")}. Reach the feature by simulated player input from the scene the player starts, and assert the visible result.` : undefined;
 }
 
+/**
+ * Which test covers which criterion, computed from the test sources, for the reviewer's prompt: the gate already requires a test per criterion, so the reviewer's job is to judge whether the test
+ * really proves it, not to search for it. Undefined when the prompt names no criteria.
+ */
+export function coverageTable(ids: string[], files: TestFile[]): string | undefined {
+  if (!ids.length) return undefined;
+  const deferred = new Map<string, string>();
+  for (const file of files) for (const match of file.text.matchAll(/\bDeferred\s*:\s*(T\d+-AC\d+)\s*->\s*(T\d+)\b/gi)) deferred.set(match[1]!, match[2]!);
+  const rows = ids.map(id => {
+    for (const file of files) {
+      const lines = file.text.split(/\r?\n/);
+      const index = lines.findIndex(line => /\bCovers\s*:/i.test(line) && (line.match(ID) as string[] | null ?? []).includes(id));
+      if (index >= 0) return `- ${id}: ${file.file}:${index + 1}`;
+    }
+    return deferred.has(id) ? `- ${id}: deferred to ${deferred.get(id)} (declared in a test comment)` : `- ${id}: NOT COVERED by any test`;
+  });
+  return `Acceptance coverage, computed from the tests by the orchestrator (the deterministic gate requires one test per criterion; judge whether each listed test really proves its criterion, and read it):\n${rows.join("\n")}`;
+}
+
 /** `replacement`: the part of the criterion an automated run can still prove. The criterion keeps its id (so it still needs a test) and the device-only remainder is declared waived in its text. */
 export type Waiver = { id: string; reason: string; replacement?: string };
 /**

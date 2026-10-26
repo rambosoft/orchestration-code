@@ -6,8 +6,9 @@ import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
-import { acceptanceProblem, sliceProblem } from "./acceptance.js";
+import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js";
 import { unityPreflight } from "./preflight.js";
+import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
@@ -242,6 +243,20 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         return { ok: false, summary: "quality check failed: acceptance-trace", findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
     }
+    // Leftover TODOs, stubs and skipped tests in the lines this change adds are found by pattern here, not by a paid review (src/review-prefilter.ts); a hit goes through the gate-repair pass.
+    if (checks.length && prefilterEnabled()) {
+      await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
+      const added = await runCheck("git", ["diff", "--no-color", "-U0", "HEAD"], input.projectRoot, 1_000_000);
+      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output)) : undefined;
+      if (flagged) {
+        const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
+        const activityDurationMs = Date.now() - activityStartedAt;
+        results.push({ executable: "review-prefilter", args: [], exitCode: 1, durationMs: 0, output: flagged, stderr: "" });
+        await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs }, null, 2));
+        await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: "review-prefilter" }, "error");
+        return { ok: false, summary: "quality check failed: review-prefilter", findings: results.map(r => [r.output, r.stderr].filter(Boolean).join("\n")), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+      }
+    }
     const qualityFile = path.join(artifactsDir, `quality-${input.attempt}.json`);
     await writeFile(qualityFile, JSON.stringify({ passed: true, checks: results }, null, 2)); qualityRefs.push(qualityFile);
     qualityChecks = results;
@@ -264,6 +279,10 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     const changed = await runCheck("git", ["diff", "--stat", "--stat-width=140", "HEAD"], input.projectRoot, 6_000);
     if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
     stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
+    // Numbered criteria (game tasks): tell the reviewer which test covers each, so it judges the proof instead of hunting for it.
+    const criteria = [...new Set(input.prompt.match(/\bT\d+-AC\d+\b/g) ?? [])];
+    const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;
+    if (coverage) stageInput.prompt += `\n\n${coverage}`;
   }
   if (input.stage === "review" && input.visual?.enabled) {
     // Screenshots are evidence for the reviewer. Problems only warn unless the project requires visual verification.
