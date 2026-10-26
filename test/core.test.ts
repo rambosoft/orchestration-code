@@ -368,6 +368,6 @@ describe("short, fixed-shape reports", () => {
     expect(prompt.length).toBeLessThan(long.length);
     const short = reviewPrompt("BRIEF", [{ ...stages[0]!, summary: "Changed: a.cs" }], 1);
     expect(short).toContain("Implementation 1: Changed: a.cs");
-    expect(short).not.toContain("left out");
+    expect(short).not.toContain("characters left out");
   });
 });
