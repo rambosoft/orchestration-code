@@ -97,3 +97,8 @@
 - Done: gate repair pass (B-057), failure classifier and automatic resume, reconcile service in the worker (first real cycle ran), vertical-slice gate, review prefilter and coverage table, stack-pr, token accounting and budgets. Status table: research/unity-run-learnings.md section 8.
 - Verified: unit and workflow tests, the slice harness in a real Unity Editor on a copy of tile-merge-2048, the usage report on the real run data. Not verified: a live Unity task through the new gates; the bridge container still runs the old server.ts (budget not passed until it is rebuilt).
 - Next: feature library (ADR 0014, other session), device stage, eval harness, a cheaper review model tier.
+
+## 2026-10-26 update (input and output trimming, B-080..B-083)
+- Done: review digest on a stack table for all families, log and trace compactor, agent commands per stack plus rtk err hint, NUnit and JUnit report reader, short implementer report. The review problem (reviewer saw build output, not code) is fixed at the source.
+- Verified: unit and workflow tests, a real-git test that reproduces the first game's diff composition; the digest, compactor and report parsers on realistic Spring Boot, Unity, Node, Python, Go and Rust samples. Not verified: a live task; a Spring Boot manifest with a declared report (no spring-boot profile exists yet, B-060).
+- Next: stack profiles for spring-boot, react-ts (B-060) can now reuse the table; Graphify pilot only on a large brownfield repo, measured with npm run usage.
