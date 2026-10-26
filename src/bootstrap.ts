@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SLICE_PREFIX } from "./acceptance.js";
 import { parseJsonLoose } from "./json-extract.js";
 import { PLAN_LIMITS, projectSlug, textLines, type BootstrapForm, type OptionValue, type PlanLimits } from "./bootstrap-options.js";
 import { templateSummaries, usableTemplate, type ScaffoldTemplate } from "./bootstrap-templates.js";
@@ -380,7 +381,11 @@ const SCREEN_TASK = /\b(screen|view|menu|hud|popup|dialog|overlay|settings|butto
 export function gameAcceptance(task: { title: string; description: string; acceptance: string[] }, number: number): string {
   const id = `T${number}`;
   const items = [...task.acceptance];
-  if (SCREEN_TASK.test(`${task.title} ${task.description}`)) items.push("Every screen this task builds or changes is rendered by a PlayMode capture test in Assets/Tests/PlayMode/CaptureTests.cs (a blank frame fails the test) and shows its real content");
+  if (SCREEN_TASK.test(`${task.title} ${task.description}`)) {
+    items.push("Every screen this task builds or changes is rendered by a PlayMode capture test in Assets/Tests/PlayMode/CaptureTests.cs (a blank frame fails the test) and shows its real content");
+    // The first game passed every test while a feature could not be reached from the running game; this criterion is traced by the verify gate (sliceProblem).
+    items.push(`${SLICE_PREFIX} a PlayMode test in Assets/Tests/PlayMode starts the game with "yield return SliceHarness.Boot();", reaches what this task builds by simulated player input only, and asserts what the player sees; building the screen or its view model directly in the test does not count`);
+  }
   return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.\n\nTime budget: the full PlayMode suite takes several minutes and grows with every task. While you work run EditMode and only the PlayMode fixtures you touched (unity test --mode PlayMode --filter <Fixture>); run the full PlayMode suite and the hygiene check once at the end, before you finish.`;
 }
 

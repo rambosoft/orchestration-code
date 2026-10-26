@@ -6,10 +6,10 @@ import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
 import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
-import { acceptanceProblem } from "./acceptance.js";
+import { acceptanceProblem, sliceProblem } from "./acceptance.js";
 import { unityPreflight } from "./preflight.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
-import { clearUnityEvidence, readUnityTestSources, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
+import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
@@ -231,7 +231,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {
-      const missing = acceptanceProblem(input.prompt, await readUnityTestSources(input.projectRoot));
+      const testFiles = await readUnityTestFiles(input.projectRoot);
+      const missing = [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
       if (missing) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;

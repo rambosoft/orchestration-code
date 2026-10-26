@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptanceIds, acceptanceProblem, traceAcceptance } from "../src/acceptance.js";
+import { acceptanceIds, acceptanceProblem, SLICE_PREFIX, sliceIds, sliceProblem, traceAcceptance, waiveCriteria, type TestFile } from "../src/acceptance.js";
 import { buildIssuePlan, gameAcceptance, validateBlueprint } from "../src/bootstrap.js";
 import { PLAN_LIMITS, resolveOptions } from "../src/bootstrap-options.js";
 
@@ -52,8 +52,11 @@ describe("game task descriptions", () => {
     expect(text).toContain('"Deferred: T8-ACn -> T<later task> reason"');
   });
   it("adds a standing capture criterion to a task that builds a screen, and not to one that does not", () => {
-    expect(acceptanceIds(gameAcceptance(task, 8))).toEqual(["T8-AC1", "T8-AC2", "T8-AC3"]);
+    expect(acceptanceIds(gameAcceptance(task, 8))).toEqual(["T8-AC1", "T8-AC2", "T8-AC3", "T8-AC4"]);
     expect(gameAcceptance(task, 8)).toContain("PlayMode capture test");
+    expect(sliceIds(gameAcceptance(task, 8))).toEqual(["T8-AC4"]);
+    expect(gameAcceptance(task, 8)).toContain(`T8-AC4: ${SLICE_PREFIX}`);
+    expect(sliceIds(gameAcceptance({ title: "Implement merge rules", description: "Pure C# rules.", acceptance: ["x"] }, 5))).toEqual([]);
     const logic = { title: "Implement merge rules", description: "Pure C# rules.", acceptance: ["Equal tiles merge once per move"] };
     expect(acceptanceIds(gameAcceptance(logic, 5))).toEqual(["T5-AC1"]);
   });
@@ -98,5 +101,40 @@ describe("narrowing a criterion", () => {
     expect(result.prompt).toContain("- T16-AC1: The release build size and the PlayMode frame time and GC allocation are measured and recorded (Narrowed by the operator");
     expect(result.prompt).toContain("Original: Frame time, build size and startup are measured on Android");
     expect(result.prompt).toContain("Waived by the operator, not verified by this task (no device here): The release build launches on a device");
+  });
+});
+
+describe("reachability from the real game (slice gate)", () => {
+  const taskPrompt = `Build the settings screen.\n\nTask id: T4\n\nAcceptance criteria:\n- T4-AC1: Volume can be changed\n- T4-AC2: ${SLICE_PREFIX} a PlayMode test boots the game and reaches settings\n`;
+  const play = (text: string, file = "Assets/Tests/PlayMode/SettingsTests.cs"): TestFile => ({ file, text });
+  const slice = (body: string) => `// Covers: T4-AC2\n[UnityTest]\npublic IEnumerator ReachesSettings()\n{\n${body}\n}\n`;
+
+  it("reads which criteria are reachability criteria", () => {
+    expect(sliceIds(taskPrompt)).toEqual(["T4-AC2"]);
+    expect(sliceIds(prompt(["T4-AC1"]))).toEqual([]);
+  });
+  it("accepts a PlayMode test that boots the real scene and asserts what the player sees", () => {
+    expect(sliceProblem(taskPrompt, [play(slice("    yield return SliceHarness.Boot();\n    Click(\"Settings\");\n    Assert.IsTrue(SliceHarness.Find<SettingsView>().isActiveAndEnabled);"))])).toBeUndefined();
+    expect(sliceProblem(taskPrompt, [play(slice("    yield return EditorSceneManager.LoadSceneAsyncInPlayMode(\"Assets/Scenes/Main.unity\", p);\n    Assert.IsNotNull(GameObject.Find(\"Settings\"));"))])).toBeUndefined();
+  });
+  it("rejects a test that builds the screen directly instead of booting the game", () => {
+    const problem = sliceProblem(taskPrompt, [play(slice("    var view = new SettingsView(new SettingsModel());\n    Assert.AreEqual(0.5f, view.Volume);"))]);
+    expect(problem).toContain("T4-AC2");
+    expect(problem).toContain("does not boot the real game scene");
+  });
+  it("rejects a boot that asserts nothing, a test outside PlayMode, and a missing test", () => {
+    expect(sliceProblem(taskPrompt, [play(slice("    yield return SliceHarness.Boot();"))])).toContain("asserts nothing");
+    expect(sliceProblem(taskPrompt, [play(slice("    yield return SliceHarness.Boot();\n    Assert.Pass();"), "Assets/Tests/EditMode/SettingsTests.cs")])).toContain("outside Assets/Tests/PlayMode");
+    expect(sliceProblem(taskPrompt, [play("// nothing here")])).toContain('add a PlayMode test that says "Covers: T4-AC2"');
+  });
+  it("looks only at the test the Covers comment names: a boot in another test does not count", () => {
+    const text = `// Covers: T4-AC1\n[Test] public void Volume() { Assert.Pass(); }\n// Covers: T4-AC2\n[Test] public void Direct() { new SettingsView(); Assert.Pass(); }\n// Covers: T9-AC1\n[UnityTest] public IEnumerator Other() { yield return SliceHarness.Boot(); Assert.Pass(); }`;
+    expect(sliceProblem(taskPrompt, [play(text)])).toContain("does not boot");
+  });
+  it("lets a criterion that is openly deferred or waived pass, and does nothing for tasks without a slice criterion", () => {
+    expect(sliceProblem(taskPrompt, [play("// Deferred: T4-AC2 -> T9 the settings entry comes with the menu")])).toBeUndefined();
+    const waived = waiveCriteria(taskPrompt, [{ id: "T4-AC2", reason: "no device" }]).prompt;
+    expect(sliceProblem(waived, [])).toBeUndefined();
+    expect(sliceProblem(prompt(["T4-AC1"]), [])).toBeUndefined();
   });
 });

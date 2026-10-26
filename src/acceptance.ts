@@ -32,6 +32,39 @@ export function acceptanceProblem(prompt: string, testTexts: string[]): string |
   return `acceptance criteria without a test: ${missing.join(", ")}. Add a test (EditMode for rules, PlayMode for screens and flows) for each, and put "Covers: ${missing[0]}" in a comment on the test that proves it. A criterion this task truly cannot meet because it depends on a later task is declared in a test file comment as "Deferred: ${missing[0]} -> T<later task> reason" and is shown to the reviewer; never delete or weaken a criterion.`;
 }
 
+// Reachability (the vertical slice). The first game's tests passed while the feature could not be reached from the running game (Continue was not wired, a screen was a placeholder), because the tests
+// built the screen directly. A screen or flow task therefore carries a standing criterion that starts with SLICE_PREFIX; the test that covers it must live in Assets/Tests/PlayMode, boot the real game
+// scene and assert something. The check is a trace of the test source, not a Unity run: the PlayMode suite itself still has to pass.
+export const SLICE_PREFIX = "Reachable from the real game:";
+export const SLICE_BOOT = /\bSliceHarness\.Boot\w*\s*\(|\bSceneManager\.LoadScene(?:Async)?\s*\(|\bEditorSceneManager\.LoadSceneAsyncInPlayMode\s*\(/;
+const PLAY_MODE_PATH = /(?:^|[\\/])Tests[\\/]PlayMode[\\/]/;
+export function sliceIds(prompt: string): string[] {
+  return unique([...prompt.matchAll(/^\s*[-*]\s*(T\d+-AC\d+)\s*:\s*Reachable from the real game\b/gm)].map(match => match[1]!));
+}
+export type TestFile = { file: string; text: string };
+/** The text of the test a `Covers:` comment names: from that comment to the next `Covers:` comment, at most 80 lines. */
+function coveredBlock(file: TestFile, id: string): string | undefined {
+  const lines = file.text.split(/\r?\n/);
+  const start = lines.findIndex(line => /\bCovers\s*:/i.test(line) && (line.match(ID) as string[] | null ?? []).includes(id));
+  if (start < 0) return undefined;
+  let end = start + 1;
+  while (end < lines.length && end - start < 80 && !/\bCovers\s*:/i.test(lines[end]!)) end++;
+  return lines.slice(start, end).join("\n");
+}
+/** The failure text for the repair prompt, or undefined when every slice criterion is proven by a PlayMode test that boots the real scene and asserts. */
+export function sliceProblem(prompt: string, files: TestFile[]): string | undefined {
+  const problems: string[] = [];
+  const deferred = new Set(files.flatMap(file => [...file.text.matchAll(/\bDeferred\s*:\s*(T\d+-AC\d+)\s*->/gi)].map(match => match[1]!)));
+  for (const id of sliceIds(prompt)) {
+    if (deferred.has(id)) continue;
+    const blocks = files.filter(file => PLAY_MODE_PATH.test(file.file)).map(file => coveredBlock(file, id)).filter((block): block is string => block !== undefined);
+    if (!blocks.length) { if (!files.some(file => coveredBlock(file, id) !== undefined)) problems.push(`${id} has no test (add a PlayMode test that says "Covers: ${id}")`); else problems.push(`${id} is covered by a test outside Assets/Tests/PlayMode; the reachability test must be a PlayMode test`); continue; }
+    if (!blocks.some(block => SLICE_BOOT.test(block))) problems.push(`${id}: the covering test does not boot the real game scene (use "yield return SliceHarness.Boot();" or load the main scene); building the screen or its view model directly proves nothing about the running game`);
+    else if (!blocks.some(block => SLICE_BOOT.test(block) && /\bAssert\.|\bConstraint\b|\bIs\.|\bHas\./.test(block))) problems.push(`${id}: the covering test boots the game but asserts nothing about what the player sees`);
+  }
+  return problems.length ? `reachability criteria not proven from the running game: ${problems.join("; ")}. Reach the feature by simulated player input from the scene the player starts, and assert the visible result.` : undefined;
+}
+
 /** `replacement`: the part of the criterion an automated run can still prove. The criterion keeps its id (so it still needs a test) and the device-only remainder is declared waived in its text. */
 export type Waiver = { id: string; reason: string; replacement?: string };
 /**
