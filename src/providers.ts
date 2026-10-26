@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { claudeRunSettings, pluginsToDisable, settingSources } from "./claude-settings.js";
 import { createRequire } from "node:module";
 import { type StageInput, type StageOutput } from "./contracts.js";
 import { parseReviewAssessment, reviewOutcome } from "./review.js";
@@ -76,7 +79,7 @@ export class FakeProvider implements AgentProvider {
   }
 }
 
-type ProviderSpec = { executable: string; args: (prompt: string, stage: StageInput["stage"], reasoningEffort?: StageInput["reasoningEffort"], model?: string, images?: string[], projectRoot?: string) => string[]; env?: Record<string, string> };
+type ProviderSpec = { executable: string; args: (prompt: string, stage: StageInput["stage"], reasoningEffort?: StageInput["reasoningEffort"], model?: string, images?: string[], projectRoot?: string, options?: { settings?: string }) => string[]; env?: Record<string, string> };
 const require = createRequire(import.meta.url);
 const pinnedCodexCli = require.resolve("@openai/codex/bin/codex.js");
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
@@ -90,18 +93,21 @@ const WRITE_TOOLS = toolRules(["npm", "npx", "node", "git status", "git diff", "
 /** rtk filters a command's output (src/rtk.ts); allowing it is harmless when it is not installed. */
 const RTK_TOOLS = toolRules(["rtk"]);
 /** Implement may edit files and run project tooling (but not commit/push; the orchestrator publishes). Spend is capped per stage. */
-export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string, unity?: UnityAgentContext, stack: StackInfo = []): string[] {
+export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], environment: NodeJS.ProcessEnv = process.env, model?: string, unity?: UnityAgentContext, stack: StackInfo = [], settings?: string): string[] {
   const budget = Number(environment.CLAUDE_MAX_BUDGET_USD);
   const writes = stage === "implement" || stage === "reproduce";
   return ["-p", "--permission-mode", writes ? "acceptEdits" : "plan", "--max-budget-usd", String(Number.isFinite(budget) && budget > 0 ? budget : 25),
     // On Windows Claude Code runs commands through its PowerShell tool, which has its own rules: without them every test command was denied and the agent delivered code it never ran.
     ...(writes ? [`--allowedTools=${[...new Set([...WRITE_TOOLS, ...(unity ? UNITY_TOOLS : []), ...toolRules(agentCommands(stack)), ...RTK_TOOLS])].join(",")}`] : []),
     ...(unity?.pluginDir ? ["--plugin-dir", unity.pluginDir] : []),
+    // Per-run settings (src/claude-settings.ts): the operator's own plugins off, and on stages that run commands RTK's output filter for build, test and git commands.
+    ...(settings ? ["--settings", settings] : []),
+    ...(settingSources(environment) ? ["--setting-sources", settingSources(environment)!] : []),
     ...(model ? ["--model", model] : []), "--output-format", "json", prompt];
 }
 const specs: Record<string, ProviderSpec> = {
   // ECC_GATEGUARD=off: an interactive "state the facts first" hook of the operator's own Claude plugins must not deny the first tool call of an unattended run.
-  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot), projectRoot ? detectStack(projectRoot) : []), env: { ECC_GATEGUARD: "off" } },
+  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot, options) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot), projectRoot ? detectStack(projectRoot) : [], options?.settings), env: { ECC_GATEGUARD: "off" } },
   codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" || stage === "reproduce" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
@@ -150,6 +156,17 @@ export function cliInstruction(stage: StageInput["stage"], prompt: string, rtkAc
   return `${stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands unrelated to the task. Work only in this isolated project worktree.${rtkActive ? " RTK command-output filtering is enabled; if a compact result omits needed detail, rerun that command with `rtk bypass <command>`." : ""}${outputFilter ? OUTPUT_FILTER_HINT : ""} Task: ${prompt}`;
 }
 
+/** The compiled RTK hook script next to this file, unless ORCHESTRATOR_RTK_HOOK=0 or it is not built. */
+export function rtkHookScript(env: NodeJS.ProcessEnv = process.env, script = fileURLToPath(new URL("./rtk-claude-hook.js", import.meta.url))): string | undefined {
+  return env.ORCHESTRATOR_RTK_HOOK === "0" || !existsSync(script) ? undefined : script;
+}
+/** The --settings for one Claude run: the operator's plugins off, plus the RTK hook when the stage runs commands and rtk is installed. */
+export function claudeSettingsFor(projectRoot: string, withHook: boolean, env: NodeJS.ProcessEnv = process.env): { settings?: string } {
+  const hookScript = withHook ? rtkHookScript(env) : undefined;
+  const settings = claudeRunSettings({ disablePlugins: pluginsToDisable(projectRoot, undefined, env), ...(hookScript ? { hookScript } : {}) });
+  return settings ? { settings } : {};
+}
+
 let rtkProbe: Promise<boolean> | undefined;
 /** Whether the rtk CLI is on this worker's PATH, asked once per process. ORCHESTRATOR_RTK=0 turns the hint off. */
 const rtkAvailable = (): Promise<boolean> => process.env.ORCHESTRATOR_RTK === "0" ? Promise.resolve(false) : (rtkProbe ??= isRtkInstalled().catch(() => false));
@@ -165,7 +182,7 @@ export class CliProvider implements AgentProvider {
     const outputFilter = !rtk.active && (input.stage === "implement" || input.stage === "reproduce") && await rtkAvailable();
     const instruction = cliInstruction(input.stage, input.prompt, rtk.active, outputFilter);
     return new Promise((resolve, reject) => {
-      const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort, input.model, input.images, input.projectRoot), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
+      const child = spawn(spec.executable, spec.args(instruction, input.stage, input.reasoningEffort, input.model, input.images, input.projectRoot, { ...(this.id === "claude" ? claudeSettingsFor(input.projectRoot, outputFilter) : {}) }), { cwd: input.projectRoot, shell: false, windowsHide: true, env: { ...cliProviderEnvironment(), ...spec.env } });
       const stdout: Buffer[] = []; const stderr: Buffer[] = []; let size = 0; let timedOut = false;
       const signal = activitySignal(); const stopKill = killOnAbort(child, signal);
       const timer = setTimeout(() => { timedOut = true; killProcessTree(child); }, timeoutMs);

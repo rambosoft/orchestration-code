@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANSWER_SHAPE } from "./answer-shape.js";
 import { assertTokenBudget, clampedText, HANDOFF_BUDGETS } from "./handoffs.js";
 import { parseJsonLoose } from "./json-extract.js";
 
@@ -37,7 +38,7 @@ ANALYSIS stage. Decide HOW to solve this before any code is planned. Inspect the
 3. Choose one. Give the rationale and concrete parameters (names, values, units) with the derivation behind each number. When the task involves tunable behaviour such as difficulty, timing, limits or thresholds, derive the values from the existing mechanics, state the worst-case invariant that must always hold, and prefer gradual, bounded change over jumps.
 4. List the validation properties the tests must establish (invariants, worst-case bounds, monotonic or bounded growth, determinism), each as a testable statement.
 5. List the main risks and give 1 to 5 concise, testable implementation requirements that follow from the analysis.
-Return only one JSON object, no prose and no code fence, matching exactly: ${SCHEMA_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.analysis} tokens.`;
+${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${SCHEMA_HINT}. Keep the whole answer under ${HANDOFF_BUDGETS.analysis} tokens.`;
 }
 
 export function repairAnalysisPrompt(taskGoal: string, previous: string, diagnostic: string): string {

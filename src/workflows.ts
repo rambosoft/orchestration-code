@@ -1,6 +1,7 @@
 import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import { classifyFailure } from "./failure-class.js";
+import { digestContract } from "./contract-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
@@ -94,7 +95,7 @@ export function implementationPrompt(taskPrompt: string, repairFindings?: Review
 ${SIMPLICITY_POLICY}${configuredChecks}\n\n${testStrategy(qualityCommands)}
 
 ${REPORT_STYLE}`;
-  const guidance = [uiUxContext, analysisDecisions, contractContext].filter(Boolean).map(part => `\n\n${part}`).join("");
+  const guidance = [uiUxContext, analysisDecisions, digestContract(contractContext)].filter(Boolean).map(part => `\n\n${part}`).join("");
   if (!repairFindings?.length) return `${taskPrompt}${guidance}\n\n${deliveryContract}`;
   const repairList = repairFindings.map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}\n   Evidence: ${finding.evidence}${finding.acceptanceCriterion ? `\n   Acceptance criterion: ${finding.acceptanceCriterion}` : ""}${finding.scenario ? `\n   Scenario: ${finding.scenario}` : ""}`).join("\n");
   return `${taskPrompt}${guidance}\n\n${deliveryContract}\n\nREPAIR: One bounded repair pass remains. Resolve each blocker below with the smallest complete fix; add or update a regression test. Run focused tests; the orchestration runs its quality gate before follow-up review. Report each resolution and any unresolved blocker with evidence.\n${repairList}`;
@@ -125,7 +126,7 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
   const analysisReviewText = analysisDecisions ? `\n\n${analysisDecisions}\nReview against these analysis decisions: report a blocking finding if the implementation contradicts a chosen parameter or lacks a test for a validation property.` : "";
-  const contractReviewText = contractContext ? `\n\n${contractContext}\nReview against the contract: report a blocking finding only when the diff adds scope that the contract's non-goals or boundaries exclude, or breaks a drift rule, and the acceptance checks do not require it. Give the concrete scenario.` : "";
+  const contractReviewText = contractContext ? `\n\n${digestContract(contractContext)}\nReview against the contract: report a blocking finding only when the diff adds scope that the contract's non-goals or boundaries exclude, or breaks a drift rule, and the acceptance checks do not require it. Give the concrete scenario.` : "";
   const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}${contractReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
 
 Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","scenario":"a concrete input or state and the wrong result it produces","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Evidence standard: every critical/high finding must carry a scenario (for a test finding: a real defect the test would let through). If you cannot state one, it is a note, not a finding; remarks that code or tests could be stricter, more thorough or differently structured are notes. Do not execute commands. ${checkStatus}`;

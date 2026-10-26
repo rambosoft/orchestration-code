@@ -35,6 +35,7 @@ describe("design direction", () => {
     const charter = deterministicCharter(input);
     expect(charter.design_rules.length).toBeGreaterThan(3);
     expect(charterPrompt(input, stack)).toContain("page_directions");
+    expect(charterPrompt(input, stack)).toContain("Answer shape: follow the numbered steps");
     expect(charterPrompt(input, stack)).toContain("UI/UX DIRECTION");
     expect(blueprintPrompt(input, stack, charter, planLimits("normal"), true)).toContain("whole-product visual polish");
     expect(charterPrompt(run({ platform: "api_backend" }), stack)).not.toContain("UI/UX DIRECTION");
