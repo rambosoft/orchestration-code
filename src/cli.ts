@@ -7,6 +7,9 @@ import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
 import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
+import { paperclipClient, startReconcileService } from "./reconcile-service.js";
+import { stackPr } from "./stack-pr.js";
+import { formatUsageReport, usageReport } from "./usage.js";
 import { formatDrain, waitForDrain } from "./drain.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
@@ -32,7 +35,7 @@ async function startProjectRun(projectFile: string, taskId: string, revision: st
   return startRun({ taskId, taskRevision: revision, projectId: project.id, profile: project.defaultProfile, prompt: parsedPrompt.prompt,
     openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.openSpec), analysis: parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual,
     projectRoot, repository, artifactsDir: path.join(data, "artifacts", taskId),
-    provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, plugins: project.plugins,
+    provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), plugins: project.plugins,
     qualityCommands: project.qualityCommandsByProfile[project.defaultProfile] ?? project.qualityCommands,
     maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism,
     approval: project.policy.requireApprovalBeforeMerge });
@@ -70,15 +73,34 @@ async function main() {
     const only = onlyIndex >= 0 ? args[onlyIndex + 1] : undefined;
     if ((days !== undefined && !(days > 0)) || (onlyIndex >= 0 && !only)) throw new Error("usage: dev reconcile [--apply] [--days N] [--issue LOC-65]");
     const findings = await reconcile({
-      paperclip: async <T>(method: "GET" | "POST" | "PATCH", route: string, body?: unknown) => {
-        const response = await fetch(`${base}${route}`, { method, headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30_000) });
-        if (!response.ok) throw new Error(`Paperclip ${method} ${route} returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
-        return await response.json() as T;
-      },
+      paperclip: paperclipClient(base, token),
       listRuns: async () => await listRuns() as RunRow[],
       inspect: async workflowId => await inspectRun(workflowId) as RunDetail,
-    }, { apply, ...(days !== undefined ? { days } : {}), ...(only ? { only } : {}) });
+      resume: async workflowId => (await resumeRun(workflowId)).workflowId,
+    }, { apply, autoResume: args.includes("--auto-resume"), ...(days !== undefined ? { days } : {}), ...(only ? { only } : {}) });
     console.log(formatFindings(findings, apply));
+    return;
+  }
+  if (command === "reconcile-watch") {
+    // The same service the worker runs, in the foreground (a terminal, or a machine without the worker): `npm run reconcile:watch`. The worker already runs it, so use this only to watch it work.
+    const stop = await startReconcileService();
+    if (!stop) throw new Error("PAPERCLIP_API_TOKEN must be set (and ORCHESTRATOR_RECONCILE must not be 0)");
+    process.once("SIGINT", () => { stop(); process.exit(0); });
+    await new Promise<never>(() => undefined);
+  }
+  if (command === "usage") {
+    // Token usage per run from the stage artifacts: cost units (input-token equivalents), raw counts and the cache hit rate. `--since 2026-10-24` limits it.
+    const sinceIndex = args.indexOf("--since");
+    const rows = await usageReport(path.join(data, "artifacts"), sinceIndex >= 0 ? { since: args[sinceIndex + 1]! } : {});
+    console.log(args.includes("--json") ? JSON.stringify(rows, null, 2) : formatUsageReport(rows));
+    return;
+  }
+  if (command === "stack-pr") {
+    // One merge for a stack of task PRs (src/stack-pr.ts): retargets the tip onto the real base. Dry run unless --apply; never merges.
+    const repoIndex = args.indexOf("--repo"); const throughIndex = args.indexOf("--through");
+    if ((repoIndex >= 0 && !args[repoIndex + 1]) || (throughIndex >= 0 && !args[throughIndex + 1])) throw new Error("usage: dev stack-pr [--repo <project clone>] [--through <PR number|task id|branch>] [--apply] [--close-stacked]");
+    const result = await stackPr({ cwd: repoIndex >= 0 ? args[repoIndex + 1]! : process.cwd(), ...(throughIndex >= 0 ? { through: args[throughIndex + 1]! } : {}), apply: args.includes("--apply"), closeStacked: args.includes("--close-stacked") });
+    console.log(result.lines.join("\n"));
     return;
   }
   if (command === "cleanup") {
@@ -106,8 +128,9 @@ async function main() {
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
   }
   if (command === "resume-run") {
-    if (!args[0]) throw new Error("usage: dev resume-run <workflowId of the failed run>");
-    return console.log(JSON.stringify(await resumeRun(args[0]), null, 2));
+    const budgetIndex = args.indexOf("--budget"); const budget = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;
+    if (!args[0] || args[0].startsWith("--") || (budget !== undefined && !(Number.isInteger(budget) && budget > 0))) throw new Error("usage: dev resume-run <workflowId of the failed run> [--budget <cost units>]");
+    return console.log(JSON.stringify(await resumeRun(args[0], budget ? { budget } : {}), null, 2));
   }
   if (command === "resume" || command === "restart") {
     const [projectFile, taskId, revision, ...promptParts] = args;
@@ -118,6 +141,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

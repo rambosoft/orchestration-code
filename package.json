@@ -30,6 +30,8 @@
     "reconcile:watch": "node scripts/reconcile-watch.mjs",
     "drain": "node dist/src/cli.js drain",
     "reconcile": "node dist/src/cli.js reconcile",
+    "stack-pr": "node dist/src/cli.js stack-pr",
+    "usage": "node dist/src/cli.js usage",
     "deploy:worker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-worker.ps1",
     "e2e": "node dist/src/e2e.js",
     "bootstrap:e2e": "node dist/src/bootstrap-e2e.js",

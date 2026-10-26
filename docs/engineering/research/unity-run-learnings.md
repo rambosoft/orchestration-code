@@ -80,3 +80,22 @@ All three live in activities and helpers, so no `patched()` and no new workflow 
 - The verify activity reuses a stored pass when command key and fingerprint match: the check loop is skipped, results are reported with duration 0 and a warning "reused". The acceptance trace still runs. Failures are never cached. `ORCHESTRATOR_QUALITY_REUSE=0` turns it off.
 - Honest scope: the repair round changes files, so it still re-runs; the saving is activity retries, resumes, no-op repair rounds and a re-verify after a timeout. The bigger lever on suite time (the agent re-running everything) is guidance and the affected-tests strategy that already exist.
 - Tests: same tree reuses, changed file / changed command / failed run does not, after-run fingerprint matches (generated `.meta`), ignored files do not change the fingerprint, switch off, corrupt cache file ignored.
+
+## 8. Status of the recommendations (2026-10-26)
+
+| # | Recommendation | State |
+| --- | --- | --- |
+| 1 | Preflight with auto-fix, doctor disk/path/Editor/adb | done (B-062) |
+| 2 | Publish guard for generated output per stack | done (B-062) |
+| 3 | Failure classifier, auto-resume, gate repair pass | done (B-057, B-063): `src/failure-class.ts`, `repairGate` in the workflow behind `patched("gate-repair")`, resume by the reconcile service |
+| 4 | Reconcile as a service | done (B-063): runs in the worker, heartbeat checked by doctor |
+| 5 | Run a suite once for an unchanged tree | done (B-062) |
+| 6 | Vertical-slice gate | done (B-064): standing criterion, `sliceProblem`, template `SliceHarness.Boot()` compiled and run in a real Editor |
+| 7 | Cheaper, sharper review | done (B-065): prefilter in verify, criteria coverage table in the review prompt. Not done: a cheaper review model tier |
+| 8 | One PR per milestone | done (B-066) as `npm run stack-pr` (retarget the tip, optional close of intermediates); an integration branch per milestone was not built |
+| 9 | Token budgets and accounting | done (B-079): `npm run usage`, manifest `budget`, `resume-run --budget` |
+| 10 | Unity feature library | design only (ADR 0014, another session) |
+| 11 | Device stage | not started; adb detection in doctor only (the phone is still not visible to Windows) |
+| 12 | Eval harness | not started |
+
+Not verified live: none of 3 to 9 has run on a real Unity task yet; each is covered by unit and workflow tests, the slice harness by a real PlayMode run on a copy of the finished game, and the reconcile service by its first real cycle in the worker.

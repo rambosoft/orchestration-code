@@ -231,6 +231,8 @@ beforeAll(async () => {
     executeStage: async (input: StageInput): Promise<StageOutput> => {
       const state = runs.get(input.runId)!;
       state.calls.push(input);
+      if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY_ONCE]") && state.calls.filter(call => call.stage === "verify").length === 1) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["FAIL test/button.test.ts > renders: expected 1 to be 2"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
+      if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY_ENV]")) return { stage: "verify", ok: false, summary: "quality check failed: unity test", findings: ["Unity exited 198: No valid Unity Editor license found"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY]")) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["1 test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       const out = { ...(await fake.run(input)), stage: input.stage };
       const nth = state.calls.filter(call => call.stage === input.stage).length;
@@ -423,6 +425,29 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.metadata?.review.stopReason).toBe("deterministic_checks_failed_after_repair");
     expect(result.publish).toBeUndefined();
     expect(state.comments).toEqual([]);
+  });
+  it("gives a check that failed on the code one repair pass with its own output, then repeats the checks and publishes", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY_ONCE]" });
+    expect(result.status, result.message).toBe("completed");
+    const implementations = state.calls.filter(call => call.stage === "implement");
+    expect(implementations).toHaveLength(2);
+    expect(implementations[1]!.prompt).toContain("Deterministic gate failed: quality check failed: npm test");
+    expect(implementations[1]!.prompt).toContain("expected 1 to be 2");
+    expect(state.calls.filter(call => call.stage === "verify")).toHaveLength(2);
+    expect(result.metadata?.warnings?.some(warning => warning.message.includes("one repair pass ran"))).toBe(true);
+    expect(result.publish?.prUrl).toContain("/pull/1");
+  });
+  it("repairs at most once: a check that keeps failing ends the run", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]" });
+    expect(result.status).toBe("failed");
+    expect(state.calls.filter(call => call.stage === "implement")).toHaveLength(2);
+    expect(result.publish).toBeUndefined();
+  });
+  it("does not spend a code repair on a failure the machine caused", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY_ENV]" });
+    expect(result.status).toBe("failed");
+    expect(state.calls.filter(call => call.stage === "implement")).toHaveLength(1);
+    expect(result.metadata?.review.stopReason).toBe("verify_quality_gate_failed");
   });
   it("posts no comment when the review is clean", async () => {
     const clean = await run({ profile: "implementation", prompt: "Add a button" });

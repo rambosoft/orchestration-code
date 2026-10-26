@@ -1,5 +1,6 @@
 import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
+import { classifyFailure } from "./failure-class.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles } from "./profiles.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
@@ -158,7 +159,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
   }
   setHandler(approveSignal, (value) => { approved = value; rejected = !value; });
-  const maxRounds = effectiveMaxReviewRounds(input); let repairCount = 0; let reviewCount = 0; let findingsFixed = 0; let stopReason: string | undefined;
+  const maxRounds = effectiveMaxReviewRounds(input); let repairCount = 0; let gateRepairCount = 0; let reviewCount = 0; let findingsFixed = 0; let stopReason: string | undefined;
   const nonBlockingNotes: ReviewFinding[] = []; const unresolvedFindings: ReviewFinding[] = [];
   const warnings: Array<{ stage: string; message: string }> = [];
   const reviewRuns: NonNullable<RunResult["metadata"]>["review"]["reviewRuns"] = [];
@@ -191,6 +192,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
+    if (input.budget) args.budget = input.budget;
     const output = await executeStage(args);
     // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
     const reported = output.metadata?.warnings;
@@ -220,6 +222,21 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return { value: spec.fallback(), output, degraded };
     }
     throw lastError;
+  };
+  // A deterministic check that fails because of the code gets one bounded repair pass: the check's own output goes to an implement stage, then the checks run again. Failures caused by the
+  // machine (a licence, a locked project, a long path) are not repaired here; a code change cannot fix them, and the run is resumed after the cause is healed instead. patched(): runs recorded
+  // before this existed ended at the failed check.
+  const GATE_REPAIR_LIMIT = 1;
+  const repairGate = async (failed: StageOutput): Promise<StageOutput> => {
+    if (failed.ok || gateRepairCount >= GATE_REPAIR_LIMIT || !executionBrief) return failed;
+    const evidence = [failed.summary, ...failed.findings].join("\n");
+    if (classifyFailure({ message: evidence, stopReason: "verify_quality_gate_failed" }).kind !== "gate" || !patched("gate-repair")) return failed;
+    gateRepairCount++;
+    const finding: ReviewFinding = { severity: "high", category: "tests", title: `Deterministic gate failed: ${failed.summary.slice(0, 200)}`, evidence: evidence.slice(0, 6000), fixableInCode: true };
+    warnings.push({ stage: "verify", message: `a deterministic check failed (${failed.summary.slice(0, 160)}); one repair pass ran before the checks were repeated` });
+    try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief), [finding], gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
+    catch (error) { if (isCancellation(error)) throw error; return failed; }
+    return await execute("verify", { provider: "fake", verificationOnly: true });
   };
   if (shouldRunOpenSpec(input.openSpec, profile.stages)) {
     if (!input.repository || workspace === input.projectRoot) return finish("failed", "OpenSpec requires an isolated Git worktree; configure a repository for this implementation task.");
@@ -537,6 +554,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       } else if (stage === "verify" && deterministicVerification) {
         // The deterministic quality commands are the verification. A second model call here could only ever pass, so it is skipped
         // (patched(): runs already past this point replay the original call).
+        if (!deterministicVerification.ok) deterministicVerification = await repairGate(deterministicVerification);
         if (!deterministicVerification.ok || patched("skip-model-verify")) output = deterministicVerification;
         else output = await execute("verify", { deterministicChecksAlreadyPassed: true, qualityCommands: [] });
       } else {
@@ -576,7 +594,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
         try {
-          const verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
+          let verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
+          if (!verification.ok) verification = await repairGate(verification);
           deterministicVerification = verification;
           if (!verification.ok) { unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${verification.summary}`); }
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }

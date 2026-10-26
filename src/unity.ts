@@ -186,19 +186,23 @@ export async function stopProjectEditors(projectRoot: string, deps: EditorProces
   } catch { return []; }
 }
 
-/** Source of every C# test file of the project (Assets/Tests), for the acceptance trace. */
-export async function readUnityTestSources(projectRoot: string): Promise<string[]> {
-  const texts: string[] = [];
+/** Every C# test file of the project (Assets/Tests) with its path relative to the project, for the acceptance and reachability traces. */
+export async function readUnityTestFiles(projectRoot: string): Promise<Array<{ file: string; text: string }>> {
+  const files: Array<{ file: string; text: string }> = [];
   const walk = async (dir: string): Promise<void> => {
     let entries: import("node:fs").Dirent[];
     try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(full); else if (entry.name.endsWith(".cs")) texts.push(await readFile(full, "utf8"));
+      if (entry.isDirectory()) await walk(full); else if (entry.name.endsWith(".cs")) files.push({ file: path.relative(projectRoot, full).split("\\").join("/"), text: await readFile(full, "utf8") });
     }
   };
   await walk(path.join(projectRoot, "Assets", "Tests"));
-  return texts;
+  return files;
+}
+/** Source of every C# test file of the project (Assets/Tests), for the acceptance trace. */
+export async function readUnityTestSources(projectRoot: string): Promise<string[]> {
+  return (await readUnityTestFiles(projectRoot)).map(file => file.text);
 }
 
 // The Unity CLI can return a moment before its Editor has exited and released Temp/UnityLockfile, and the next command then fails with "instances cannot open the same project"
