@@ -8,6 +8,7 @@ import { pluginRegistry } from "./plugins.js";
 import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js";
 import { unityPreflight } from "./preflight.js";
+import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
@@ -302,6 +303,12 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       await emitActivityEvent({ event: "activity.reused", ...activityContext, provider: reusable.data.provider });
       return { ...reusable.data, stage: input.stage, metadata: { ...reusable.data.metadata, reused: true }, artifactRefs: reusable.data.artifactRefs.includes(stageFile) ? reusable.data.artifactRefs : [...reusable.data.artifactRefs, stageFile] };
     }
+  }
+  // A task's token budget (manifest `budget`) is checked before every model call, from the usage the earlier stages of this run recorded: a warning near the limit, a hard stop at it.
+  if (input.budget && input.provider !== "fake") {
+    const spent = budgetStatus((await runUsage(artifactsDir)).units, input.budget);
+    if (spent.state === "exceeded") throw ApplicationFailure.nonRetryable(spent.message!, "TokenBudgetExceeded");
+    if (spent.state === "warn") visualWarnings.push(spent.message!);
   }
   const providerStarted = Date.now();
   let result: StageOutput;

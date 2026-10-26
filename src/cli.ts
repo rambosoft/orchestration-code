@@ -9,6 +9,7 @@ import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
 import { paperclipClient, startReconcileService } from "./reconcile-service.js";
 import { stackPr } from "./stack-pr.js";
+import { formatUsageReport, usageReport } from "./usage.js";
 import { formatDrain, waitForDrain } from "./drain.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
@@ -34,7 +35,7 @@ async function startProjectRun(projectFile: string, taskId: string, revision: st
   return startRun({ taskId, taskRevision: revision, projectId: project.id, profile: project.defaultProfile, prompt: parsedPrompt.prompt,
     openSpec: resolveOpenSpecEnabled(project.openSpec.enabled, parsedPrompt.openSpec), analysis: parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual,
     projectRoot, repository, artifactsDir: path.join(data, "artifacts", taskId),
-    provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, plugins: project.plugins,
+    provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), plugins: project.plugins,
     qualityCommands: project.qualityCommandsByProfile[project.defaultProfile] ?? project.qualityCommands,
     maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism,
     approval: project.policy.requireApprovalBeforeMerge });
@@ -87,6 +88,13 @@ async function main() {
     process.once("SIGINT", () => { stop(); process.exit(0); });
     await new Promise<never>(() => undefined);
   }
+  if (command === "usage") {
+    // Token usage per run from the stage artifacts: cost units (input-token equivalents), raw counts and the cache hit rate. `--since 2026-10-24` limits it.
+    const sinceIndex = args.indexOf("--since");
+    const rows = await usageReport(path.join(data, "artifacts"), sinceIndex >= 0 ? { since: args[sinceIndex + 1]! } : {});
+    console.log(args.includes("--json") ? JSON.stringify(rows, null, 2) : formatUsageReport(rows));
+    return;
+  }
   if (command === "stack-pr") {
     // One merge for a stack of task PRs (src/stack-pr.ts): retargets the tip onto the real base. Dry run unless --apply; never merges.
     const repoIndex = args.indexOf("--repo"); const throughIndex = args.indexOf("--through");
@@ -120,8 +128,9 @@ async function main() {
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
   }
   if (command === "resume-run") {
-    if (!args[0]) throw new Error("usage: dev resume-run <workflowId of the failed run>");
-    return console.log(JSON.stringify(await resumeRun(args[0]), null, 2));
+    const budgetIndex = args.indexOf("--budget"); const budget = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;
+    if (!args[0] || args[0].startsWith("--") || (budget !== undefined && !(Number.isInteger(budget) && budget > 0))) throw new Error("usage: dev resume-run <workflowId of the failed run> [--budget <cost units>]");
+    return console.log(JSON.stringify(await resumeRun(args[0], budget ? { budget } : {}), null, 2));
   }
   if (command === "resume" || command === "restart") {
     const [projectFile, taskId, revision, ...promptParts] = args;
