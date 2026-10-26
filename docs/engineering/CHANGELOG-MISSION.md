@@ -46,6 +46,12 @@ One line per completed item: id, commit, evidence.
 - `src/quality-cache.ts`: the verify activity reuses a passing set of quality checks when the command list and every non-ignored file of the working tree are unchanged (activity retry, resumed run, no-op repair round); failures are never reused; the acceptance trace still runs; `ORCHESTRATOR_QUALITY_REUSE=0` turns it off.
 - No workflow code changed: no `patched()`, replay fixture unchanged. Tests: 686 pass (56 files). Not verified: a live Unity run (worker restart needed).
 
+## 2026-10-26 Feature library design [B-067]
+- Added ADR 0014 (Proposed): reusable features stored in a separate private Git repository, copied into projects with a lock file, installed and updated by a small TypeScript `lib` CLI (Copier considered and rejected for now), adapted by a normal gated task, harvested with human approval, plus the pilot plan. Docs only; backlog B-068..B-071 added.
+
+## 2026-10-26 Feature library: Unity and Spring Boot decisions, milestone library check [B-072..B-078]
+- ADR 0014 extended: modular Spring Boot server per game (Spring Modulith), offline-first client ports, feature folders, first-game feature map, two linked projects with a server-owned contract, optional per-project milestone library check (deterministic Layer 1, bounded Layer 2), and the game-first order. Backlog B-072..B-078 added; B-070 pilot candidate updated. Docs only.
+
 ## 2026-10-26 Tier 1b and Tier 2 from the first Unity run [B-057, B-063..B-066, B-079]
 - Failure classifier (`src/failure-class.ts`): environment, transient, gate, model, external, budget, unknown, each with an action. Gate repair pass (B-057): a deterministic check that fails because of the code gets one implement repair with its own output, then the checks run again; a machine-caused failure is not repaired; `patched("gate-repair")`, replay fixture unchanged.
 - Reconcile service inside the worker (B-063): reports finished runs every 2 minutes, resumes a transient or environment failure once without commenting on the task, writes `data/logs/reconcile-heartbeat.json`; doctor `reconcile:service`; the dead Start-Job in run-worker.ps1 is gone; `reconcile --auto-resume`, `reconcile-watch`.
