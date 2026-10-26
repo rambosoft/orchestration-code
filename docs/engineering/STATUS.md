@@ -102,3 +102,8 @@
 - Done: review digest on a stack table for all families, log and trace compactor, agent commands per stack plus rtk err hint, NUnit and JUnit report reader, short implementer report. The review problem (reviewer saw build output, not code) is fixed at the source.
 - Verified: unit and workflow tests, a real-git test that reproduces the first game's diff composition; the digest, compactor and report parsers on realistic Spring Boot, Unity, Node, Python, Go and Rust samples. Not verified: a live task; a Spring Boot manifest with a declared report (no spring-boot profile exists yet, B-060).
 - Next: stack profiles for spring-boot, react-ts (B-060) can now reuse the table; Graphify pilot only on a large brownfield repo, measured with npm run usage.
+
+## 2026-10-26 update (contract digest, answer shape, RTK hook, plugins off, B-084..B-086)
+- Done: the three remaining items of the trimming plan, plus a finding from measuring: every orchestrated Claude session inherited the operator's plugins (about 15 000 tokens of a 51 000 token start, re-read every turn); they are now off for orchestrated runs. The RTK hook is verified with the real CLI.
+- Verified: unit tests, the hook and plugin switch through the real Claude CLI (command counter, context size, task completed). Not verified: a full task; the stricter ORCHESTRATOR_CLAUDE_SETTING_SOURCES option on a real project.
+- Next: run the next game and compare `npm run usage` with the first game (about 640 k cost units per task); Graphify only as a measured pilot on a large existing codebase.
