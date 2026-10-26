@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
-import { formatFindings, latestRun, reconcile, resultComment, statusFor, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
+import { autoResumeDecision, formatFindings, latestRun, reconcile, resultComment, statusFor, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
 
 // The case that motivated it: the machine was off, Temporal finished the workflow, Paperclip marked the task blocked because the adapter never reported.
 const publish = { branch: "codex/x-a1", baseSha: "a".repeat(40), headSha: "b".repeat(40), prUrl: "https://github.com/me/shop/pull/7", prBaseBranch: "codex/prev" };
@@ -120,5 +120,73 @@ describe("reconcile", () => {
     expect(latestRun(rows, "I1")?.workflowId).toBe("pc-I1-2026-10-23-a1");
     expect(latestRun(rows, "I3")).toBeUndefined();
     expect(formatFindings([], true)).toContain("nothing to reconcile");
+  });
+});
+
+describe("automatic resume of a failed run", () => {
+  const failed = (message: string, stopReason?: string, findings: string[] = []): RunResult => result({ status: "failed", publish: undefined, message, stages: [{ stage: "implement", ok: false, summary: message, findings, artifactRefs: [], provider: "claude", durationMs: 1 }], ...(stopReason ? { metadata: { review: { maxReviewRounds: 1, reviewCount: 0, repairCount: 0, findingsFixed: 0, reviewRuns: [], nonBlockingNotes: [], unresolvedFindings: [], stopReason } } } : {}) });
+  const closed = "2026-10-23T17:30:00Z"; const now = new Date("2026-10-23T18:00:00Z");
+  const setup = (run: RunResult, id = wf) => {
+    const resumed: string[] = [];
+    const base = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: id, status: "COMPLETED" }], details: { [id]: { status: "COMPLETED", closeTime: closed, result: run } } });
+    base.deps.resume = async workflowId => { resumed.push(workflowId); return `${workflowId}-resume1`; };
+    return { ...base, resumed };
+  };
+
+  it("resumes a run that failed for a transient reason, once, and posts nothing to the task", async () => {
+    const { deps, state, resumed } = setup(failed("implement Activity failed after bounded retries: timed out after 7200000ms", "implement_activity_failed"));
+    const findings = await reconcile(deps, { apply: true, autoResume: true, now });
+    expect(findings).toMatchObject([{ issue: "LOC-65", action: "auto_resumed" }]);
+    expect(findings[0]!.detail).toContain(`${wf}-resume1`);
+    expect(resumed).toEqual([wf]);
+    expect(state.writes).toEqual([]);
+  });
+  it("resumes a machine-caused failure too (the preflight heals it on the way)", async () => {
+    const { deps, resumed } = setup(failed("quality check failed: unity test", "verify_quality_gate_failed", ["instances cannot open the same project"]));
+    expect(await reconcile(deps, { apply: true, autoResume: true, now })).toMatchObject([{ action: "auto_resumed" }]);
+    expect(resumed).toHaveLength(1);
+  });
+  it("only says what it would do in a dry run", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT calling the provider", "implement_activity_failed"));
+    expect(await reconcile(deps, { apply: false, autoResume: true, now })).toMatchObject([{ action: "would_resume" }]);
+    expect(resumed).toEqual([]); expect(state.writes).toEqual([]);
+  });
+  it("does not resume when the option is off, and reports the failure as before", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT calling the provider", "implement_activity_failed"));
+    expect(await reconcile(deps, { apply: true, now })).toMatchObject([{ action: "reported" }]);
+    expect(resumed).toEqual([]); expect(state.writes).toHaveLength(1);
+  });
+  it("leaves failures that need a person alone: code failures, unusable model output, approvals", async () => {
+    for (const run of [failed("quality check failed: npm test", "verify_quality_gate_failed", ["1 test failed"]), failed("review output could not be read", "review_unparseable"), failed("review stopped: external prerequisite requires operator action", "external_or_approval_prerequisite")]) {
+      const { deps, resumed } = setup(run);
+      expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "reported" });
+      expect(resumed).toEqual([]);
+    }
+  });
+  it("resumes a run only once: a failed resume is reported, not resumed again", async () => {
+    const { deps, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"), `${wf}-resume1`);
+    expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "reported" });
+    expect(resumed).toEqual([]);
+  });
+  it("does not revive an old failure", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    state.details[wf] = { status: "COMPLETED", closeTime: "2026-10-23T09:00:00Z", result: state.details[wf]!.result! };
+    expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "reported" });
+    expect(resumed).toEqual([]);
+  });
+  it("reports a resume that could not be started instead of failing the whole cycle", async () => {
+    const { deps } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    deps.resume = async () => { throw new Error("temporal unavailable"); };
+    expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "failed_run" });
+  });
+  it("leaves the resumed run alone while it is running", async () => {
+    const { deps, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    deps.listRuns = async () => [{ workflowId: wf, status: "COMPLETED" }, { workflowId: `${wf}-resume1`, status: "RUNNING" }];
+    expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "running" });
+    expect(resumed).toEqual([]);
+  });
+  it("autoResumeDecision names the reason", () => {
+    expect(autoResumeDecision(wf, failed("ETIMEDOUT", "implement_activity_failed"), closed, now)).toMatchObject({ resume: true });
+    expect(autoResumeDecision(wf, result(), closed, now)).toMatchObject({ resume: false, reason: "the run did not fail" });
   });
 });

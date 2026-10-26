@@ -26,10 +26,7 @@ if (-not (Test-Path $workerEntry)) {
 $node = (Get-Command node -ErrorAction Stop).Source
 # Windows PowerShell 5.1 turns the first stderr line of a redirected native command into a terminating error under 'Stop', which killed the worker on its first log line.
 $ErrorActionPreference = 'Continue'
-# Reconcile while the worker runs as well: a restart of the machine or of Docker kills the Paperclip adapter, Paperclip marks the task blocked, and the workflow (kept alive by Temporal) finishes later with nobody to report it. A background job reports finished results every few minutes (idempotent), so the next task of a plan starts without a person.
-if ($env:PAPERCLIP_API_TOKEN) {
-  Start-Job -ArgumentList $node, (Join-Path $root 'dist/src/cli.js'), $workerLog -ScriptBlock { param($nodePath, $cli, $log) while ($true) { Start-Sleep -Seconds 180; try { & $nodePath $cli reconcile --apply *>> $log } catch { } } } | Out-Null
-}
+# Periodic reconcile lives in the worker process itself now (src/reconcile-service.ts, heartbeat in data/logs/reconcile-heartbeat.json, checked by doctor); the Start-Job that used to be here never ran.
 # Supervise in-process: Task Scheduler does not restart the task when the worker is killed, so loop here with a short back-off.
 while ($true) {
   # After the machine was off or asleep, Temporal finished workflows that Paperclip never heard about. Report them before taking new work (idempotent; a failure here must never stop the worker).

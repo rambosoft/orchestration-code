@@ -7,6 +7,7 @@ import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
 import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
+import { paperclipClient, startReconcileService } from "./reconcile-service.js";
 import { formatDrain, waitForDrain } from "./drain.js";
 import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
@@ -70,16 +71,20 @@ async function main() {
     const only = onlyIndex >= 0 ? args[onlyIndex + 1] : undefined;
     if ((days !== undefined && !(days > 0)) || (onlyIndex >= 0 && !only)) throw new Error("usage: dev reconcile [--apply] [--days N] [--issue LOC-65]");
     const findings = await reconcile({
-      paperclip: async <T>(method: "GET" | "POST" | "PATCH", route: string, body?: unknown) => {
-        const response = await fetch(`${base}${route}`, { method, headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30_000) });
-        if (!response.ok) throw new Error(`Paperclip ${method} ${route} returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
-        return await response.json() as T;
-      },
+      paperclip: paperclipClient(base, token),
       listRuns: async () => await listRuns() as RunRow[],
       inspect: async workflowId => await inspectRun(workflowId) as RunDetail,
-    }, { apply, ...(days !== undefined ? { days } : {}), ...(only ? { only } : {}) });
+      resume: async workflowId => (await resumeRun(workflowId)).workflowId,
+    }, { apply, autoResume: args.includes("--auto-resume"), ...(days !== undefined ? { days } : {}), ...(only ? { only } : {}) });
     console.log(formatFindings(findings, apply));
     return;
+  }
+  if (command === "reconcile-watch") {
+    // The same service the worker runs, in the foreground (a terminal, or a machine without the worker): `npm run reconcile:watch`. The worker already runs it, so use this only to watch it work.
+    const stop = await startReconcileService();
+    if (!stop) throw new Error("PAPERCLIP_API_TOKEN must be set (and ORCHESTRATOR_RECONCILE must not be 0)");
+    process.once("SIGINT", () => { stop(); process.exit(0); });
+    await new Promise<never>(() => undefined);
   }
   if (command === "cleanup") {
     const daysIndex = args.indexOf("--days");

@@ -8,6 +8,7 @@ import { concurrencyError, temporalAddressError } from "./env-validation.js";
 import { findBrowser } from "./visual.js";
 import { diskProblem, MAX_WORKTREE_PATH_CHARS, worktreePathProblem } from "./preflight.js";
 import { listEditorProcesses } from "./unity.js";
+import { heartbeatFile, heartbeatProblem, readHeartbeat, type Heartbeat } from "./reconcile-service.js";
 
 export type DoctorCheck = { name: string; ok: boolean; severity: "error" | "warn"; detail: string };
 export type DoctorDeps = {
@@ -24,6 +25,8 @@ export type DoctorDeps = {
   findBrowser?: () => string | undefined;
   /** The Project Bootstrap plugin (ADR 0009): whether it is built and which SDK version it is pinned to, against the Paperclip checkout it must match. Undefined when the plugin folder is absent. */
   pluginStatus?: () => Promise<PluginStatus | undefined>;
+  /** The reconcile service's last heartbeat (data/logs/reconcile-heartbeat.json), undefined when it never wrote one. */
+  reconcileHeartbeat?: () => Promise<Heartbeat | undefined>;
   /** Ids of projects with the unity-mobile stack profile and what the worker has for building them (docs/engineering/research/unity-game-support.md). */
   unityProjects?: () => Promise<string[]>;
   unityStatus?: () => Promise<UnityStatus>;
@@ -192,6 +195,12 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   const unityProjects = await (deps.unityProjects?.() ?? Promise.resolve([] as string[]));
   if (unityProjects.length && deps.unityStatus) checks.push(...unityChecks(unityProjects, await deps.unityStatus().catch(() => ({ loggedIn: false, editors: [] } as UnityStatus))));
 
+  // The reconcile service (src/reconcile-service.ts) runs inside the worker; its heartbeat is the only evidence that it does.
+  if (deps.reconcileHeartbeat && deps.env.ORCHESTRATOR_RECONCILE !== "0") {
+    const problem = heartbeatProblem(await deps.reconcileHeartbeat().catch(() => undefined), new Date());
+    checks.push(problem ? fail("reconcile:service", problem, "warn") : pass("reconcile:service", "running (heartbeat is recent)"));
+  }
+
   const plugin = await (deps.pluginStatus?.() ?? Promise.resolve(undefined)).catch(() => undefined);
   if (plugin) {
     const problem = pluginProblem(plugin);
@@ -266,6 +275,7 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
     const running = (await listEditorProcesses().catch(() => [])).length;
     return { ...(field("cliVersion") ? { cliVersion: field("cliVersion")! } : {}), loggedIn: field("auth\\.loggedIn") === "true", editors: withModules, worktreesRoot: root.split("\\").join("/"), runningEditors: running, ...(free !== undefined ? { freeDiskBytes: free } : {}), ...(adb ? { adbVersion: adb } : {}), ...(pluginPath ? { pluginDir: { path: pluginPath, exists: await access(pluginPath).then(() => true, () => false) } } : {}) };
   },
+  reconcileHeartbeat: () => readHeartbeat(heartbeatFile(env.ORCHESTRATOR_DATA_DIR ?? "data")),
   pluginStatus: async () => {
     const folder = path.resolve("plugins", "project-bootstrap");
     let pin: string | undefined;

@@ -1,4 +1,5 @@
 import type { RunResult } from "./contracts.js";
+import { classifyFailure, isResumable, MAX_AUTO_RESUMES, type FailureClass } from "./failure-class.js";
 
 // Reconcile (FM-037): when the machine sleeps, shuts down or loses the network, Temporal keeps the workflow alive and finishes it, but the Paperclip adapter that
 // would have reported the result is gone, and Paperclip marks the task blocked ("requires reconciliation"). This reads what Temporal finished and reports it to
@@ -11,8 +12,24 @@ export type ReconcileDeps = {
   paperclip: <T>(method: "GET" | "POST" | "PATCH", route: string, body?: unknown) => Promise<T>;
   listRuns: () => Promise<RunRow[]>;
   inspect: (workflowId: string) => Promise<RunDetail>;
+  /** Starts a resumed workflow for a failed one (saved stage results are reused) and returns its id. Needed for `autoResume`. */
+  resume?: (workflowId: string) => Promise<string>;
 };
-export type Finding = { issue: string; workflowId?: string; workflowStatus?: string; action: "reported" | "would_report" | "running" | "already_reported" | "failed_run" | "no_run"; status?: string; detail: string };
+export type Finding = { issue: string; workflowId?: string; workflowStatus?: string; action: "reported" | "would_report" | "running" | "already_reported" | "failed_run" | "no_run" | "auto_resumed" | "would_resume"; status?: string; detail: string };
+
+/** A failed run is resumed on its own only when the failure is transient or caused by the machine, at most once, and only while it is recent. */
+export const AUTO_RESUME_WINDOW_MINUTES = 360;
+export type ResumeDecision = { resume: boolean; reason: string; failure: FailureClass };
+export function autoResumeDecision(workflowId: string, result: RunResult, closeTime: string | undefined, now: Date, windowMinutes = AUTO_RESUME_WINDOW_MINUTES): ResumeDecision {
+  const lastStage = result.stages.at(-1);
+  const failure = classifyFailure({ message: result.message, ...(result.metadata?.review?.stopReason ? { stopReason: result.metadata.review.stopReason } : {}), findings: lastStage ? [lastStage.summary, ...lastStage.findings] : [] });
+  if (result.status !== "failed") return { resume: false, reason: "the run did not fail", failure };
+  if (!isResumable(failure)) return { resume: false, reason: `${failure.kind} failure: ${failure.reason}`, failure };
+  const resumes = Number(/-resume(\d+)$/.exec(workflowId)?.[1] ?? 0);
+  if (resumes >= MAX_AUTO_RESUMES) return { resume: false, reason: `this run was already resumed ${resumes} time(s); a person should look at it`, failure };
+  if (closeTime && now.getTime() - new Date(closeTime).getTime() > windowMinutes * 60_000) return { resume: false, reason: `it ended more than ${windowMinutes} minutes ago; resume it by hand if it is still wanted`, failure };
+  return { resume: true, reason: `${failure.kind} failure: ${failure.reason}`, failure };
+}
 
 /** Statuses a lost adapter leaves behind. */
 export const CANDIDATE_STATUSES = ["blocked", "in_progress", "in_review"];
@@ -48,7 +65,7 @@ const rows = <T>(value: unknown, key: string): T[] => Array.isArray(value) ? val
 /** Only runs that ended within `days` days are considered, so old history is never rewritten. */
 export const DEFAULT_WINDOW_DAYS = 3;
 
-export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; days?: number; now?: Date; /** Only this task (identifier such as LOC-65, or id). */ only?: string }): Promise<Finding[]> {
+export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; days?: number; now?: Date; /** Only this task (identifier such as LOC-65, or id). */ only?: string; /** Resume a run that failed for a transient or machine reason (src/failure-class.ts), once, instead of only reporting it. */ autoResume?: boolean }): Promise<Finding[]> {
   const cutoff = (options.now ?? new Date()).getTime() - (options.days ?? DEFAULT_WINDOW_DAYS) * 86_400_000;
   const findings: Finding[] = [];
   const runs = await deps.listRuns();
@@ -63,6 +80,22 @@ export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; 
       const detail = await deps.inspect(run.workflowId);
       // closeTime is an ISO string over HTTP and a Date when the Temporal client is called directly.
       if (detail.closeTime && new Date(detail.closeTime).getTime() < cutoff) continue;
+      // A failure that is not about the code (a timeout, a locked project, a long path) is resumed from where it stopped. Nothing is posted to the task: a comment wakes the agent and
+      // can lock the issue (FM-054); the resumed run reports its own result like any other.
+      if (options.autoResume && deps.resume && detail.status === "COMPLETED" && detail.result?.status === "failed") {
+        const decision = autoResumeDecision(run.workflowId, detail.result, detail.closeTime, options.now ?? new Date());
+        if (decision.resume) {
+          if (!options.apply) { findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "would_resume", detail: decision.reason }); continue; }
+          try {
+            const resumed = await deps.resume(run.workflowId);
+            findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "auto_resumed", detail: `resumed as ${resumed}: ${decision.reason}` });
+            continue;
+          } catch (error) {
+            findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "failed_run", detail: `automatic resume failed (${error instanceof Error ? error.message.slice(0, 200) : String(error)}); resume it by hand with npm run resume-run` });
+            continue;
+          }
+        }
+      }
       const comments = rows<{ body?: string }>(await deps.paperclip("GET", `/api/issues/${issue.id}/comments?limit=100`), "comments");
       if (comments.some(comment => String(comment.body ?? "").includes(`Temporal workflow \`${run.workflowId}\` finished`))) { findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "already_reported", detail: "the result was already reported to the task" }); continue; }
       if (detail.status !== "COMPLETED" || !detail.result) {
