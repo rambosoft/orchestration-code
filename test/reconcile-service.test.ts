@@ -81,7 +81,8 @@ describe("heartbeat file and service start", () => {
   it("starts with a token, writes the first heartbeat even when Paperclip is unreachable, and stops", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "orch-hb-")); dirs.push(dir);
     const logs: string[] = [];
-    const stop = await startReconcileService({ PAPERCLIP_API_TOKEN: "t", PAPERCLIP_API_URL: "http://127.0.0.1:1", ORCHESTRATOR_DATA_DIR: dir, TEMPORAL_ADDRESS: "127.0.0.1:1" }, line => logs.push(line));
+    // No network: the cycle is injected and fails the way an unreachable Paperclip or Temporal would.
+    const stop = await startReconcileService({ PAPERCLIP_API_TOKEN: "t", ORCHESTRATOR_DATA_DIR: dir }, line => logs.push(line), { cycle: async () => { throw new Error("connect ECONNREFUSED 127.0.0.1:1"); } });
     expect(stop).toBeTypeOf("function");
     expect(logs[0]).toContain("reconcile service started");
     let beat: Heartbeat | undefined;

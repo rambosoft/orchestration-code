@@ -78,11 +78,11 @@ export function paperclipClient(base: string, token: string): ReconcileDeps["pap
  * Starts the loop inside this process when a Paperclip token is configured. ORCHESTRATOR_RECONCILE=0 turns it off, ORCHESTRATOR_AUTO_RESUME=0 keeps the reporting but not the automatic resume,
  * ORCHESTRATOR_RECONCILE_SECONDS sets the interval. Returns a stop function, or undefined when it did not start.
  */
-export async function startReconcileService(env: NodeJS.ProcessEnv = process.env, log: (line: string) => void = line => console.log(line)): Promise<(() => void) | undefined> {
+export async function startReconcileService(env: NodeJS.ProcessEnv = process.env, log: (line: string) => void = line => console.log(line), overrides: { /** Replaces the real reconcile cycle (tests: no Temporal, no Paperclip). */ cycle?: () => Promise<Finding[]> } = {}): Promise<(() => void) | undefined> {
   const token = env.PAPERCLIP_API_TOKEN;
   if (!token || env.ORCHESTRATOR_RECONCILE === "0") return undefined;
   // Loaded here so the pure parts of this module stay importable without a Temporal client.
-  const { inspectRun, listRuns, resumeRun } = await import("./client.js");
+  const real = overrides.cycle ? undefined : await import("./client.js");
   const configured = Number(env.ORCHESTRATOR_RECONCILE_SECONDS);
   const intervalSeconds = Number.isFinite(configured) && configured >= 15 ? configured : DEFAULT_INTERVAL_SECONDS;
   const autoResume = env.ORCHESTRATOR_AUTO_RESUME !== "0";
@@ -90,7 +90,7 @@ export async function startReconcileService(env: NodeJS.ProcessEnv = process.env
   const file = heartbeatFile(env.ORCHESTRATOR_DATA_DIR ?? "data");
   const controller = new AbortController();
   void reconcileLoop({
-    cycle: () => reconcile({ paperclip, listRuns: async () => await listRuns() as RunRow[], inspect: async id => await inspectRun(id) as RunDetail, resume: async id => (await resumeRun(id)).workflowId }, { apply: true, autoResume }),
+    cycle: overrides.cycle ?? (() => reconcile({ paperclip, listRuns: async () => await real!.listRuns() as RunRow[], inspect: async id => await real!.inspectRun(id) as RunDetail, resume: async id => (await real!.resumeRun(id)).workflowId }, { apply: true, autoResume })),
     writeHeartbeat: heartbeat => writeHeartbeat(file, heartbeat),
     sleep: (ms, signal) => new Promise<void>((resolve, reject) => { const timer = setTimeout(resolve, ms); signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("stopped")); }, { once: true }); }),
     now: () => new Date(),
