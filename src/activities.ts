@@ -10,6 +10,7 @@ import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js"
 import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
+import { worktreeProfile } from "./publish-guard.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
@@ -248,7 +249,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (checks.length && prefilterEnabled()) {
       await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
       const added = await runCheck("git", ["diff", "--no-color", "-U0", "HEAD"], input.projectRoot, 1_000_000);
-      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output)) : undefined;
+      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output, worktreeProfile(input.projectRoot))) : undefined;
       if (flagged) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
