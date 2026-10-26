@@ -10,7 +10,8 @@ import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js"
 import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
-import { worktreeProfile } from "./publish-guard.js";
+import { worktreeStack } from "./publish-guard.js";
+import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
@@ -89,7 +90,7 @@ export function runCheck(executable: string, args: string[], cwd: string, maxOut
   return new Promise((resolve, reject) => {
     const { command, args: commandArgs } = toolCommand(executable, args);
     const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, env: childEnv() }); const stopKill = killOnAbort(child, signal); const stdout: Buffer[] = []; const stderr: Buffer[] = []; let outBytes = 0; let errBytes = 0;
-    child.stdout.on("data", (b: Buffer) => { if (outBytes < 100_000) { stdout.push(b); outBytes += b.length; } });
+    child.stdout.on("data", (b: Buffer) => { if (outBytes < Math.max(100_000, maxOutputChars)) { stdout.push(b); outBytes += b.length; } });
     child.stderr.on("data", (b: Buffer) => { if (errBytes < 100_000) { stderr.push(b); errBytes += b.length; } });
     child.on("error", error => { stopKill(); reject(error); }); child.on("close", code => { stopKill(); if (signal?.aborted) return reject(new Error("cancelled: process killed")); resolve({ code, output: Buffer.concat(stdout).toString("utf8").slice(0, maxOutputChars), stderr: Buffer.concat(stderr).toString("utf8").slice(0, maxOutputChars) }); });
   });
@@ -100,6 +101,31 @@ export const REVIEW_DIFF_LIMIT = 60_000;
 export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles = ""): string {
   const truncated = diff.length > REVIEW_DIFF_LIMIT;
   return `${prompt}${changedFiles ? `\n\nChanged files:\n${changedFiles}` : ""}\n\nImplementation diff (review this code against the task requirements):\n${diff.slice(0, REVIEW_DIFF_LIMIT)}${truncated ? `\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters: inspect the remaining changes yourself with git diff and by reading the files before you decide]` : ""}`;
+}
+
+/** The digest in place of a raw diff; it carries its own scope header and budget, so nothing is cut here. */
+export function reviewPromptWithDigest(prompt: string, digest: string): string {
+  return `${prompt}\n\nImplementation under review (review this code against the task requirements):\n${digest}`;
+}
+
+/**
+ * The reviewer's view of the change: every changed file listed, reviewable ones in priority order inside a budget (src/diff-digest.ts). Round N compares with the hashes saved for round N-1, so a file the
+ * repair did not touch is listed as unchanged instead of being sent again; a retry of the same round reads the same previous hashes and sends the same digest.
+ */
+export async function collectReviewDigest(root: string, artifactsDir: string, attempt: number, run: typeof runCheck = runCheck): Promise<Digest> {
+  const stack = worktreeStack(root);
+  const git = ["-c", "core.quotepath=false", "diff"];
+  // The whole file list, generated files included (they are counted in the digest, not printed): runCheck captures as much as it is asked for.
+  const numstat = await run("git", [...git, "--numstat", "HEAD"], root, 8_000_000);
+  if (numstat.code !== 0) throw new Error(`could not list the changed files for review: ${numstat.stderr || numstat.output.slice(0, 500)}`);
+  const previous = attempt > 1 ? await readFile(path.join(artifactsDir, `review-diff-${attempt - 1}.json`), "utf8").then(text => (JSON.parse(text) as { hashes?: Record<string, string> }).hashes, () => undefined) : undefined;
+  const digest = await buildDigest({
+    changes: parseNumstat(numstat.output), stack,
+    ...(previous ? { previous } : {}),
+    readDiff: async file => (await run("git", [...git, "--no-color", "-U3", "HEAD", "--", file], root, 200_000)).output,
+  });
+  await writeFile(path.join(artifactsDir, `review-diff-${attempt}.json`), JSON.stringify({ hashes: digest.hashes }));
+  return digest;
 }
 
 /** A Unity project has ProjectSettings/ProjectVersion.txt and an Assets folder. The stack profile is detected from the worktree so the workflow input stays unchanged. */
@@ -249,7 +275,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (checks.length && prefilterEnabled()) {
       await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
       const added = await runCheck("git", ["diff", "--no-color", "-U0", "HEAD"], input.projectRoot, 1_000_000);
-      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output, worktreeProfile(input.projectRoot))) : undefined;
+      const flagged = added.code === 0 ? prefilterProblem(prefilterFindings(added.output, worktreeStack(input.projectRoot))) : undefined;
       if (flagged) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
@@ -277,10 +303,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     // Give every real reviewer the implementation itself, including newly
     // created files, rather than asking it to review only the task summary.
     await runCheck("git", ["add", "--intent-to-add", "--all"], input.projectRoot);
-    const diff = await runCheck("git", ["diff", "--binary", "HEAD"], input.projectRoot, REVIEW_DIFF_LIMIT + 1);
-    const changed = await runCheck("git", ["diff", "--stat", "--stat-width=140", "HEAD"], input.projectRoot, 6_000);
-    if (diff.code !== 0) throw new Error(`could not collect implementation diff for review: ${diff.stderr || diff.output.slice(0, 500)}`);
-    stageInput.prompt = reviewPromptWithDiff(input.prompt, diff.output, changed.code === 0 ? changed.output : "");
+    // The reviewer gets a digest, not `git diff` (src/diff-digest.ts): source first, generated output counted and left out, and on a follow-up round only what changed since the last one.
+    stageInput.prompt = reviewPromptWithDigest(input.prompt, (await collectReviewDigest(input.projectRoot, artifactsDir, input.attempt)).text);
     // Numbered criteria (game tasks): tell the reviewer which test covers each, so it judges the proof instead of hunting for it.
     const criteria = [...new Set(input.prompt.match(/\bT\d+-AC\d+\b/g) ?? [])];
     const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;

@@ -41,7 +41,7 @@ describe("prefilterFindings", () => {
   });
   it("never judges generated build output of the Unity profile (the first game committed .utmp/ with C sources and logs)", () => {
     const diff = [diffOf(".utmp/RelWithDebInfo/x/arm64-v8a/gen.c", "/* TODO generated */"), diffOf("Library/Bee/log.txt", "FIXME"), diffOf("Builds/notes.log", "coming soon"), diffOf("Assets/Scripts/Menu.cs", "// TODO real")].join("");
-    expect(prefilterFindings(diff, "unity-mobile").map(finding => finding.file)).toEqual(["Assets/Scripts/Menu.cs"]);
+    expect(prefilterFindings(diff, [{ family: "unity", root: "" }]).map(finding => finding.file)).toEqual(["Assets/Scripts/Menu.cs"]);
     expect(prefilterFindings(diff).map(finding => finding.file)).toContain(".utmp/RelWithDebInfo/x/arm64-v8a/gen.c");
   });
   it("is clean for an empty or malformed diff", () => {
