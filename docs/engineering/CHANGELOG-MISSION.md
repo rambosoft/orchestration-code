@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 failure recording and slice gate (ADR 0022, third and fourth live findings)
+- Minesweeper LOC-117: (1) Paperclip refuses `blocked` without an `unblockDescriptor` (HTTP 422); the adapter never sent one, so every failed run was unrecorded. `statusPatch` (reconcile, worker report) and the adapter now send owner `board` plus an action. (2) The reachability gate read only the lines after the `Covers:` comment and rejected a correct menu test whose fixture booted the scene in `[UnitySetUp]`; it now counts a boot in a setup method or a called helper of the same file. Tests in `test/reconcile.test.ts`, `test/adapter-resilience.test.ts`, `test/acceptance.test.ts`.
+
 ## 2026-10-30 adapter keepalive (ADR 0021, second live finding)
 - Minesweeper LOC-116 sat idle for an hour: during a silent Unity dependency step the adapter wrote no output, Paperclip let the run lease lapse (it renews only on output, about a minute), cancelled the run and put the issue on an execution-reconciliation hold that refuses every wake. The adapter now logs a line every 20 s (`keepaliveMs`). Test in `test/adapter-resilience.test.ts`. The hold was resolved with a true attestation (workflow completed, PR 2 open).
 

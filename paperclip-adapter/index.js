@@ -27,6 +27,12 @@ export function issueLabelNames(issue) {
   return rows.map(label => String(typeof label === "string" ? label : label?.name ?? "").trim()).filter(Boolean).slice(0, 50);
 }
 
+/** Paperclip refuses `blocked` without an owner and an action (HTTP 422). Mirrors statusPatch in src/reconcile.ts. */
+function unblockDescriptorFor(result, needsInfo) {
+  const action = needsInfo ? "Answer the question in the latest comment, then move the task back to todo." : "Read the latest comment, fix the cause, then resume the run or move the task back to todo.";
+  return { owner: "board", action };
+}
+
 async function addIssueComment(ctx, issueId, body) {
   const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
   if (!token || !issueId) {
@@ -350,7 +356,8 @@ Accept the PR as it is, or comment here with what to fix and re-run the task.` :
               const response = await fetch(`${paperclipApiUrl}/api/issues/${encodeURIComponent(issueId)}`, {
                 method: "PATCH",
                 headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-paperclip-run-id": ctx.runId },
-                body: JSON.stringify({ status: targetStatus, comment: report }),
+                // Paperclip refuses `blocked` without a named owner and action (HTTP 422); a task left unrecorded stays in whatever state the run left it in (ADR 0022).
+                body: JSON.stringify({ status: targetStatus, comment: report, ...(targetStatus === "blocked" ? { unblockDescriptor: unblockDescriptorFor(result, needsInfo) } : {}) }),
                 signal: ctx.signal,
               });
               if (!response.ok) {

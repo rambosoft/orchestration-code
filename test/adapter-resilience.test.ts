@@ -111,7 +111,8 @@ describe("Paperclip adapter resilience", () => {
     }));
     const result = await adapter.execute(ctx);
     expect(result).toMatchObject({ exitCode: 0, signal: null, summary: "Unity license prerequisite unavailable" });
-    expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toMatchObject({ status: "blocked" });
+    // Paperclip answers HTTP 422 to `blocked` without an owner and an action (found in the first live run): the fake server here cannot enforce it, so the request is checked.
+    expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toMatchObject({ status: "blocked", unblockDescriptor: { owner: "board", action: expect.stringContaining("fix the cause") } });
     expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body?.comment).toContain("Unity license prerequisite unavailable");
   });
 

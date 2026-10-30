@@ -61,6 +61,13 @@ export function statusFor(result: RunResult | undefined): string | undefined {
   return undefined;
 }
 
+/** The body that sets a task's status. Paperclip refuses `blocked` unless it names who must act and what they must do (HTTP 422, ADR 0022). */
+export function statusPatch(status: string, comment: string, result?: RunResult): Record<string, unknown> {
+  if (status !== "blocked") return { status, comment };
+  const action = result?.status === "needs_info" ? "Answer the question in the latest comment, then move the task back to todo." : "Read the latest comment, fix the cause, then resume the run or move the task back to todo.";
+  return { status, comment, unblockDescriptor: { owner: "board", action } };
+}
+
 export function resultComment(workflowId: string, status: string, result: RunResult | undefined, source: "reconcile" | "worker" = "reconcile"): string {
   const body = result?.report?.markdown ? `### ${result.report.title}\n\n${String(result.report.markdown).slice(0, 30_000)}` : (result?.stages ?? []).map(stage => `${stage.stage}: ${String(stage.summary).slice(0, 400)}`).join("\n");
   const publish = result?.publish;
@@ -188,7 +195,7 @@ export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; 
       const note = `${detail.result.status}: ${detail.result.message.slice(0, 160)}`;
       if (!options.apply) { findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "would_report", ...(status ? { status } : {}), detail: `${note}${status ? ` -> ${status}` : " (comment only)"}` }); continue; }
       const comment = resultComment(run.workflowId, detail.status, detail.result);
-      if (status) await deps.paperclip("PATCH", `/api/issues/${issue.id}`, { status, comment });
+      if (status) await deps.paperclip("PATCH", `/api/issues/${issue.id}`, statusPatch(status, comment, detail.result));
       else await deps.paperclip("POST", `/api/issues/${issue.id}/comments`, { body: comment });
       findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "reported", ...(status ? { status } : {}), detail: `${note}${status ? ` -> ${status}` : " (comment only)"}` });
     }

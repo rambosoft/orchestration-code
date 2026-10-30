@@ -51,13 +51,35 @@ function coveredBlock(file: TestFile, id: string): string | undefined {
   while (end < lines.length && end - start < 80 && !/\bCovers\s*:/i.test(lines[end]!)) end++;
   return lines.slice(start, end).join("\n");
 }
+const SETUP_ATTRIBUTE = /\[(?:UnitySetUp|SetUp|OneTimeSetUp|UnityOneTimeSetUp)\]/;
+const METHOD_DECLARATION = /^\s*(?:(?:public|private|protected|internal|static|async)\s+)*(?:IEnumerator|void|Task)\s+(\w+)\s*\(/;
+/**
+ * How a test file boots the real scene when the covering test does not say so itself: in a setup method (every test of the fixture then runs on the booted scene) or in a helper
+ * method of the same file that the test calls. The first slice task of a real project wrote `[UnitySetUp] public IEnumerator Boot() { yield return SliceHarness.Boot(); ... }` and every
+ * test in the fixture relied on it, and the gate rejected them all (ADR 0022). Only a method of the same file counts, and only one that really contains the boot call.
+ */
+function bootSeams(file: TestFile): { fixtureBoot: boolean; helpers: RegExp[] } {
+  const lines = file.text.split(/\r?\n/); const names = new Set<string>();
+  lines.forEach((line, index) => {
+    if (!SLICE_BOOT.test(line)) return;
+    for (let up = index; up >= Math.max(0, index - 40); up--) { const declaration = METHOD_DECLARATION.exec(lines[up]!); if (declaration) { names.add(declaration[1]!); break; } }
+  });
+  const helpers = [...names].map(name => new RegExp(`\\b${name}\\s*\\(`));
+  const fixtureBoot = lines.some((line, index) => SETUP_ATTRIBUTE.test(line) && (() => {
+    const body = lines.slice(index, index + 25).join("\n");
+    return SLICE_BOOT.test(body) || helpers.some(helper => helper.test(body));
+  })());
+  return { fixtureBoot, helpers };
+}
 /** The failure text for the repair prompt, or undefined when every slice criterion is proven by a PlayMode test that boots the real scene and asserts. */
 export function sliceProblem(prompt: string, files: TestFile[]): string | undefined {
   const problems: string[] = [];
   const deferred = new Set(files.flatMap(file => [...file.text.matchAll(/\bDeferred\s*:\s*(T\d+-AC\d+)\s*->/gi)].map(match => match[1]!)));
   for (const id of sliceIds(prompt)) {
     if (deferred.has(id)) continue;
-    const blocks = files.filter(file => PLAY_MODE_PATH.test(file.file)).map(file => coveredBlock(file, id)).filter((block): block is string => block !== undefined);
+    const found = files.filter(file => PLAY_MODE_PATH.test(file.file)).map(file => ({ file, block: coveredBlock(file, id) })).filter((item): item is { file: TestFile; block: string } => item.block !== undefined);
+    // A boot done by the fixture or by a helper the test calls counts as the test's own: the block then carries a marker line the boot check recognises.
+    const blocks = found.map(({ file, block }) => { const seams = bootSeams(file); return seams.fixtureBoot || seams.helpers.some(helper => helper.test(block)) ? `${block}\nSliceHarness.Boot(); // booted by the fixture` : block; });
     if (!blocks.length) { if (!files.some(file => coveredBlock(file, id) !== undefined)) problems.push(`${id} has no test (add a PlayMode test that says "Covers: ${id}")`); else problems.push(`${id} is covered by a test outside Assets/Tests/PlayMode; the reachability test must be a PlayMode test`); continue; }
     if (!blocks.some(block => SLICE_BOOT.test(block))) problems.push(`${id}: the covering test does not boot the real game scene (use "yield return SliceHarness.Boot();" or load the main scene); building the screen or its view model directly proves nothing about the running game`);
     else if (!blocks.some(block => SLICE_BOOT.test(block) && /\bAssert\.|\bConstraint\b|\bIs\.|\bHas\./.test(block))) problems.push(`${id}: the covering test boots the game but asserts nothing about what the player sees`);
