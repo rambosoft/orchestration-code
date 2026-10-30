@@ -288,6 +288,10 @@ export function createServerAdapter() {
       let failedPolls = 0;
       const pollMs = Number(ctx.config.pollIntervalMs ?? 1000);
       const retryMs = Number(ctx.config.retryDelayMs ?? 2000);
+      // Paperclip renews the controller lease of a run only while the adapter produces output. A long silent stage (a Unity project copy or import takes minutes) let the lease lapse
+      // after about a minute, Paperclip cancelled the run and put the task on an execution-reconciliation hold that refuses every later wake (ADR 0021). A line every 20 seconds keeps it alive.
+      const keepaliveMs = Number(ctx.config.keepaliveMs ?? 20_000);
+      let lastLogAt = Date.now(); const startedAt = Date.now();
       while (!ctx.signal?.aborted) {
         let state;
         try {
@@ -303,7 +307,8 @@ export function createServerAdapter() {
           continue;
         }
         const stage = state.progress?.currentStage;
-        if (stage && stage !== lastStage) { lastStage = stage; await ctx.onLog("stdout", `Temporal stage started: ${stage}\n`); }
+        if (stage && stage !== lastStage) { lastStage = stage; lastLogAt = Date.now(); await ctx.onLog("stdout", `Temporal stage started: ${stage}\n`); }
+        else if (keepaliveMs > 0 && Date.now() - lastLogAt >= keepaliveMs && state.status === "RUNNING") { lastLogAt = Date.now(); await ctx.onLog("stdout", `Temporal run still in progress${stage ? `: stage ${stage}` : ""} (${Math.round((Date.now() - startedAt) / 60_000)} min)\n`); }
       if (["COMPLETED", "FAILED", "CANCELED", "CANCELLED", "TERMINATED", "TIMED_OUT"].includes(state.status)) {
           const result = state.result;
           // Research and architecture runs carry a rendered report; the stage summaries of those runs are raw JSON answers and are left out.

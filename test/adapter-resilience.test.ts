@@ -42,6 +42,13 @@ describe("Paperclip adapter resilience", () => {
     expect(logs.join("")).toContain("leaving Temporal workflow wf-1 running");
   });
 
+  it("writes a line while a long stage is silent, because Paperclip renews the run's lease only on output", async () => {
+    const { ctx, logs } = setup((n, controller) => { if (n === 12) controller.abort(new Error("cancelled by board user")); return running(); });
+    (ctx.config as Record<string, unknown>).keepaliveMs = 10;
+    await adapter.execute(ctx);
+    expect(logs.filter(line => line.includes("Temporal run still in progress: stage implement")).length).toBeGreaterThanOrEqual(2);
+  });
+
   it("still cancels the workflow when the abort is a real cancellation", async () => {
     const { ctx, calls } = setup((n, controller) => { if (n === 2) controller.abort(new Error("cancelled by board user")); return running(); });
     await adapter.execute(ctx);

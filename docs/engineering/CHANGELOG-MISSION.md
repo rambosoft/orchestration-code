@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 adapter keepalive (ADR 0021, second live finding)
+- Minesweeper LOC-116 sat idle for an hour: during a silent Unity dependency step the adapter wrote no output, Paperclip let the run lease lapse (it renews only on output, about a minute), cancelled the run and put the issue on an execution-reconciliation hold that refuses every wake. The adapter now logs a line every 20 s (`keepaliveMs`). Test in `test/adapter-resilience.test.ts`. The hold was resolved with a true attestation (workflow completed, PR 2 open).
+
 ## 2026-10-30 reviewed deferral accepted (ADR 0020, first live run)
 - Minesweeper LOC-116 ended `needs_review` because an acceptance item the implementer deferred (allowed by the contract) stayed blocking although the reviewer passed twice; every dependent task waited. A re-declared item after one rework plus a passing review is now an accepted, recorded deferral (`patched("accept-reviewed-deferral")`); a still-blocking review keeps `needs_review`. Tests in `test/typed-flows.test.ts`.
 
