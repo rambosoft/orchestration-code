@@ -45,7 +45,7 @@ const viteReactTs: ScaffoldTemplate = {
   visual: { enabled: true, engine: "web", command: { executable: "npm", args: ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5199", "--strictPort"] }, url: "http://127.0.0.1:5199/", readyTimeoutMs: 60_000, viewports: [{ name: "desktop", width: 1280, height: 800 }, { name: "mobile", width: 390, height: 844 }], steps: [{ do: "shot", name: "initial" }], maxImages: 4, required: false },
 };
 
-const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
+export const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
   const unity = (args: string[], severity?: "warn"): QualityCommand => ({ executable: "unity", args, ...(severity ? { severity } : {}) });
   // Unity's test import pass creates missing .meta files for newly authored
   // assets. Run engine checks first so hygiene reports project defects rather

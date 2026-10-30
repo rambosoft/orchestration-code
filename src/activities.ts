@@ -248,6 +248,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (reusable) { results.push(...reusable.checks.map(check => ({ ...check, durationMs: 0 }))); qualityWarnings.push(...reusable.warnings, `reused the passing result of verify attempt ${reusable.attempt}: the commands and every file of the working tree are unchanged`); }
     // An Editor the agent left open on this worktree makes every Unity command fail with "instances cannot open the same project".
     if (!reusable && checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
+    let healedMeta = false;
     for (const check of reusable ? [] : checks) {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
@@ -261,6 +262,15 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const evidence = await unityEvidenceProblem(check, checkCwd, result.code);
         const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
+      }
+      // Missing .meta files are the Editor's to write (an agent must not invent GUIDs): when a check reports them, one batch import generates them and the check runs again, before anything is handed to a model.
+      if (result.code !== 0 && !isUnity && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
+        healedMeta = true;
+        const unityProject = await detectUnityProject(input.projectRoot).catch(() => undefined);
+        if (unityProject) {
+          const imported = await prepareUnityProject(input.projectRoot, unityProject.editorVersion, runCheck).then(() => true, (error: unknown) => { qualityWarnings.push(`the Unity import that would write the missing .meta files failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`); return false; });
+          if (imported) { qualityWarnings.push("the Unity Editor generated missing .meta files and the check was repeated"); result = await runCheck(check.executable, check.args, checkCwd, CHECK_CAPTURE_CHARS); }
+        }
       }
       let storedOutput = compactLog(result.output, { maxChars: CHECK_STORE_CHARS });
       // A failed check with a test report: the list of failing tests leads, the console output follows shortened (src/test-report.ts).

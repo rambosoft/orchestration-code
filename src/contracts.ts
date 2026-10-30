@@ -18,8 +18,8 @@ export const UiUxConfigSchema = z.object({
 });
 export type UiUxConfig = z.infer<typeof UiUxConfigSchema>;
 const ToolExecutableSchema = z.enum(CORE_EXECUTABLES);
-/** `unity` is accepted by the schema but the manifest only allows it for the unity-mobile stack profile (see stackCommandProblems). */
-const QualityExecutableSchema = z.enum([...CORE_EXECUTABLES, "unity"]);
+/** `unity`, `mvn` and `gradle` are accepted by the schema but the manifest only allows each for its own stack profile (see stackCommandProblems). */
+const QualityExecutableSchema = z.enum([...CORE_EXECUTABLES, "unity", "mvn", "gradle"]);
 /** severity "warn": a failing command is reported as a warning and never stops the run (for example a first knip or jscpd report). Default "fail". */
 /** Where the command writes its test report (relative to its folder; one `*` allowed in the file name). A failure is then shown to the agent as the list of failing tests, not as the console output. Unity finds its own. */
 export const ReportSpecSchema = z.object({ format: z.enum(["nunit", "junit"]), path: z.string().min(1).max(300).refine(value => !/^([A-Za-z]:|[\/])/.test(value) && !value.split(/[\/]/).includes(".."), "the report path must be relative and stay inside the repository") });

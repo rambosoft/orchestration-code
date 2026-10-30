@@ -67,10 +67,30 @@ function shrink(lines: string[], maxChars: number): string[] {
   return [...head, `[... ${picked.length - head.length - tail.length} more lines left out ...]`, ...tail];
 }
 
-/** The log or trace in a form worth reading: no colour codes, timestamps or progress redraws; repeated lines and traces counted; framework frames folded; capped. */
+const ITEM_ID = /\b[A-Z]{1,5}-\d+(?:-AC\d+)?\b/g;
+/**
+ * Consecutive lines that differ only by an item id ("warning rule-trace: R-001 ... not referenced by any test", then R-002 ... R-016) become the first line and a count with the last id:
+ * a gate that reports one line per rule used to hand the agent sixteen near-identical lines on every attempt.
+ */
+function foldSimilar(lines: string[]): string[] {
+  const idsOf = (line: string): string[] => line.match(ITEM_ID) ?? [];
+  const out: string[] = [];
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index]!;
+    const key = idsOf(line).length ? line.replace(ITEM_ID, "#") : undefined;
+    let end = index + 1;
+    while (key && end < lines.length && idsOf(lines[end]!).length && lines[end]!.replace(ITEM_ID, "#") === key) end++;
+    if (key && end - index >= 3) out.push(`${line} [+${end - index - 1} similar, up to ${idsOf(lines[end - 1]!).at(-1)}]`);
+    else out.push(...lines.slice(index, end));
+    index = end;
+  }
+  return out;
+}
+
+/** The log or trace in a form worth reading: no colour codes, timestamps or progress redraws; repeated lines and traces counted; similar lines folded; framework frames folded; capped. */
 export function compactLog(text: string, options: CompactOptions = {}): string {
   const maxChars = options.maxChars ?? 4000; const keepFrames = options.keepFrames ?? 6;
-  const lines = normalize(text);
+  const lines = foldSimilar(normalize(text));
   const out: string[] = []; const seenTraces = new Map<string, number>();
   let repeatCount = 0; let previous: string | undefined;
   const flushRepeat = () => { if (repeatCount > 0) { out[out.length - 1] = `${out[out.length - 1]} (x${repeatCount + 1})`; repeatCount = 0; } };
