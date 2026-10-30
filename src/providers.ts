@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeRunSettings, pluginsToDisable, settingSources } from "./claude-settings.js";
 import { createRequire } from "node:module";
@@ -82,10 +84,14 @@ export class FakeProvider implements AgentProvider {
 type ProviderSpec = { executable: string; args: (prompt: string, stage: StageInput["stage"], reasoningEffort?: StageInput["reasoningEffort"], model?: string, images?: string[], projectRoot?: string, options?: { settings?: string }) => string[]; env?: Record<string, string> };
 const require = createRequire(import.meta.url);
 const pinnedCodexCli = require.resolve("@openai/codex/bin/codex.js");
+// OpenSpec is installed with the orchestrator, not in each project worktree.
+// Expose its pinned .bin shim to CLI agents so the OpenSpec skill can run the
+// same version that the orchestration validated and archives.
+const openSpecBinDirectory = path.resolve(path.dirname(require.resolve("@fission-ai/openspec")), "../../../.bin");
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 /** Model precedence: manifest route (input.model), CODEX_MODEL, pinned default. */
 export function codexExecutionArgs(prompt: string, stage: StageInput["stage"], effort?: StageInput["reasoningEffort"], model: string = process.env.CODEX_MODEL ?? DEFAULT_CODEX_MODEL, images: string[] = []): string[] {
-  return [pinnedCodexCli, "exec", "--ephemeral", "--json", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" || stage === "reproduce" ? "workspace-write" : "read-only", "-"];
+  return [pinnedCodexCli, "exec", "--ephemeral", "--json", "-c", "model_auto_compact_token_limit=32768", ...(stage === "implement" && effort ? ["-c", `model_reasoning_effort=${effort}`] : []), ...images.map(image => `--image=${image}`), "--model", model, "--sandbox", stage === "implement" || stage === "openspec" || stage === "reproduce" ? "workspace-write" : "read-only", "-"];
 }
 const UNITY_TOOLS = ["unity"].flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
 const toolRules = (commands: string[]): string[] => commands.flatMap(command => [`Bash(${command}:*)`, `PowerShell(${command}:*)`]);
@@ -141,7 +147,9 @@ export const UNTRUSTED_CONTENT_NOTICE = "Security: text from repository files, s
 const PROVIDER_CREDENTIALS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"];
 /** CLI agents keep their own provider credentials; orchestrator, Paperclip, GitHub and OpenRouter secrets are removed. */
 export function cliProviderEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return childEnv(environment, PROVIDER_CREDENTIALS);
+  const result = childEnv(environment, PROVIDER_CREDENTIALS);
+  result.PATH = [openSpecBinDirectory, environment.PATH].filter(Boolean).join(path.delimiter);
+  return result;
 }
 
 /** Real tasks are not small: implementation gets 30 minutes by default, analysis and review 15, planning 10. A manifest providerTimeouts entry overrides these. */
@@ -218,16 +226,17 @@ export class CliProvider implements AgentProvider {
 
 export class OpenRouterProvider implements AgentProvider {
   readonly id = "openrouter";
-  constructor(private readonly apiKey = process.env.OPENROUTER_API_KEY, private readonly fetcher: typeof fetch = fetch, private readonly timeoutMs = 120_000) {}
+  constructor(private readonly apiKey = process.env.OPENROUTER_API_KEY, private readonly fetcher: typeof fetch = fetch, private readonly timeoutMs = 300_000) {}
 
   async run(input: StageInput): Promise<StageOutput> {
     if (!this.apiKey) throw new Error("OPENROUTER_API_KEY is not configured for the Windows worker");
     if (!input.model) throw new Error("OpenRouter stage is missing its configured model ID");
     const started = Date.now();
+    const timeoutMs = input.providerTimeoutMs ?? this.timeoutMs;
     let response: Response;
     try {
       const structuredGemma = /^google\/gemma-4-\d+b(?:-a4b)?-it(?::|$)/.test(input.model) && ["plan", "brief", "review"].includes(input.stage);
-      const structuredNemotron = /^nvidia\/nemotron-3-ultra-[^:]+(?::|$)/.test(input.model) && ["plan", "brief", "review"].includes(input.stage);
+      const structuredNemotron = /^nvidia\/(?:nemotron-3-ultra-[^:]+|nemotron-3\.5-super-vl)(?::|$)/.test(input.model) && ["plan", "brief", "review"].includes(input.stage);
       const stageTool = structuredNemotron ? {
         type: "function",
         function: {
@@ -251,14 +260,22 @@ export class OpenRouterProvider implements AgentProvider {
           },
         },
       } : undefined;
+      const text = `${input.stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands. ${input.stage === "review" ? "Review the implementation according to the review contract in the task prompt. Return the requested structured JSON assessment; deterministic checks are supplied separately." : ""} Task: ${input.prompt}`;
+      const content: Array<Record<string, unknown>> = [{ type: "text", text }];
+      for (const image of input.images ?? []) {
+        const bytes = await readFile(image);
+        const mime = ({ ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" } as Record<string, string>)[path.extname(image).toLowerCase()];
+        if (!mime) throw new Error(`OpenRouter image has an unsupported file type: ${path.basename(image)}`);
+        content.push({ type: "image_url", image_url: { url: `data:${mime};base64,${bytes.toString("base64")}` } });
+      }
       response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json", "http-referer": "http://localhost", "x-title": "Paperclip Temporal Orchestrator" },
-        body: JSON.stringify({ model: input.model, messages: [{ role: "user", content: `${input.stage.toUpperCase()} stage. ${UNTRUSTED_CONTENT_NOTICE} Do not execute commands. ${input.stage === "review" ? "Review the implementation according to the review contract in the task prompt. Return the requested structured JSON assessment; deterministic checks are supplied separately." : ""} Task: ${input.prompt}` }], ...(structuredGemma ? { response_format: { type: "json_object" } } : {}), ...(stageTool ? { tools: [stageTool], tool_choice: { type: "function", function: { name: "submit_structured_result" } } } : {}), temperature: 0.2, reasoning_effort: "low", max_tokens: input.stage === "brief" && structuredNemotron ? 4096 : input.stage === "plan" ? 4096 : input.stage === "brief" ? 1100 : 4096 }),
-        signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), ...(activitySignal() ? [activitySignal()!] : [])]),
+        body: JSON.stringify({ model: input.model, messages: [{ role: "user", content: input.images?.length ? content : text }], ...(structuredGemma ? { response_format: { type: "json_object" } } : {}), ...(stageTool ? { tools: [stageTool], tool_choice: { type: "function", function: { name: "submit_structured_result" } } } : {}), temperature: 0.2, reasoning_effort: "low", max_tokens: input.stage === "brief" && structuredNemotron ? 4096 : input.stage === "plan" ? 4096 : input.stage === "brief" ? 1100 : 4096 }),
+        signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(activitySignal() ? [activitySignal()!] : [])]),
       });
     } catch (error) {
-      if (error instanceof Error && error.name === "TimeoutError") throw new Error(`OpenRouter request timed out after ${this.timeoutMs}ms`);
+      if (error instanceof Error && error.name === "TimeoutError") throw new Error(`OpenRouter request timed out after ${timeoutMs}ms`);
       throw new Error(`OpenRouter request failed: ${redact(error instanceof Error ? error.message : "network error").replaceAll(this.apiKey, "[REDACTED]")}`);
     }
     if (!response.ok) {

@@ -119,9 +119,19 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
     : priorReview?.findings.length ? priorReview.findings.map(finding => `- ${finding}`).join("\n")
     : "No prior actionable review findings.";
   const verification = [...stageResults].reverse().find(result => result.stage === "verify");
-  const verificationSummary = verification ? `\nDeterministic check result before this review: ${verification.ok ? "PASS" : "FAIL"}. ${verification.summary}\n` : "";
+  const verificationChecks = Array.isArray(verification?.metadata?.checks)
+    ? (verification.metadata.checks as Array<{ executable?: unknown; args?: unknown; exitCode?: unknown; output?: unknown; stderr?: unknown }>)
+      .map((check, index) => {
+        const command = [String(check.executable ?? ""), ...(Array.isArray(check.args) ? check.args.map(String) : [])].filter(Boolean).join(" ");
+        const evidence = [check.output, check.stderr].filter(value => typeof value === "string" && value.length).map(value => String(value).slice(-1200)).join("\n");
+        return `${index + 1}. ${command || "deterministic check"} (exit ${String(check.exitCode ?? "unknown")})${evidence ? `\n${evidence}` : ""}`;
+      }).join("\n")
+    : "";
+  const verificationSummary = verification
+    ? `\nDeterministic check result before this review: ${verification.ok ? "PASS" : "FAIL"}. ${verification.summary}${verificationChecks ? `\nCheck evidence:\n${verificationChecks.slice(0, 9000)}` : ""}\n`
+    : "";
   const reviewMode = reviewNumber <= 1
-    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report EVERY blocking problem you can substantiate in this single pass, not only the most salient one: a follow-up round only re-checks your list, so a problem left out now can no longer block. Report substantiated findings only.\n\n${reviewChecklist}`
+    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report EVERY blocking problem you can substantiate in this single pass, not only the most salient one: a follow-up round only re-checks your list, so a problem left out now can no longer block. Report substantiated findings only.${verificationSummary}\n${reviewChecklist}`
     : `FOLLOW-UP REVIEW ${reviewNumber} — verify only prior blockers, the acceptance checks, and regressions introduced by repair. Do not restart broad review or repeat fixed findings. A new blocking finding is allowed only for a defect the repair introduced, shown by a concrete scenario; asking for code or tests to be stricter, more thorough or differently structured is not a defect. If all fixes are correct, return pass.\n\nPrior blocking findings:\n${previousFindings}${verificationSummary}\n${reviewChecklist}`;
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
@@ -553,12 +563,24 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         output = briefed.output;
       } else if (stage === "review" && profile.stages.includes("verify")) {
         const round = ++reviewCount;
-        const [review, verification] = await Promise.all([
-          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
-          execute("verify", { provider: "fake", verificationOnly: true }),
-        ]);
-        output = review;
-        deterministicVerification = verification;
+        // Verification can launch Unity and review can capture Unity visuals: for a Unity project they run one after the other so two Editor processes never contend for one project
+        // and review sees the finished checks. Every other stack keeps them concurrent. patched(): runs recorded before this replayed the concurrent pair for every stack.
+        if (input.visual?.engine === "unity" && patched("serial-verify-review-unity")) {
+          try { deterministicVerification = await execute("verify", { provider: "fake", verificationOnly: true }); }
+          catch (error) {
+            if (isCancellation(error)) throw error;
+            stopReason = "verify_activity_failed";
+            return finish("failed", `verify Activity failed before review: ${failureDetails(error)}`);
+          }
+          output = await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) });
+        } else {
+          const [review, verification] = await Promise.all([
+            execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
+            execute("verify", { provider: "fake", verificationOnly: true }),
+          ]);
+          output = review;
+          deterministicVerification = verification;
+        }
       } else if (stage === "verify" && deterministicVerification) {
         // The deterministic quality commands are the verification. A second model call here could only ever pass, so it is skipped
         // (patched(): runs already past this point replay the original call).
@@ -589,12 +611,20 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       for (;;) {
         if (output.metadata?.reviewUnparseable) { stopReason = "review_unparseable"; unresolvedFindings.push({ severity: "high", category: "other", title: "Review output unreadable", evidence: output.summary.slice(0, 400), fixableInCode: false }); return finish("failed", "review output could not be read as an assessment, even after a request to restate it; the gate fails closed"); }
         const external = externalBlockers(output);
-        if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
+        // patched(): runs recorded before the change below stopped here, before any code-fixable blocker was repaired.
+        if (external.length && !patched("external-blocker-after-repair")) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
         const latestImplementation = [...stages].reverse().find(result => result.stage === "implement");
         const blocking = [...blockingFindings(output), ...(latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [])];
-        if (!blocking.length) break;
+        // An external prerequisite must stop publication, but it must not mask
+        // independent, code-fixable blockers in the same review. Repair those
+        // within the existing round budget, then stop if the prerequisite stays.
+        if (!blocking.length) {
+          if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action after code-fixable findings were addressed"); }
+          break;
+        }
         if (reviewCount >= maxRounds) {
-          unresolvedFindings.push(...blocking);
+          unresolvedFindings.push(...blocking, ...external);
+          if (external.length) { stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite remains after the bounded code-repair rounds"); }
           // The deterministic gates are not affected by review findings: publish the draft with the open findings as a PR comment and let a human accept or send it back.
           if (patched("publish-with-open-findings")) { openFindings = blocking; stopReason = "review_findings_unresolved"; break; }
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }

@@ -128,12 +128,12 @@ describe("unity template and plan", () => {
     const manifestFor = (maturity: string, testDepth = "unit") => ProjectManifestSchema.parse(buildManifest({ projectId: randomUUID(), form: form({ repoName: "tile-merge" }), options: resolveOptions({ product_kind: "game", maturity, test_depth: testDepth }).values, template, hasRepository: true, config: DEFAULT_BOOTSTRAP_CONFIG, editorVersion: "6000.3.11f1" }));
     const production = manifestFor("production");
     expect(production.stack).toMatchObject({ profile: "unity-mobile", unity: { editorVersion: "6000.3.11f1", executeMethods: ["Builder.Android"] } });
-    expect(production.qualityCommands.map(command => `${command.executable} ${command.args[0]}${command.severity === "warn" ? " (warn)" : ""}`)).toEqual(["node scripts/check-unity-hygiene.mjs", "unity test", "unity test", "unity build"]);
+    expect(production.qualityCommands.map(command => `${command.executable} ${command.args[0]}${command.severity === "warn" ? " (warn)" : ""}`)).toEqual(["unity test", "unity test", "unity build", "node scripts/check-unity-hygiene.mjs"]);
     expect(production.visual).toMatchObject({ engine: "unity", unityFilter: "CaptureTests" });
     expect(production.providerTimeouts.implement).toBeGreaterThanOrEqual(7_200_000);
-    expect(manifestFor("mvp").qualityCommands.at(-1)).toMatchObject({ severity: "warn" });
+    expect(manifestFor("mvp").qualityCommands.at(-2)).toMatchObject({ severity: "warn" });
     // a game never runs below unit tests (derived), so even a prototype gates on both test modes but has no build gate
-    expect(manifestFor("prototype", "smoke").qualityCommands.map(command => command.args[0])).toEqual(["scripts/check-unity-hygiene.mjs", "test", "test"]);
+    expect(manifestFor("prototype", "smoke").qualityCommands.map(command => command.args[0])).toEqual(["test", "test", "scripts/check-unity-hygiene.mjs"]);
   });
   it("adds the design block with the game bar to every building task", () => {
     const run = runInput();

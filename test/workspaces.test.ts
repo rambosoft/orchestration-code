@@ -63,6 +63,9 @@ describe("Git workspace admission and publication", () => {
       expect(first).toEqual(second);
       expect(first.headSha).not.toBe(sha);
       expect(first.prUrl).toBe("https://github.com/example/project/pull/7");
+      const resumedWorktree = await prepareWorktree({ runId: "fixture-run", projectRoot: root, baseSha: sha, branch: "codex/fixture-a1", requiredSourcePaths: ["src/app.js"] });
+      expect(resumedWorktree).toBe(worktree);
+      expect(await readFile(path.join(resumedWorktree, "src", "app.js"), "utf8")).toContain("value = 2");
       expect(await runCommand("git", ["--git-dir", bare, "rev-parse", "refs/heads/codex/fixture-a1"], root)).toBe(first.headSha);
       const authWorktree = await prepareWorktree({ runId: "auth-failure", projectRoot: root, baseSha: sha, branch: "codex/auth-failure-a1", requiredSourcePaths: ["src/app.js"] });
       await writeFile(path.join(authWorktree, "src", "app.js"), "export const value = 3;\n");
@@ -76,6 +79,23 @@ describe("Git workspace admission and publication", () => {
     } finally {
       await runCommand("git", ["worktree", "remove", "--force", path.join(process.env.ORCHESTRATOR_DATA_DIR!, "worktrees", "fixture-run")], root).catch(() => {});
       await runCommand("git", ["worktree", "remove", "--force", path.join(process.env.ORCHESTRATOR_DATA_DIR!, "worktrees", "auth-failure")], root).catch(() => {});
+      if (oldData === undefined) delete process.env.ORCHESTRATOR_DATA_DIR; else process.env.ORCHESTRATOR_DATA_DIR = oldData;
+    }
+  }, 30_000);
+
+  it("rejects an existing task worktree whose admitted base is no longer its ancestor", async () => {
+    const { root, sha } = await fixture();
+    const oldData = process.env.ORCHESTRATOR_DATA_DIR; process.env.ORCHESTRATOR_DATA_DIR = path.join(root, "run-data");
+    try {
+      const branch = "codex/changed-base-a1";
+      const worktree = await prepareWorktree({ runId: "changed-base", projectRoot: root, baseSha: sha, branch });
+      await writeFile(path.join(root, "src", "app.js"), "export const value = 2;\n");
+      await runCommand("git", ["add", "--all"], root); await runCommand("git", ["commit", "-m", "advance main"], root);
+      const newerBase = await runCommand("git", ["rev-parse", "HEAD"], root);
+      await expect(prepareWorktree({ runId: "changed-base", projectRoot: root, baseSha: newerBase, branch })).rejects.toThrow("does not match the admitted base");
+      expect(await readFile(path.join(worktree, "src", "app.js"), "utf8")).toContain("value = 1");
+    } finally {
+      await runCommand("git", ["worktree", "remove", "--force", path.join(process.env.ORCHESTRATOR_DATA_DIR!, "worktrees", "changed-base")], root).catch(() => {});
       if (oldData === undefined) delete process.env.ORCHESTRATOR_DATA_DIR; else process.env.ORCHESTRATOR_DATA_DIR = oldData;
     }
   }, 30_000);

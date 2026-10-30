@@ -138,7 +138,7 @@ describe("OpenRouter provider", () => {
   it("keeps the OpenRouter key out of other provider CLI environments", () => {
     const filtered = cliProviderEnvironment({ OPENROUTER_API_KEY: "secret", PATH: "C:/tools" });
     expect(filtered.OPENROUTER_API_KEY).toBeUndefined();
-    expect(filtered.PATH).toBe("C:/tools");
+    expect(filtered.PATH?.split(path.delimiter).at(-1)).toBe("C:/tools");
   });
 
   it("sends the configured model and returns structured output without exposing the key", async () => {
@@ -241,6 +241,7 @@ describe("OpenRouter provider", () => {
 describe("Codex execution telemetry", () => {
   it("requests structured JSONL events and can set an implementation-only reasoning effort for controlled benchmarks", () => {
     const defaultArgs = codexExecutionArgs("task", "implement");
+    expect(defaultArgs).toContain("model_auto_compact_token_limit=32768");
     expect(defaultArgs).toContain("--json");
     expect(defaultArgs).not.toContain("model_reasoning_effort=low");
     expect(codexExecutionArgs("task", "implement", "low")).toContain("model_reasoning_effort=low");
@@ -369,5 +370,14 @@ describe("short, fixed-shape reports", () => {
     const short = reviewPrompt("BRIEF", [{ ...stages[0]!, summary: "Changed: a.cs" }], 1);
     expect(short).toContain("Implementation 1: Changed: a.cs");
     expect(short).not.toContain("characters left out");
+  });
+  it("gives review the completed deterministic result and bounded test evidence", () => {
+    const prompt = reviewPrompt("BRIEF", [{
+      stage: "verify", ok: true, summary: "Unity EditMode and PlayMode checks passed", findings: [], artifactRefs: [], provider: "quality-gate", durationMs: 1,
+      metadata: { checks: [{ executable: "unity", args: ["test", "--mode", "EditMode"], exitCode: 0, output: "MouseDragAtOrAbove12DpReportsPanWithoutCellAction passed" }] },
+    }], 1);
+    expect(prompt).toContain("Deterministic check result before this review: PASS");
+    expect(prompt).toContain("MouseDragAtOrAbove12DpReportsPanWithoutCellAction passed");
+    expect(prompt).not.toContain("running concurrently with this review");
   });
 });

@@ -18,6 +18,8 @@ describe("OpenSpec workflow gating", () => {
     const stageInputs: StageInput[] = [];
     const archiveCalls: string[] = [];
     let failVerification = false;
+    let mixedExternalReview = false;
+    let reviewCalls = 0;
     const activities = {
       checkDependencies: async () => undefined,
       prepareWorktree: async () => worktree,
@@ -29,7 +31,19 @@ describe("OpenSpec workflow gating", () => {
         stageInputs.push(input);
         prompts.set(input.stage, input.prompt);
         if (input.stage === "spec_optimize") return { stage: input.stage, ok: true, summary: JSON.stringify({ task_goal: "Add a percentage button while preserving operand behavior.", requirements: [{ id: "Requirement: percentage uses the existing operand semantics", intent: "Preserve operand behavior.", scenarios: [{ id: "Scenario: Apply percent", expected: "Divide current operand by 100." }] }], hard_constraints: [], relevant_design_decisions: [] }), findings: [], artifactRefs: [], provider: input.provider, durationMs: 0 };
-        if (input.stage === "review") return { stage: input.stage, ok: true, summary: "Review passed", findings: [], review: { verdict: "pass", findings: [], notes: [] }, artifactRefs: [], provider: input.provider, durationMs: 0 };
+        if (input.stage === "review") {
+          if (mixedExternalReview) {
+            reviewCalls++;
+            const findings = reviewCalls === 1
+              ? [
+                  { severity: "high" as const, category: "functional" as const, title: "Repair the visible launch action", evidence: "The action is not connected to the start flow.", fixableInCode: true },
+                  { severity: "high" as const, category: "environment" as const, title: "Unity license unavailable", evidence: "Unity could not acquire an Editor license.", fixableInCode: false },
+                ]
+              : [{ severity: "high" as const, category: "environment" as const, title: "Unity license unavailable", evidence: "Unity could not acquire an Editor license.", fixableInCode: false }];
+            return { stage: input.stage, ok: false, summary: "Review found code and environment blockers", findings: findings.map(item => item.title), review: { verdict: "needs_changes", findings, notes: [] }, artifactRefs: [], provider: input.provider, durationMs: 0 };
+          }
+          return { stage: input.stage, ok: true, summary: "Review passed", findings: [], review: { verdict: "pass", findings: [], notes: [] }, artifactRefs: [], provider: input.provider, durationMs: 0 };
+        }
         if (input.stage === "verify" && failVerification) return { stage: input.stage, ok: false, summary: "quality check failed", findings: ["test failure"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
         if (input.stage === "plan") return { stage: input.stage, ok: true, summary: JSON.stringify({ task_goal: "Add a percentage button", approach: "Preserve existing percentage behavior", important_decisions: ["Plan: preserve existing percentage behavior"], risks: [], acceptance_criteria: ["Requirement: percentage uses the existing operand semantics"], hard_constraints: [] }), findings: [], artifactRefs: [], provider: input.provider, durationMs: 0 };
         if (input.stage === "brief") return { stage: input.stage, ok: true, summary: JSON.stringify({ task_goal: "Add a percentage button", files_or_modules: ["calculator control"], must_follow: ["Add a percentage button.", "The button shall preserve operand behavior.", "Use the $openspec-apply-change workflow and mark checklist items complete only after code and validation are complete."], must_avoid: [], implementation_steps: ["Add the percentage control"], verification_steps: ["Run focused tests"], acceptance_checks: ["Requirement: percentage uses the existing operand semantics"] }), findings: [], artifactRefs: [], provider: input.provider, durationMs: 0 };
@@ -75,6 +89,18 @@ describe("OpenSpec workflow gating", () => {
         expect(verificationStages[0]).toMatchObject({ provider: "fake", verificationOnly: true });
         expect(stageInputs.find(stage => stage.stage === "implement")?.reasoningEffort).toBe("low");
         expect(stageInputs.find(stage => stage.stage === "review")?.prompt).toContain("running concurrently");
+
+        stageInputs.length = 0;
+        reviewCalls = 0;
+        mixedExternalReview = true;
+        const mixed = await environment.client.workflow.execute(projectWorkflow, { taskQueue, workflowId: "openspec-mixed-external-review", args: [{ ...baseInput, runId: "workflow-mixed-external-review", taskId: "PERCENT-4" }] });
+        expect(mixed.status).toBe("failed");
+        expect(mixed.message).toContain("external prerequisite");
+        expect(mixed.metadata?.review.repairCount).toBe(1);
+        expect(stageInputs.filter(stage => stage.stage === "implement")).toHaveLength(2);
+        expect(stageInputs.filter(stage => stage.stage === "review")).toHaveLength(2);
+        expect(archiveCalls).toEqual(["task-percent-run1"]);
+        mixedExternalReview = false;
 
         prompts.clear();
         stageInputs.length = 0;
