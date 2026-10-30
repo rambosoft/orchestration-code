@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { RunInput, RunResult } from "./contracts.js";
 import { waiveCriteria, type Waiver } from "./acceptance.js";
 import { projectWorkflow, approveSignal, bootstrapStateQuery, progressQuery } from "./workflows.js";
+import { refreshedInput } from "./resume-config.js";
 
 export async function withTemporal<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const connection = await Connection.connect({ address: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233" });
@@ -54,13 +55,17 @@ export function nextResumeId(originalId: string, existing: string[]): string {
  * saved stage results (`artifacts/<task>/<run id>/<stage>-<n>.json`) and skip every stage whose input is unchanged; only the stage that failed, and what follows it, executes.
  * The workflow id keeps the issue-id prefix, so `reconcile` reports the result to Paperclip like any other run.
  */
-export async function resumeRun(originalId: string, options: { waive?: Waiver[]; /** A new token budget (cost units) for the resumed run, after the first one stopped it. */ budget?: number } = {}): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean; waived: string[] }> {
+export async function resumeRun(originalId: string, options: { waive?: Waiver[]; /** A new token budget (cost units) for the resumed run, after the first one stopped it. */ budget?: number } = {}): Promise<{ workflowId: string; runId: string; originalRunId: string; alreadyStarted: boolean; waived: string[]; /** What the current manifest changed in the run's configuration, one line each. */ refreshed: string[] }> {
   return withTemporal(async client => {
     const history = await client.workflow.getHandle(originalId).fetchHistory();
     const started = history.events?.find(event => event.workflowExecutionStartedEventAttributes)?.workflowExecutionStartedEventAttributes;
     const payload = started?.input?.payloads?.[0];
     if (!payload?.data) throw new Error(`workflow ${originalId} has no readable start input`);
-    const input = JSON.parse(Buffer.from(payload.data).toString("utf8")) as RunInput;
+    const original = JSON.parse(Buffer.from(payload.data).toString("utf8")) as RunInput;
+    // The operator may have changed routing, timeouts or the budget in the manifest since the run started (LOC-92: review moved off a free model that returned empty answers): a resume continues with
+    // the current ones and keeps the route of every finished stage (src/resume-config.ts).
+    const refreshed = await refreshedInput(original);
+    const input = refreshed.input;
     // A waived criterion changes the task prompt, so the stages after the plan run again, but on the preserved worktree they only have to finish and verify what is already there.
     const waiver = options.waive?.length ? waiveCriteria(input.prompt, options.waive) : { prompt: input.prompt, waived: [] as string[] };
     if (options.waive?.length && waiver.waived.length !== options.waive.length) throw new Error(`criteria not found in the task prompt: ${options.waive.filter(item => !waiver.waived.includes(item.id)).map(item => item.id).join(", ")}`);
@@ -71,6 +76,6 @@ export async function resumeRun(originalId: string, options: { waive?: Waiver[];
     for await (const row of client.workflow.list({ query: `WorkflowId STARTS_WITH "${base}"` })) existing.push(row.workflowId);
     const id = nextResumeId(originalId, existing);
     const result = await startOrAttach(client, id, input);
-    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted, waived: waiver.waived };
+    return { workflowId: id, runId: result.runId, originalRunId: input.runId, alreadyStarted: result.alreadyStarted, waived: waiver.waived, refreshed: refreshed.changes };
   });
 }

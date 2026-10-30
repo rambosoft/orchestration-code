@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { z } from "zod";
-import { cancelRun, inspectRun, listRuns, signalApproval, startRun } from "./client.js";
+import { cancelRun, inspectRun, listRuns, resumeRun, signalApproval, startRun } from "./client.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -106,10 +106,19 @@ const server = createServer(async (req, res) => {
       const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: compactEmbeddedLogs(parsedPrompt.prompt), taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
-    const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject))?$/);
+    const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject|resume))?$/);
     if (match) {
       const id = decodeURIComponent(match[1]!);
       if (req.method === "GET" && !match[2]) { res.end(JSON.stringify(await inspectRun(id))); return; }
+      if (req.method === "POST" && match[2] === "resume") {
+        const current = await inspectRun(id) as { status?: string; result?: { status?: string; publish?: { prUrl?: string } } };
+        const resumable = current.result?.status === "failed"
+          || (current.result?.status === "needs_review" && Boolean(current.result.publish?.prUrl));
+        if (current.status !== "COMPLETED" || !resumable) {
+          res.writeHead(409); res.end(JSON.stringify({ error: "only a completed failed workflow or a published needs_review workflow can be resumed safely" })); return;
+        }
+        res.writeHead(202); res.end(JSON.stringify(await resumeRun(id))); return;
+      }
       if (req.method === "POST" && match[2] === "cancel") { await cancelRun(id); res.end(JSON.stringify({ ok: true })); return; }
       if (req.method === "POST" && (match[2] === "approve" || match[2] === "reject")) { await signalApproval(id, match[2] === "approve"); res.end(JSON.stringify({ ok: true })); return; }
     }
