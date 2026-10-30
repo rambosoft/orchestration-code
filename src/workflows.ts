@@ -684,7 +684,13 @@ async function runProject(input: RunInput): Promise<RunResult> {
         // patched(): runs recorded before the change below stopped here, before any code-fixable blocker was repaired.
         if (external.length && !patched("external-blocker-after-repair")) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
         const latestImplementation = [...stages].reverse().find(result => result.stage === "implement");
-        const blocking = [...blockingFindings(output), ...(latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [])];
+        const declared = latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [];
+        // An implementer sent back once that declares the same items again, and a reviewer that then passes the change with that declaration in front of it, have settled the question:
+        // a documented deferral (the contract allows one for work that belongs to a later task). It is recorded, not blocking, so the task finishes and its dependents can start (ADR 0020).
+        // patched(): runs recorded before this change kept such a task in review.
+        const deferred = declared.length > 0 && repairCount >= 1 && !blockingFindings(output).length && !external.length && patched("accept-reviewed-deferral");
+        if (deferred) warnings.push({ stage: "review", message: `accepted as a documented deferral after review (${declared.length}): ${declared.map(item => item.title.replace(/^Declared unmet by the implementation: /, "").slice(0, 120)).join("; ")}` });
+        const blocking = [...blockingFindings(output), ...(deferred ? [] : declared)];
         // An external prerequisite must stop publication, but it must not mask
         // independent, code-fixable blockers in the same review. Repair those
         // within the existing round budget, then stop if the prerequisite stays.

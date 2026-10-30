@@ -407,12 +407,20 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.metadata?.review.repairCount).toBe(1);
     expect(state.calls.filter(call => call.stage === "implement")[1]!.prompt).toContain("Declared unmet by the implementation: two obstacles on screen at score 3000");
   });
-  it("publishes the draft with the unmet item as a PR comment when it is still declared after the last review round, instead of failing", async () => {
+  it("accepts the item as a documented deferral when the implementer declares it again after rework and the review then passes, so the task finishes and its dependents can start", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time" }, [], { stage: "implement", apply: declare, mode: "always" });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.metadata?.review.repairCount).toBe(1);
+    expect(result.metadata?.warnings?.some(warning => warning.message.includes("accepted as a documented deferral after review") && warning.message.includes("two obstacles on screen at score 3000"))).toBe(true);
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments).toEqual([]);
+  });
+  it("publishes the draft with the unmet item as a PR comment when the review still blocks after the last round, instead of failing", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", repeatReviewFailure: true }, [], { stage: "implement", apply: declare, mode: "always" });
     expect(result.status).toBe("needs_review");
-    expect(result.message).toContain("1 unresolved review finding");
+    expect(result.message).toContain("unresolved review finding");
     expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
-    expect(result.metadata?.review.unresolvedFindings[0]?.title).toContain("two obstacles on screen at score 3000");
+    expect(result.metadata?.review.unresolvedFindings.some(item => item.title.includes("two obstacles on screen at score 3000"))).toBe(true);
     expect(result.publish?.prUrl).toContain("/pull/1");
     expect(state.comments).toHaveLength(1);
     expect(state.comments[0]!.prUrl).toBe(result.publish!.prUrl);

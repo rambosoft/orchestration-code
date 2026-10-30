@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 reviewed deferral accepted (ADR 0020, first live run)
+- Minesweeper LOC-116 ended `needs_review` because an acceptance item the implementer deferred (allowed by the contract) stayed blocking although the reviewer passed twice; every dependent task waited. A re-declared item after one rework plus a passing review is now an accepted, recorded deferral (`patched("accept-reviewed-deferral")`); a still-blocking review keeps `needs_review`. Tests in `test/typed-flows.test.ts`.
+
 ## 2026-10-30 provider fallback chains (ADR 0019)
 - A route in `providerRouting` may list `fallback` routes (max 3). A quota pause moves the stage to the next route at once, with a warning; a lost connection never falls back; later stages of the run skip a provider that hit its limit. Opt-in, nothing configured by default; `patched("provider-fallback")`. Tests in `test/provider-pause.test.ts`. Not built: CLI session resume.
 

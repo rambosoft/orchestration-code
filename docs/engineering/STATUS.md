@@ -2,6 +2,7 @@
 
 ## Current checkout audit and provider update (2026-10-26)
 - Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-30 Live run of Cinderfield Minesweeper (LOC-113..): first finding fixed (ADR 0020, B-093). Run in progress.
 - 2026-10-30 Provider fallback chains done (ADR 0019, opt-in `fallback` on a route). Session resume not built. Next: deploy and run Minesweeper (Unity prototype).
 - 2026-10-30 P4 done: milestone check tasks for prototypes and the opt-in worker-side result report (ADR 0018). The report flag is untested against a live Paperclip: enable `ORCHESTRATOR_WORKER_REPORTS=1` for one task first. Reconcile is unchanged (still the backstop). Next: provider fallback chains and session resume (tokens), doctor checks, live Minesweeper run.
 - 2026-10-30 P3 done: `.meta` heal in verify, similar-line folding, stack profiles + packs, `npm run onboard` (ADR 0017). Not run against a real Editor or a real Spring/Angular repo yet. Next: P4 (result outbox, reconcile reduction), milestone review, doctor checks for mvn/gradle.
