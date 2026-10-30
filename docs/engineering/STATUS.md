@@ -1,5 +1,10 @@
 # STATUS (rewritten each update)
 
+## Current checkout audit and provider update (2026-10-26)
+- Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-30: B-087 (forced Codex) is withdrawn; manifests route again with Claude implementing. See docs/engineering/research/orchestration-v2-redesign.md for the analysis and the v2 plan (P0 stabilization done in this change).
+- LOC-92's failed Codex-linked retry is being reconciled and retried under Codex routing; its prior worktree contains OpenSpec planning artifacts and no product code changes.
+
 - Phase: hardening through the e2e passes and the Paperclip runs (LOC-38, LOC-39). Real project e2e (dino-runner) green; CI green on the branch.
 - Done: B-001..B-014, B-017..B-019, B-028, B-033 (drain-aware deploy), B-038 (visual verification), B-039 (OpenSpec delta correction). B-015 is partly done (SECURITY.md, PR template, Dependabot); LICENSE waits on the owner.
 - In progress: B-027 (restart supervision done; the build stamp, where the worker logs its git SHA and doctor compares it to HEAD, is open).

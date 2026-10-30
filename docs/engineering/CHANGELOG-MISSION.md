@@ -1,5 +1,15 @@
 # Mission changelog
 
+## 2026-10-30 stabilization (P0, B-087 withdrawn)
+
+- The bridge-wide Codex override (`ORCHESTRATOR_FORCE_CODEX`) was removed: Codex cannot run the Unity CLI in its sandbox, so Unity implement rounds changed no files (Cinderfield, task 00e09cd3). Manifests route again (Claude implements). The Unity serial verify then review order and the review-blocker order are now behind `patched()`; tests write to a temporary data directory; the reconcile service logs a waiting finding once per 20 cycles. Plan: docs/engineering/research/orchestration-v2-redesign.md.
+
+## 2026-10-26 provider routing update (B-087, withdrawn)
+- Implement stage defaults now use Codex across existing project manifests and newly bootstrapped projects.
+- Provider-backed orchestration stages now default to Codex globally, including review, after LOC-92's OpenRouter review returned no text. Set `ORCHESTRATOR_FORCE_CODEX=0` to restore per-manifest routing; deterministic quality gates remain local.
+- OpenRouter timeout now respects each stage's configured timeout, with a five-minute default for free endpoint latency variance.
+- This changes the previously live-tested Codex review / Claude implementation split. No tests, typecheck, build, or live provider run were performed in this update; representative project runs remain necessary to establish review quality and operational fit.
+
 One line per completed item: id, commit, evidence.
 
 - baseline 99c5f00 (main): existing code committed; 70 tests / typecheck green (knowledge/metrics/baseline.json).
