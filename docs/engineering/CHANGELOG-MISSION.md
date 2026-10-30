@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 gate reports all static problems (ADR 0025, seventh live finding)
+- Minesweeper LOC-132 failed because a flaky timing test used the one repair pass and the acceptance trace (two criteria without tests, a static file read) only ran afterwards. The trace is now computed before the commands and travels with a failing command, so one repair sees both. Test in `test/gate-trace.test.ts`.
+
 ## 2026-10-30 run storm stopped (ADR 0024, sixth live finding, caused by ADR 0022)
 - Minesweeper LOC-132: the `blocked` status of ADR 0022 made Paperclip wake the failed task again at once (`issue_blockers_resolved`): 225 workflows in three hours, 225 Unity worktrees, a full disk. A failed or needs-info task now rests in `in_review`; the adapter refuses to start a seventh run within 30 minutes; the CLI failure text keeps the real error (ENOSPC was hidden behind a stdin warning). `statusPatch` removed. Tests in `test/adapter-resilience.test.ts`, `test/reconcile.test.ts`, `test/result-report.test.ts`, `test/provider-pause.test.ts`.
 

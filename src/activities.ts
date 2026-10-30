@@ -258,6 +258,13 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     // An Editor the agent left open on this worktree makes every Unity command fail with "instances cannot open the same project".
     if (!reusable && checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
     let healedMeta = false;
+    // The acceptance trace reads test sources only, so it is known before a single Unity run. A failing command used to hide it: the one repair pass fixed the command, and the trace then failed the task
+    // with nothing left to repair it (Minesweeper LOC-132: a flaky timing test first, missing tests for two criteria second). The trace now travels with a failing command, so one repair sees both (ADR 0025).
+    const acceptanceTraceProblem = async (): Promise<string | undefined> => {
+      const testFiles = await readUnityTestFiles(input.projectRoot);
+      return [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
+    };
+    const earlyTraceProblem = !reusable && checks.some(check => check.executable === "unity") ? await acceptanceTraceProblem().catch(() => undefined) : undefined;
     for (const check of reusable ? [] : checks) {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
@@ -295,6 +302,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
+        if (earlyTraceProblem) results.push({ executable: "acceptance-trace", args: [], exitCode: 1, durationMs: 0, output: earlyTraceProblem, stderr: "" });
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
@@ -309,8 +317,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {
-      const testFiles = await readUnityTestFiles(input.projectRoot);
-      const missing = [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
+      const missing = await acceptanceTraceProblem();
       if (missing) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
