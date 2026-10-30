@@ -1,5 +1,9 @@
 # Mission changelog
 
+## 2026-10-30 lanes and tiers (P2, ADR 0015)
+
+- A project manifest can carry a `tier` (the bootstrap maturity) and a task a lane (blueprint `size`, or a `Lane:` line). The pair picks the stages from one table (prototype task = implement + verify; production = full pipeline), OpenSpec and analysis only for heavy production tasks, a deterministic brief when plan/brief are skipped, direct verify with one gate repair, and an automatic review for risky results (`assessChanges`). Run input data, so no `patched()` and an unchanged replay fixture. Manifests without a tier keep the full pipeline. Tests: test/lanes.test.ts.
+
 ## 2026-10-30 resilience layer (P1, ADR 0016)
 
 - A provider usage limit or a lost connection now pauses the stage on a durable timer and runs it again without using retry attempts (cap 24 hours per stage); Codex error events and Claude `is_error` results are read as errors; a silent Codex run is killed after 15 minutes (45 for build stages) and retried. Behind `patched("provider-pause")`, no replay fixture change. `progress` query shows `paused`. Tests: test/provider-pause.test.ts.

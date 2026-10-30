@@ -11,6 +11,7 @@ import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { detectPause, isOnline } from "./provider-gate.js";
 import { PROVIDER_PAUSE } from "./pause-policy.js";
+import type { ChangeStats } from "./lanes.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
 import { compactLog } from "./log-compact.js";
@@ -193,6 +194,15 @@ export function classifyProviderError(message: string): ProviderErrorCategory {
   if (/\b(?:401|403)\b|unauthori[sz]ed|\bauthentication\b/i.test(message)) return "authentication";
   if (/not configured|missing its configured model|unsupported provider/i.test(message)) return "configuration";
   return "provider_error";
+}
+
+/** What the implementer changed in the worktree (tracked changes, deletions, new files), for the lane's escalation check (src/lanes.ts). */
+export async function assessChanges(input: { worktree: string }): Promise<ChangeStats> {
+  const lines = async (args: string[]): Promise<string[]> => (await runCommand("git", ["-c", "core.quotepath=false", ...args], input.worktree).catch(() => "")).split(/\r?\n/).filter(Boolean);
+  const [changed, deletedFiles, added, numstat] = await Promise.all([lines(["diff", "--name-only", "HEAD"]), lines(["diff", "--name-only", "--diff-filter=D", "HEAD"]), lines(["ls-files", "--others", "--exclude-standard"]), lines(["diff", "--numstat", "HEAD"])]);
+  let changedLines = 0;
+  for (const row of numstat) { const match = /^(\d+)\s+(\d+)/.exec(row); if (match) changedLines += Number(match[1]) + Number(match[2]); }
+  return { files: [...new Set([...changed, ...added])], lines: changedLines, deletedFiles };
 }
 
 /** Asked by the workflow while a network pause waits: is the connection back? */

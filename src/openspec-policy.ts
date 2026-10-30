@@ -21,12 +21,15 @@ export function parseOpenSpecTaskPrompt(prompt: string): { prompt: string; overr
  * Task-level switches written as their own line in the task text: "OpenSpec: on|off" and "Analysis: on|off".
  * Directive lines are removed from the prompt; conflicting repeats of one directive are an error.
  */
-export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; error?: string } {
+export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; lane?: "light" | "standard" | "heavy"; error?: string } {
   const lines = prompt.split(/\r?\n/);
   const found = new Map<string, Set<boolean>>();
   const removed = new Set<number>();
   const types = new Set<string>();
+  const lanes = new Set<string>();
   lines.forEach((line, index) => {
+    const laneLine = /^\s*Lane\s*:\s*(light|standard|heavy)\s*$/i.exec(line);
+    if (laneLine) { removed.add(index); lanes.add(laneLine[1]!.toLowerCase()); return; }
     const typed = /^\s*(?:Task\s+)?Type\s*:\s*(bug|defect|task|feature|research|explore|spike|architecture|adr)\s*$/i.exec(line);
     if (typed) { removed.add(index); types.add(typed[1]!.toLowerCase()); return; }
     const match = /^\s*(OpenSpec|Analysis)\s*:\s*(on|off)\s*$/i.exec(line);
@@ -36,10 +39,11 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
     found.set(key, (found.get(key) ?? new Set<boolean>()).add(match[2]!.toLowerCase() === "on"));
   });
   for (const [key, values] of found) if (values.size > 1) return { prompt, error: `task contains conflicting ${key === "openspec" ? "OpenSpec" : "Analysis"} on/off directives` };
+  if (lanes.size > 1) return { prompt, error: `task contains conflicting Lane directives (${[...lanes].join(", ")})` };
   if (types.size > 1) return { prompt, error: `task contains conflicting Type directives (${[...types].join(", ")})` };
   const clean = lines.filter((_line, index) => !removed.has(index)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const flag = (key: string) => found.has(key) ? { [key === "openspec" ? "openSpec" : "analysis"]: [...found.get(key)!][0]! } : {};
-  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}) };
+  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}), ...(lanes.size ? { lane: [...lanes][0]! as "light" | "standard" | "heavy" } : {}) };
 }
 
 export function openSpecProposalPrompt(input: { taskPrompt: string; changeId: string }): string {

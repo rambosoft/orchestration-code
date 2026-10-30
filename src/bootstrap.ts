@@ -98,6 +98,8 @@ const keyText = z.preprocess(value => typeof value === "string" ? value.trim().r
 const TaskSchema = z.object({
   key: keyText, title: text(120), description: text(900),
   type: level(TASK_TYPES, "task"),
+  /** How big the task is: small tasks run the light lane (implement + verify), large ones the heavy lane (src/lanes.ts). */
+  size: level(["small", "normal", "large"] as const, "normal"),
   acceptance: strings(6, 200, 1),
   depends_on: z.preprocess(value => (value == null ? [] : Array.isArray(value) ? value : [value]).filter(item => typeof item === "string" && item.trim()).map(item => String(item).trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24)).slice(0, 6), z.array(z.string())),
 });
@@ -108,7 +110,7 @@ const MilestoneSchema = z.object({
 export const BlueprintSchema = z.object({ summary: text(500), milestones: z.preprocess(objects(10), z.array(MilestoneSchema).min(1)) });
 export type Blueprint = z.infer<typeof BlueprintSchema>;
 export type BlueprintTask = Blueprint["milestones"][number]["tasks"][number];
-const BLUEPRINT_HINT = `{"summary":"string","milestones":[{"key":"M1","title":"string","goal":"string","exit_criteria":["string"],"tasks":[{"key":"T1","title":"string","description":"what to build and how it should behave","type":"task|research|architecture","acceptance":["observable, testable statement"],"depends_on":["key of an earlier task"]}]}]}`;
+const BLUEPRINT_HINT = `{"summary":"string","milestones":[{"key":"M1","title":"string","goal":"string","exit_criteria":["string"],"tasks":[{"key":"T1","title":"string","description":"what to build and how it should behave","type":"task|research|architecture","size":"small|normal|large","acceptance":["observable, testable statement"],"depends_on":["key of an earlier task"]}]}]}`;
 
 function parseWith<T>(raw: string, schema: z.ZodType<T>, label: string): T {
   let value: unknown;
@@ -176,7 +178,7 @@ export function deterministicBlueprint(form: BootstrapForm, scaffolded: boolean)
   return {
     summary: "A single task was generated because the planning answer could not be read; split it before starting.",
     milestones: [{ key: "M1", title: "First version", goal: `Deliver the first working version of ${form.name}.`, exit_criteria: ["The application does what the description asks and its checks pass."], tasks: [{
-      key: "T1", title: scaffolded ? `Build ${form.name}` : `Initialise and build ${form.name}`, description: form.description.slice(0, 900), type: "task",
+      key: "T1", title: scaffolded ? `Build ${form.name}` : `Initialise and build ${form.name}`, description: form.description.slice(0, 900), type: "task", size: "large",
       acceptance: ["The behaviour described in the project description works.", "The configured build and test commands pass."], depends_on: [],
     }] }],
   };
@@ -295,6 +297,7 @@ ${uiLines}
 - A task is one coherent change that a single agent run can finish and verify: say what to build and how it behaves, and give 1 to 6 acceptance statements that a test, a command or a look at the running app can confirm. Tasks for user interfaces name the pages, states (loading, empty, error) and responsive behaviour.
 ${planOrderRule(options)}
 - Include the tests the selected test depth calls for inside the tasks that add behaviour. Do not plan work for deployment, CI or anything the charter puts out of scope. type is "task" for building, "research" or "architecture" only for a read-only investigation that a decision depends on.
+- size: "small" for a change that touches one or two files with no new behaviour to design (wiring, copy, a config or style tweak), "large" for a task that adds a subsystem, a data model or a cross-cutting change, otherwise "normal". Small tasks skip planning and review on lighter projects, so do not call risky work small.
 - Keys are short and unique (M1, M2, T1, T2 ...).
 ${designPromptSection(options)}${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${BLUEPRINT_HINT}.`;
 }
@@ -327,7 +330,7 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
       id: projectId, aliases: [slug], name: form.name, root: slug, containerRoot: `${config.manifest.containerProjectsRoot}/${slug}`,
       ...(hasRepository ? { repository: { remote: "origin", targetBranch: config.manifest.targetBranch, requiredSourcePaths: ["README.md"] } } : {}),
       defaultProfile: "implementation",
-      openSpec: { enabled: options.openspec === true },
+      tier: options.maturity, openSpec: { enabled: options.openspec === true },
       analysis: { enabled: options.analysis === true, docsDir: "docs/analysis" },
       providers: config.manifest.providers, providerRouting: config.manifest.providerRouting, providerTimeouts: timeouts,
       stack: { profile: "unity-mobile", unity: { ...(input.editorVersion ? { editorVersion: input.editorVersion } : {}), executeMethods: template.unity.executeMethods } },
@@ -341,7 +344,7 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
     id: projectId, aliases: [slug], name: form.name, root: slug, containerRoot: `${config.manifest.containerProjectsRoot}/${slug}`,
     ...(hasRepository ? { repository: { remote: "origin", targetBranch: config.manifest.targetBranch, requiredSourcePaths: ["README.md"] } } : {}),
     defaultProfile: "implementation",
-    openSpec: { enabled: options.openspec === true },
+    tier: options.maturity, openSpec: { enabled: options.openspec === true },
     analysis: { enabled: options.analysis === true, docsDir: "docs/analysis" },
     providers: config.manifest.providers, providerRouting: config.manifest.providerRouting, providerTimeouts: config.manifest.providerTimeouts,
     qualityCommands: qualityCommandsFor(template, String(options.test_depth)),
@@ -405,7 +408,7 @@ export function buildIssuePlan(blueprint: Blueprint, options: Record<string, Opt
       const reliesOn = task.depends_on.length ? `\n\nRelies on: ${task.depends_on.join(", ")}.` : "";
       const acceptance = isGame(options) && task.type === "task" ? gameAcceptance(task, ++taskNumber) : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
-        key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}\n\n${CONTRACT_FOOTER}`,
+        key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}${task.type === "task" && task.size !== "normal" ? `\n\nLane: ${task.size === "small" ? "light" : "heavy"}` : ""}\n\n${CONTRACT_FOOTER}`,
         labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: blockers.get(`task:${task.key}`) ?? [],
         start: runnable && (autostart === "all" || (autostart === "first_milestone" && index === 0)),
       });

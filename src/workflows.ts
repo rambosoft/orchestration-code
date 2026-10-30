@@ -4,7 +4,8 @@ import { MAX_PAUSE_TOTAL_MS, pauseFrom, pauseWaitMs, type PauseKind } from "./pa
 import { classifyFailure } from "./failure-class.js";
 import { digestContract } from "./contract-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
-import { profiles } from "./profiles.js";
+import { profiles, type WorkflowProfile } from "./profiles.js";
+import { LANE_PROFILES, escalationReasons, lanePlan } from "./lanes.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
@@ -22,7 +23,7 @@ import { deterministicScope, explorePrompt, formatReportMarkdown, rawReport, rep
 import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest, assessChanges } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 // Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
 const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
@@ -531,8 +532,16 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
     return { ...finish("completed", withWarnings("report produced")), report };
   }
-  for (const stage of profile.stages) {
+  // ADR 0015: with a tier and a lane the stage list comes from the lane table (a prototype task is implement + verify); runs recorded without them keep the profile's own list.
+  const lane = input.tier && input.lane && LANE_PROFILES.includes(profile.id) && profile.stages.includes("implement") ? lanePlan(input.tier, input.lane) : undefined;
+  const stageList: WorkflowProfile["stages"] = lane ? [...lane.stages] : [...profile.stages];
+  for (const stage of stageList) {
     currentStage = stage;
+    // Without a plan and brief stage the brief comes from the task text: no model call, the acceptance criteria are already in it.
+    if (lane && stage === "implement" && !executionBrief) {
+      plan ??= { ...deterministicPlan({ taskPrompt: workflowPrompt }), hard_constraints: [...new Set([...extractHardConstraints(openSpecContext), ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])] };
+      executionBrief = deterministicBrief(plan, openSpecContext);
+    }
     if (stage === "implement" && input.approval) {
       // patched(): runs already waiting without a timer must replay the original unbounded wait.
       if (patched("approval-timeout")) { if (!(await condition(() => approved || rejected, input.approvalTimeoutMs ?? 86_400_000))) { stopReason = "approval_timeout"; return finish("failed", "human approval timed out; no changes were published"); } }
@@ -587,7 +596,7 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         });
         executionBrief = briefed.value;
         output = briefed.output;
-      } else if (stage === "review" && profile.stages.includes("verify")) {
+      } else if (stage === "review" && stageList.includes("verify")) {
         const round = ++reviewCount;
         // Verification can launch Unity and review can capture Unity visuals: for a Unity project they run one after the other so two Editor processes never contend for one project
         // and review sees the finished checks. Every other stack keeps them concurrent. patched(): runs recorded before this replayed the concurrent pair for every stack.
@@ -613,6 +622,11 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         if (!deterministicVerification.ok) deterministicVerification = await repairGate(deterministicVerification);
         if (!deterministicVerification.ok || patched("skip-model-verify")) output = deterministicVerification;
         else output = await execute("verify", { deterministicChecksAlreadyPassed: true, qualityCommands: [] });
+      } else if (stage === "verify" && lane) {
+        // A lane without a paired review: the deterministic checks run directly, with the same one bounded repair pass.
+        let verification = await execute("verify", { provider: "fake", verificationOnly: true });
+        if (!verification.ok) verification = await repairGate(verification);
+        deterministicVerification = verification; output = verification;
       } else {
         output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })
           : await execute(stage);
@@ -676,6 +690,12 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       }
     }
     if (!output.ok && !(stage === "review" && openFindings.length)) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
+    // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons).
+    if (lane?.escalation && stage === "implement" && !stageList.includes("review")) {
+      const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
+      const reasons = changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0) : [];
+      if (reasons.length) { stageList.splice(stageList.indexOf("verify"), 0, "review"); warnings.push({ stage: "review", message: `review added to this ${input.lane} task: ${reasons.join("; ")}` }); }
+    }
     completedStages.push(stage);
   }
   currentStage = null;
