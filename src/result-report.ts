@@ -3,7 +3,7 @@
 // Only outcomes that change the task for a person are reported here: done, in review, needs information. A failed run is never commented on by the worker: a comment wakes the agent and can lock
 // the issue (FM-054), and failures belong to the resume and reconcile path.
 import type { RunResult } from "./contracts.js";
-import { resultComment, statusFor, statusPatch, type ReconcileDeps } from "./reconcile.js";
+import { resultComment, statusFor, type ReconcileDeps } from "./reconcile.js";
 
 export type ReportOutcome = { reported: boolean; reason: "reported" | "already_reported" | "no_status" | "bootstrap" | "not_configured" };
 const rows = <T>(value: unknown, key: string): T[] => Array.isArray(value) ? value as T[] : Array.isArray((value as Record<string, unknown> | null)?.[key]) ? (value as Record<string, T[]>)[key]! : [];
@@ -16,6 +16,6 @@ export async function reportResultTo(paperclip: ReconcileDeps["paperclip"] | und
   if (!status) return { reported: false, reason: "no_status" };
   const comments = rows<{ body?: string }>(await paperclip("GET", `/api/issues/${encodeURIComponent(input.issueId)}/comments?limit=100`), "comments");
   if (comments.some(comment => String(comment.body ?? "").includes(`Temporal workflow \`${input.workflowId}\` finished`))) return { reported: true, reason: "already_reported" };
-  await paperclip("PATCH", `/api/issues/${encodeURIComponent(input.issueId)}`, statusPatch(status, resultComment(input.workflowId, input.result.status, input.result, "worker"), input.result));
+  await paperclip("PATCH", `/api/issues/${encodeURIComponent(input.issueId)}`, { status, comment: resultComment(input.workflowId, input.result.status, input.result, "worker") });
   return { reported: true, reason: "reported" };
 }

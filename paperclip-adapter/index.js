@@ -27,10 +27,18 @@ export function issueLabelNames(issue) {
   return rows.map(label => String(typeof label === "string" ? label : label?.name ?? "").trim()).filter(Boolean).slice(0, 50);
 }
 
-/** Paperclip refuses `blocked` without an owner and an action (HTTP 422). Mirrors statusPatch in src/reconcile.ts. */
-function unblockDescriptorFor(result, needsInfo) {
-  const action = needsInfo ? "Answer the question in the latest comment, then move the task back to todo." : "Read the latest comment, fix the cause, then resume the run or move the task back to todo.";
-  return { owner: "board", action };
+/** A task that started this many runs within the window is looping (a failure that wakes itself again): stop starting more and hand it to a person (ADR 0022). */
+const STORM_RUNS = 6; const STORM_WINDOW_MS = 30 * 60_000;
+async function recentRunCount(ctx, issueId) {
+  const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
+  if (!token || !issueId) return 0;
+  const base = String(ctx.config.paperclipApiUrl ?? "http://paperclip:3100").replace(/\/$/, "");
+  const response = await fetch(`${base}/api/issues/${encodeURIComponent(issueId)}/runs`, { headers: { authorization: `Bearer ${token}` }, signal: ctx.signal });
+  if (!response.ok) return 0;
+  const payload = await response.json();
+  const runs = Array.isArray(payload) ? payload : Array.isArray(payload?.runs) ? payload.runs : [];
+  const since = Date.now() - STORM_WINDOW_MS;
+  return runs.filter(run => String(run.runId ?? run.id ?? "") !== String(ctx.runId) && Date.parse(String(run.startedAt ?? run.createdAt ?? "")) >= since).length;
 }
 
 async function addIssueComment(ctx, issueId, body) {
@@ -221,6 +229,15 @@ export function createServerAdapter() {
       if (issue?.executionBlocker?.recoveryActionId) {
         return { exitCode: 1, signal: null, timedOut: false, errorMessage: `Cannot safely dispatch: Paperclip execution recovery is held for run ${issue.executionBlocker.runId ?? "unknown"} (action ${issue.executionBlocker.recoveryActionId}); a board operator must resolve the recovery record first` };
       }
+      const recentRuns = await recentRunCount(ctx, String(ctx.context.issueId ?? taskId)).catch(() => 0);
+      if (recentRuns >= STORM_RUNS) {
+        const message = `Temporal dispatch stopped: this task started ${recentRuns} runs in the last ${STORM_WINDOW_MS / 60_000} minutes, which means a failure keeps waking it. Read the latest failure comment, fix the cause, then move the task back to todo.`;
+        await addIssueComment(ctx, String(ctx.context.issueId ?? taskId), message).catch(() => false);
+        await fetch(`${String(ctx.config.paperclipApiUrl ?? "http://paperclip:3100").replace(/\/$/, "")}/api/issues/${encodeURIComponent(String(ctx.context.issueId ?? taskId))}`, { method: "PATCH", headers: { authorization: `Bearer ${String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "")}`, "content-type": "application/json", "x-paperclip-run-id": ctx.runId }, body: JSON.stringify({ status: "in_review" }), signal: ctx.signal }).catch(() => undefined);
+        await ctx.onLog("stderr", `${message}
+`);
+        return { exitCode: 0, signal: null, timedOut: false, summary: message };
+      }
       const blockerRows = Array.isArray(issue?.blockedBy) ? issue.blockedBy : [];
       const unresolved = blockerRows.filter(blocker => String(blocker.status ?? "unknown") !== "done");
       if (unresolved.length) {
@@ -348,7 +365,7 @@ Accept the PR as it is, or comment here with what to fix and re-run the task.` :
           const published = result?.status === "completed" && (request.profile === "research" || bootstrapped || result.publish?.prUrl && result.publish?.headSha);
           let paperclipUpdateOk = true;
           // A bug that needs more information blocks the issue with the question as a comment; that is a normal outcome, not a failed run.
-          const targetStatus = published ? "done" : needsReview ? "in_review" : needsInfo || terminalFailure ? "blocked" : bootstrapRun && result?.status === "rejected" ? "cancelled" : null;
+          const targetStatus = published ? "done" : needsReview ? "in_review" : needsInfo || terminalFailure ? "in_review" : bootstrapRun && result?.status === "rejected" ? "cancelled" : null;
           if (targetStatus) {
             const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
             if (token) {
@@ -356,8 +373,7 @@ Accept the PR as it is, or comment here with what to fix and re-run the task.` :
               const response = await fetch(`${paperclipApiUrl}/api/issues/${encodeURIComponent(issueId)}`, {
                 method: "PATCH",
                 headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-paperclip-run-id": ctx.runId },
-                // Paperclip refuses `blocked` without a named owner and action (HTTP 422); a task left unrecorded stays in whatever state the run left it in (ADR 0022).
-                body: JSON.stringify({ status: targetStatus, comment: report, ...(targetStatus === "blocked" ? { unblockDescriptor: unblockDescriptorFor(result, needsInfo) } : {}) }),
+                body: JSON.stringify({ status: targetStatus, comment: report }),
                 signal: ctx.signal,
               });
               if (!response.ok) {

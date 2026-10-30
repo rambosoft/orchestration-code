@@ -162,6 +162,23 @@ export function defaultProviderTimeoutMs(stage: StageInput["stage"]): number {
   return minutes[stage] * 60_000;
 }
 
+/**
+ * The text of a failed CLI run (ADR 0024). The Claude CLI prints a harmless "no stdin data received" warning on stderr and reports the real error (no space left on the device, a usage limit,
+ * an authentication problem) as the result of its JSON answer on stdout, so an error built from stderr alone hid the cause from the failure classifier and the pause detection: a full disk looked like an
+ * unknown provider error and was retried without end. Known noise is dropped; when nothing else is left, the result text (or the tail of stdout) is the message.
+ */
+export function cliFailureText(stderrText: string, stdoutText: string, extra: string[] = []): string {
+  const stderrClean = stderrText.split(/\r?\n/).filter(line => !/^\s*Warning: no stdin data received/i.test(line)).join("\n").trim().slice(-3000);
+  const parts = [stderrClean, ...extra].filter(Boolean);
+  if (!parts.length && stdoutText) {
+    let result = "";
+    for (const line of [stdoutText, ...stdoutText.split(/\r?\n/).reverse()]) {
+      try { const parsed = JSON.parse(line) as { result?: unknown; error?: unknown; message?: unknown }; const text = [parsed.result, parsed.error, parsed.message].find(value => typeof value === "string" && value.trim()); if (typeof text === "string") { result = text; break; } } catch { /* not a JSON line */ }
+    }
+    parts.push((result || stdoutText).slice(-1500));
+  }
+  return parts.join(" | ").slice(-3000);
+}
 /** Minutes of silence after which a streaming CLI run counts as hung; ORCHESTRATOR_STALL_MINUTES overrides it, 0 turns the watchdog off. Stages that run builds (one long command prints nothing) get 45. */
 export function stallLimitMs(stage: StageInput["stage"], env: NodeJS.ProcessEnv = process.env): number {
   const fallback = ["implement", "openspec", "reproduce"].includes(stage) ? 45 : 15;
@@ -218,7 +235,7 @@ export class CliProvider implements AgentProvider {
         if (timedOut) return reject(new Error(`${this.id} timed out after ${timeoutMs}ms`));
         if (stalled) return reject(new Error(`${this.id} stalled: no output for ${Math.round(stallMs / 60_000)} minutes, process killed`));
         // Codex reports a usage limit or a dropped connection as an event on stdout, with little or nothing on stderr; the message is what the pause detection reads.
-        if (code !== 0) return reject(new Error(`${this.id} exited ${code}: ${redact([Buffer.concat(stderr).toString("utf8").slice(-3000), ...(this.id === "codex" ? parseCodexTelemetry(out).errors : [])].filter(Boolean).join(" | ").slice(-3000))}`));
+        if (code !== 0) return reject(new Error(`${this.id} exited ${code}: ${redact(cliFailureText(Buffer.concat(stderr).toString("utf8"), out, this.id === "codex" ? parseCodexTelemetry(out).errors : []))}`));
         let summary = out; const metadata: Record<string, unknown> = {};
         if (this.id === "codex") {
           const parsed = parseCodexTelemetry(out);

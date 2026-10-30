@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 run storm stopped (ADR 0024, sixth live finding, caused by ADR 0022)
+- Minesweeper LOC-132: the `blocked` status of ADR 0022 made Paperclip wake the failed task again at once (`issue_blockers_resolved`): 225 workflows in three hours, 225 Unity worktrees, a full disk. A failed or needs-info task now rests in `in_review`; the adapter refuses to start a seventh run within 30 minutes; the CLI failure text keeps the real error (ENOSPC was hidden behind a stdin warning). `statusPatch` removed. Tests in `test/adapter-resilience.test.ts`, `test/reconcile.test.ts`, `test/result-report.test.ts`, `test/provider-pause.test.ts`.
+
 ## 2026-10-30 auto-approved projects release all milestones (ADR 0023, fifth live finding)
 - Minesweeper stopped after milestone 1 with 17 tasks in the backlog: `autostart` defaulted to `first_milestone` and nobody was there to release the next. `resolveOptions` now derives `autostart: all` for `approval: auto` (explicit choice kept, no repository keeps none). Test in `test/bootstrap.test.ts`. Applies to new bootstraps (bridge rebuild); the running project was released by hand.
 

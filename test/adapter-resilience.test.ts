@@ -49,6 +49,20 @@ describe("Paperclip adapter resilience", () => {
     expect(logs.filter(line => line.includes("Temporal run still in progress: stage implement")).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("stops starting runs for a task that already started six in half an hour, and hands it to a person (a failure that wakes itself again started 225)", async () => {
+    const now = Date.now();
+    const recent = Array.from({ length: 6 }, (_, index) => ({ runId: `old-${index}`, status: "succeeded", startedAt: new Date(now - index * 60_000).toISOString() }));
+    const { ctx, calls } = setup(() => running(), [], [], undefined, recent);
+    const result = await adapter.execute(ctx);
+    expect(result.summary).toContain("Temporal dispatch stopped");
+    expect(calls.some(call => call.method === "POST" && call.url.endsWith("/v1/runs"))).toBe(false);
+    expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toEqual({ status: "in_review" });
+    const quiet = setup(() => running(), [], [], undefined, recent.slice(0, 3).concat([{ runId: "ancient", status: "succeeded", startedAt: new Date(now - 3 * 3_600_000).toISOString() }]));
+    quiet.controller.abort(new Error("cancelled by board user"));
+    await adapter.execute(quiet.ctx);
+    expect(quiet.calls.some(call => call.method === "POST" && call.url.endsWith("/v1/runs"))).toBe(true);
+  });
+
   it("still cancels the workflow when the abort is a real cancellation", async () => {
     const { ctx, calls } = setup((n, controller) => { if (n === 2) controller.abort(new Error("cancelled by board user")); return running(); });
     await adapter.execute(ctx);
@@ -104,15 +118,15 @@ describe("Paperclip adapter resilience", () => {
     expect(result.errorMessage ?? "").not.toContain("Workflow inspection failed");
   });
 
-  it("records a terminal workflow failure as a blocked task instead of a generic adapter failure", async () => {
+  it("records a terminal workflow failure as a task in review, never as blocked: Paperclip wakes a blocked task whose blockers are done at once, which started 225 workflows for one task", async () => {
     const { ctx, calls } = setup(() => Response.json({
       workflowId: "wf-1", status: "COMPLETED",
       result: { runId: "r", status: "failed", message: "Unity license prerequisite unavailable", stages: [], artifactRefs: [] },
     }));
     const result = await adapter.execute(ctx);
     expect(result).toMatchObject({ exitCode: 0, signal: null, summary: "Unity license prerequisite unavailable" });
-    // Paperclip answers HTTP 422 to `blocked` without an owner and an action (found in the first live run): the fake server here cannot enforce it, so the request is checked.
-    expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toMatchObject({ status: "blocked", unblockDescriptor: { owner: "board", action: expect.stringContaining("fix the cause") } });
+    expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toMatchObject({ status: "in_review" });
+    expect(calls.some(call => call.method === "PATCH" && call.body?.status === "blocked")).toBe(false);
     expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body?.comment).toContain("Unity license prerequisite unavailable");
   });
 

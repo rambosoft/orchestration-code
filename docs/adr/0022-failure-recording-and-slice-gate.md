@@ -2,6 +2,8 @@
 
 Status: Accepted (2026-10-30). Both found in the first live run of the v2 plan (Minesweeper, task LOC-117). Extends ADR 0021.
 
+> Correction (ADR 0024): decision 1 (`blocked` with an `unblockDescriptor`) caused a run storm, because Paperclip wakes a blocked task whose blockers are done. A failed task now rests in `in_review`. Decision 2 (the slice gate) stands.
+
 ## Context
 1. **Recording a failure.** When a workflow fails, the adapter sets the Paperclip task to `blocked` with the failure as a comment. Paperclip now answers HTTP 422 to `blocked` without an unresolved blocker, a pending approval or an `unblockDescriptor` ("Entering blocked requires ..."). The adapter never sent one, so every failed run ended "Workflow result could not be recorded in Paperclip; task requires recovery" and the task stayed in the state the run left it in. The adapter test passed because its fake Paperclip accepts any status.
 2. **The reachability gate.** A screen task carries a criterion "Reachable from the real game"; the gate (`sliceProblem`, ADR for the first game) requires the covering test to boot the real scene. It read only the 80 lines after the `Covers:` comment. The Minesweeper menu task had a fixture whose `[UnitySetUp] Boot()` calls `SliceHarness.Boot()` for every test, and its covering test asserted layout on the running menu. The gate called it "does not boot the real game scene", the run spent a repair round on it, and the task failed on a correct implementation.

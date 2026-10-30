@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
-import { autoResumeDecision, formatFindings, latestRun, reconcile, resultComment, statusFor, statusPatch, type IssueRow, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
+import { autoResumeDecision, formatFindings, latestRun, reconcile, resultComment, statusFor, type IssueRow, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
 
 // The case that motivated it: the machine was off, Temporal finished the workflow, Paperclip marked the task blocked because the adapter never reported.
 const publish = { branch: "codex/x-a1", baseSha: "a".repeat(40), headSha: "b".repeat(40), prUrl: "https://github.com/me/shop/pull/7", prBaseBranch: "codex/prev" };
@@ -29,20 +29,12 @@ function world(overrides: Partial<World> = {}): { deps: ReconcileDeps; state: Wo
 }
 const wf = "pc-I65-2026-10-23T17-52-34.015Z-a1";
 
-describe("statusPatch", () => {
-  it("gives a blocked task an owner and an action, which Paperclip requires (HTTP 422 otherwise), and leaves other statuses alone", () => {
-    expect(statusPatch("blocked", "c", result({ status: "needs_info" }))).toEqual({ status: "blocked", comment: "c", unblockDescriptor: { owner: "board", action: expect.stringContaining("Answer the question") } });
-    expect(statusPatch("blocked", "c", result({ status: "failed" }))).toMatchObject({ unblockDescriptor: { owner: "board", action: expect.stringContaining("fix the cause") } });
-    expect(statusPatch("done", "c")).toEqual({ status: "done", comment: "c" });
-    expect(statusPatch("in_review", "c")).toEqual({ status: "in_review", comment: "c" });
-  });
-});
-
 describe("statusFor", () => {
   it("maps results to the status the adapter would set", () => {
     expect(statusFor(result({ status: "completed" }))).toBe("done");
     expect(statusFor(result({ status: "needs_review" }))).toBe("in_review");
-    expect(statusFor(result({ status: "needs_info", publish: undefined }))).toBe("blocked");
+    // Never "blocked": Paperclip wakes a blocked task whose blockers are all done at once, so a task that needs a person would be started again and again (ADR 0022).
+    expect(statusFor(result({ status: "needs_info", publish: undefined }))).toBe("in_review");
     expect(statusFor(result({ status: "completed", publish: undefined, bootstrap: { projectRoot: "p", commit: "c", manifestPath: "m", template: "t", verified: true, issues: [], warnings: [] } }))).toBe("done");
     expect(statusFor(result({ status: "rejected", publish: undefined, metadata: { taskType: "bootstrap" } as RunResult["metadata"] }))).toBe("cancelled");
   });

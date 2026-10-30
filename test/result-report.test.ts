@@ -29,11 +29,11 @@ describe("reportResultTo", () => {
     expect(String(patch.body!.comment)).toContain("orchestration-publish");
     expect(String(patch.body!.comment)).toContain("Reported by the orchestrator worker");
   });
-  it("puts a result that needs a decision in review and a bug that needs information on hold", async () => {
+  it("puts a result that needs a decision in review and a bug that needs information in review too", async () => {
     const review = fakePaperclip(); await reportResultTo(review.client, { workflowId: "w1", issueId: "T1", result: result({ status: "needs_review" }) });
     expect(review.calls.find(call => call.method === "PATCH")!.body).toMatchObject({ status: "in_review" });
     const info = fakePaperclip(); await reportResultTo(info.client, { workflowId: "w2", issueId: "T1", result: result({ status: "needs_info", publish: undefined }) });
-    expect(info.calls.find(call => call.method === "PATCH")!.body).toMatchObject({ status: "blocked" });
+    expect(info.calls.find(call => call.method === "PATCH")!.body).toMatchObject({ status: "in_review" });
   });
   it("posts once: a result the adapter or an earlier try already put on the task is left alone", async () => {
     const { calls, client } = fakePaperclip(["Temporal workflow `pc-T1-1-a1` finished with status **completed**. ok"]);

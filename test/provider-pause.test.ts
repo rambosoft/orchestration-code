@@ -12,7 +12,7 @@ import type { RunInput, StageInput, StageOutput } from "../src/contracts.js";
 import { detectPause, resetWaitMs } from "../src/provider-gate.js";
 import { MAX_PAUSE_TOTAL_MS, PROVIDER_PAUSE, pauseFrom, pauseWaitMs } from "../src/pause-policy.js";
 import { classifyFailure } from "../src/failure-class.js";
-import { parseCodexTelemetry, stallLimitMs } from "../src/providers.js";
+import { cliFailureText, parseCodexTelemetry, stallLimitMs } from "../src/providers.js";
 import { projectWorkflow } from "../src/workflows.js";
 
 const NOW = new Date(2026, 9, 30, 10, 0, 0).getTime();
@@ -42,6 +42,19 @@ describe("detectPause", () => {
     expect(detectPause("ECONNRESET", { now: NOW, online: true })).toBeUndefined();
     expect(detectPause("claude timed out after 900000ms", { now: NOW, timedOut: true, online: true })).toBeUndefined();
     expect(detectPause("claude timed out after 900000ms", { now: NOW, timedOut: true, online: false })).toMatchObject({ kind: "network" });
+  });
+});
+
+describe("CLI failure text", () => {
+  const warning = "Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.\n";
+  it("drops the Claude stdin warning and reads the real error from the JSON answer, so a full disk is recognised instead of retried without end", () => {
+    const answer = JSON.stringify({ type: "result", is_error: true, result: "ENOSPC: no space left on device, write" });
+    const text = cliFailureText(warning, answer);
+    expect(text).toBe("ENOSPC: no space left on device, write");
+    expect(classifyFailure({ message: `claude exited 1: ${text}` })).toMatchObject({ kind: "environment", action: "heal-and-resume" });
+    expect(cliFailureText(warning + "real stderr problem\n", answer)).toBe("real stderr problem");
+    expect(cliFailureText(warning, "plain output tail")).toBe("plain output tail");
+    expect(cliFailureText("", "", ["codex says: usage limit"])).toBe("codex says: usage limit");
   });
 });
 
