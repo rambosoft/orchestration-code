@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 auto-approved projects release all milestones (ADR 0023, fifth live finding)
+- Minesweeper stopped after milestone 1 with 17 tasks in the backlog: `autostart` defaulted to `first_milestone` and nobody was there to release the next. `resolveOptions` now derives `autostart: all` for `approval: auto` (explicit choice kept, no repository keeps none). Test in `test/bootstrap.test.ts`. Applies to new bootstraps (bridge rebuild); the running project was released by hand.
+
 ## 2026-10-30 failure recording and slice gate (ADR 0022, third and fourth live findings)
 - Minesweeper LOC-117: (1) Paperclip refuses `blocked` without an `unblockDescriptor` (HTTP 422); the adapter never sent one, so every failed run was unrecorded. `statusPatch` (reconcile, worker report) and the adapter now send owner `board` plus an action. (2) The reachability gate read only the lines after the `Covers:` comment and rejected a correct menu test whose fixture booted the scene in `[UnitySetUp]`; it now counts a boot in a setup method or a called helper of the same file. Tests in `test/reconcile.test.ts`, `test/adapter-resilience.test.ts`, `test/acceptance.test.ts`.
 

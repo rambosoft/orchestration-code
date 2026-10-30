@@ -68,6 +68,12 @@ describe("options and presets", () => {
     expect(api.values).toMatchObject({ ui_ux: false, architecture: "backend_only" });
     expect(resolveOptions({ repo_create: false }).values.autostart).toBe("none");
   });
+  it("releases every milestone of an auto-approved project, because nobody is there to release the next one, and keeps an explicit choice", () => {
+    expect(resolveOptions({ approval: "auto" }).values.autostart).toBe("all");
+    expect(resolveOptions({ approval: "auto", autostart: "first_milestone" }).values.autostart).toBe("first_milestone");
+    expect(resolveOptions({ approval: "auto", repo_create: false }).values.autostart).toBe("none");
+    expect(resolveOptions({ approval: "required" }).values.autostart).toBe("first_milestone");
+  });
   it("rejects invalid values and ignores unknown options with a warning", () => {
     const resolved = resolveOptions({ platform: "toaster", review_rounds: "9", ui_ux: "yes", mystery: "x" });
     expect(resolved.errors.join(" ")).toContain("'platform' must be one of");

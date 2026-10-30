@@ -114,6 +114,9 @@ export function resolveOptions(explicit: Record<string, unknown> = {}): Resolved
   if (platform === "api_backend" && values.architecture !== "backend_only") set("architecture", "backend_only", "an API project has no frontend");
   if (platform === "api_backend" && provenance.accessibility !== "user") set("accessibility", "basic", "accessibility checks apply to user interfaces");
   if (values.repo_create === false && values.autostart !== "none") set("autostart", "none", "without a repository the agent has nothing to work in");
+  // An auto-approved project is meant to run unattended: with only the first milestone released it stops at every milestone boundary until someone moves the next tasks to ready (found in the first live run, ADR 0023).
+  // The tasks are already chained by their blockers, so releasing them all changes no order. An explicit choice of the user is kept.
+  if (values.approval === "auto" && values.repo_create !== false && provenance.autostart !== "user") set("autostart", "all", "an auto-approved project runs without a person to release each milestone");
   return { values, provenance, warnings, errors };
 }
 
