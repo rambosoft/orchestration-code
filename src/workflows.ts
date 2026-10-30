@@ -1,5 +1,6 @@
-import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
+import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched, sleep } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
+import { MAX_PAUSE_TOTAL_MS, pauseFrom, pauseWaitMs, type PauseKind } from "./pause-policy.js";
 import { classifyFailure } from "./failure-class.js";
 import { digestContract } from "./contract-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
@@ -25,9 +26,11 @@ const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, pr
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 // Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
 const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
+// The connection check while a network pause waits: one quick attempt, no retries (the workflow loop is the retry).
+const { probeConnectivity } = proxyActivities<typeof activities>({ startToCloseTimeout: "30 seconds", retry: { maximumAttempts: 1 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
-export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[] }>("progress");
+export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[]; /** Set while a stage waits for a usage limit to reset or the connection to return. */ paused?: { kind: PauseKind; stage: string; waitMs: number; count: number; reason: string } }>("progress");
 export const bootstrapStateQuery = defineQuery<BootstrapState>("bootstrap");
 
 export function stageRoute(input: RunInput, stage: StageName) {
@@ -156,7 +159,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   }
   const stages: StageOutput[] = []; const artifactRefs: string[] = []; let approved = !input.approval; let rejected = false;
   let currentStage: string | null = null; const completedStages: string[] = [];
-  setHandler(progressQuery, () => ({ currentStage, completedStages: [...completedStages] }));
+  let pausedState: { kind: PauseKind; stage: string; waitMs: number; count: number; reason: string } | undefined;
+  setHandler(progressQuery, () => ({ currentStage, completedStages: [...completedStages], ...(pausedState ? { paused: pausedState } : {}) }));
   let workspace = input.projectRoot;
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
   if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
@@ -211,7 +215,29 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
     if (input.budget) args.budget = input.budget;
-    const output = await executeStage(args);
+    // A usage limit or a lost connection waits on a timer and runs the same stage again without spending its retry attempts (ADR 0016); a pause that outlasts MAX_PAUSE_TOTAL_MS surfaces as a failure.
+    // patched(): runs recorded before this change saw such a failure as an ordinary activity error.
+    let output: StageOutput;
+    for (let pauses = 0, waitedMs = 0; ; pauses++) {
+      try { output = await executeStage(args); break; }
+      catch (error) {
+        const pause = isCancellation(error) ? undefined : pauseFrom(error);
+        if (!pause || !patched("provider-pause")) throw error;
+        let wait = pauseWaitMs(pause.kind, pause.waitMs, pauses);
+        if (waitedMs + wait > MAX_PAUSE_TOTAL_MS) throw new Error(`provider ${pause.kind} pause exceeded ${Math.round(MAX_PAUSE_TOTAL_MS / 3_600_000)} hours in stage ${stage}: ${pause.reason}`);
+        pausedState = { kind: pause.kind, stage, waitMs: wait, count: pauses + 1, reason: pause.reason };
+        try {
+          await sleep(wait); waitedMs += wait;
+          // After a lost connection, wait until the network answers before spending a model call again.
+          while (pause.kind === "network" && !(await probeConnectivity().then(result => result.online, () => false))) {
+            wait = pauseWaitMs("network", undefined, ++pauses);
+            if (waitedMs + wait > MAX_PAUSE_TOTAL_MS) throw new Error(`provider network pause exceeded ${Math.round(MAX_PAUSE_TOTAL_MS / 3_600_000)} hours in stage ${stage}: ${pause.reason}`);
+            pausedState = { kind: "network", stage, waitMs: wait, count: pauses + 1, reason: pause.reason };
+            await sleep(wait); waitedMs += wait;
+          }
+        } finally { pausedState = undefined; }
+      }
+    }
     // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
     const reported = output.metadata?.warnings;
     if (Array.isArray(reported)) for (const message of reported) if (typeof message === "string" && !warnings.some(item => item.stage === stage && item.message === message)) warnings.push({ stage, message });

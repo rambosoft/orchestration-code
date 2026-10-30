@@ -2,6 +2,7 @@
 
 ## Current checkout audit and provider update (2026-10-26)
 - Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-30 P1 done: durable pause on provider quota and network loss (ADR 0016, test/provider-pause.test.ts); needs build + worker restart to take effect. Next: P2 pipeline lanes/tiers. Not built yet: session resume after a pause, provider fallback chains.
 - 2026-10-30: B-087 (forced Codex) is withdrawn; manifests route again with Claude implementing. See docs/engineering/research/orchestration-v2-redesign.md for the analysis and the v2 plan (P0 stabilization done in this change).
 - LOC-92's failed Codex-linked retry is being reconciled and retried under Codex routing; its prior worktree contains OpenSpec planning artifacts and no product code changes.
 

@@ -9,6 +9,8 @@ import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js";
 import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
+import { detectPause, isOnline } from "./provider-gate.js";
+import { PROVIDER_PAUSE } from "./pause-policy.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
 import { compactLog } from "./log-compact.js";
@@ -193,6 +195,9 @@ export function classifyProviderError(message: string): ProviderErrorCategory {
   return "provider_error";
 }
 
+/** Asked by the workflow while a network pause waits: is the connection back? */
+export async function probeConnectivity(): Promise<{ online: boolean }> { return { online: await isOnline() }; }
+
 /** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
 export async function executeStage(input: StageInput): Promise<StageOutput> {
   let timer: NodeJS.Timeout | undefined;
@@ -362,6 +367,13 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
     const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
+    // A usage limit or a lost connection is a pause, not a failure: the workflow waits on a timer and runs the stage again without spending its retry attempts (ADR 0016).
+    // A timeout counts as an outage only when the connection is really down. patched() in the workflow keeps recorded runs on the old path.
+    const pause = detectPause(message, { now: Date.now(), timedOut: category === "timeout", ...(category === "timeout" || /ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network|connection/i.test(message) ? { online: await isOnline() } : {}) });
+    if (pause) {
+      await emitActivityEvent({ event: "activity.paused", ...activityContext, provider: input.provider, pauseKind: pause.kind, ...(pause.waitMs !== undefined ? { waitMs: pause.waitMs } : {}) });
+      throw ApplicationFailure.nonRetryable(`${input.provider} ${pause.kind} pause: ${pause.reason}`, PROVIDER_PAUSE, pause);
+    }
     // Retrying bad credentials or configuration only repeats the failure (and the cost).
     throw category === "authentication" || category === "configuration" ? ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError") : new Error(detail);
   }
