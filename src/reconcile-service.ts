@@ -37,13 +37,15 @@ export type LoopDeps = {
   pid?: number;
 };
 /** Findings worth a log line; "already reported" and "still running" are the normal quiet state. */
-export const noteworthy = (findings: Finding[]): Finding[] => findings.filter(finding => !["already_reported", "running"].includes(finding.action));
+const REPEAT_LOG_CYCLES = 20;
+export const noteworthy =(findings: Finding[]): Finding[] => findings.filter(finding => !["already_reported", "running"].includes(finding.action));
 
 /**
  * Runs `cycle` every `intervalSeconds` until the signal aborts (or `maxCycles`, for tests). A failing cycle is recorded in the heartbeat and retried with a growing pause (up to 8x), never fatal.
  */
 export async function reconcileLoop(deps: LoopDeps, options: { intervalSeconds: number; signal?: AbortSignal; maxCycles?: number }): Promise<void> {
   let cycles = 0; let resumed = 0; let failures = 0;
+  const loggedAt = new Map<string, number>();
   while (!options.signal?.aborted && (options.maxCycles === undefined || cycles < options.maxCycles)) {
     let lastSummary = "nothing to reconcile"; let lastError: string | undefined;
     try {
@@ -51,7 +53,13 @@ export async function reconcileLoop(deps: LoopDeps, options: { intervalSeconds: 
       failures = 0;
       resumed += findings.filter(finding => finding.action === "auto_resumed").length;
       const notes = noteworthy(findings);
-      if (notes.length) { lastSummary = notes.map(note => `${note.action} ${note.issue}`).join(", "); deps.log(`reconcile: ${formatFindings(notes, true).split("\n").join(" | ")}`); }
+      if (notes.length) lastSummary = notes.map(note => `${note.action} ${note.issue}`).join(", ");
+      // A finding that waits for a person (a Paperclip recovery hold) repeats every cycle: log it when it appears and then once per REPEAT_LOG_CYCLES, not every few minutes.
+      const key = (note: Finding): string => `${note.action}|${note.issue}|${note.workflowId ?? ""}`;
+      const fresh = notes.filter(note => cycles - (loggedAt.get(key(note)) ?? -Infinity) >= REPEAT_LOG_CYCLES);
+      for (const note of fresh) loggedAt.set(key(note), cycles);
+      for (const logged of [...loggedAt.keys()]) if (!notes.some(note => key(note) === logged)) loggedAt.delete(logged);
+      if (fresh.length) deps.log(`reconcile: ${formatFindings(fresh, true).split("\n").join(" | ")}`);
     } catch (error) {
       failures++; lastError = error instanceof Error ? error.message : String(error);
       lastSummary = "cycle failed"; deps.log(`reconcile: cycle failed (${lastError.slice(0, 300)})`);

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
-import { autoResumeDecision, formatFindings, latestRun, reconcile, resultComment, statusFor, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
+import { autoResumeDecision, formatFindings, latestRun, reconcile, resultComment, statusFor, type IssueRow, type ReconcileDeps, type RunDetail, type RunRow } from "../src/reconcile.js";
 
 // The case that motivated it: the machine was off, Temporal finished the workflow, Paperclip marked the task blocked because the adapter never reported.
 const publish = { branch: "codex/x-a1", baseSha: "a".repeat(40), headSha: "b".repeat(40), prUrl: "https://github.com/me/shop/pull/7", prBaseBranch: "codex/prev" };
 const result = (overrides: Partial<RunResult> = {}): RunResult => ({ runId: "r", status: "needs_review", stages: [], artifactRefs: [], message: "quality gates passed; draft PR published with 1 unresolved review finding", publish, metadata: { review: { maxReviewRounds: 1, reviewCount: 1, repairCount: 0, findingsFixed: 0, reviewRuns: [], nonBlockingNotes: [], unresolvedFindings: [{ severity: "high", category: "functional", title: "Checkout total ignores shipping", evidence: "e", fixableInCode: true }] } }, ...overrides });
 
-type World = { issues: Array<{ id: string; identifier: string; status: string }>; runs: RunRow[]; details: Record<string, RunDetail>; comments: Record<string, string[]>; writes: Array<{ method: string; route: string; body?: Record<string, unknown> }> };
+type World = { issues: Array<IssueRow & { identifier: string }>; runs: RunRow[]; paperclipRuns: Record<string, Array<{ status?: string; startedAt?: string; execution?: { phase?: string; cause?: string }; errorCode?: string }>>; details: Record<string, RunDetail>; comments: Record<string, string[]>; writes: Array<{ method: string; route: string; body?: Record<string, unknown> }> };
 function world(overrides: Partial<World> = {}): { deps: ReconcileDeps; state: World } {
-  const state: World = { issues: [], runs: [], details: {}, comments: {}, writes: [], ...overrides };
+  const state: World = { issues: [], runs: [], paperclipRuns: {}, details: {}, comments: {}, writes: [], ...overrides };
   const deps: ReconcileDeps = {
     listRuns: async () => state.runs,
     inspect: async id => state.details[id] ?? { status: "FAILED" },
@@ -17,6 +17,10 @@ function world(overrides: Partial<World> = {}): { deps: ReconcileDeps; state: Wo
       if (method === "GET" && route.startsWith("/api/companies/C1/issues")) return state.issues as T;
       const comments = /^\/api\/issues\/([^/?]+)\/comments/.exec(route);
       if (method === "GET" && comments) return (state.comments[comments[1]!] ?? []).map(text => ({ body: text })) as T;
+      const issueRuns = /^\/api\/issues\/([^/?]+)\/runs$/.exec(route);
+      if (method === "GET" && issueRuns) return (state.paperclipRuns[issueRuns[1]!] ?? []) as T;
+      const issue = /^\/api\/issues\/([^/?]+)$/.exec(route);
+      if (method === "GET" && issue) return state.issues.find(item => item.id === issue[1] || item.identifier === issue[1]) as T;
       state.writes.push({ method, route, ...(body ? { body: body as Record<string, unknown> } : {}) });
       return {} as T;
     },
@@ -98,6 +102,34 @@ describe("reconcile", () => {
     expect((await reconcile(deps, { apply: true }))[0]).toMatchObject({ action: "running" });
     expect(state.writes).toEqual([]);
   });
+  it("retries a lost Paperclip dependency wake when every blocker is done and no Temporal run started", async () => {
+    const { deps, state } = world({ issues: [{ id: "I92", identifier: "LOC-92", status: "blocked", assigneeAgentId: "A1", assigneeUserId: null, blockedBy: [{ id: "I91", status: "done" }] }], comments: { I91: [`<!-- orchestration-publish {"branch":"codex/loc-91","headSha":"${"b".repeat(40)}","prUrl":"https://github.com/me/game/pull/91"} -->`] } });
+    const findings = await reconcile(deps, { apply: true });
+    expect(findings).toMatchObject([{ issue: "LOC-92", action: "retried_dependency_wake", status: "blocked" }]);
+    expect(state.writes).toMatchObject([{ method: "PATCH", route: "/api/issues/I92", body: { status: "blocked", blockedByIssueIds: ["I91"] } }]);
+  });
+  it("does not retry a dependency wake while any blocker is unresolved, or in dry-run mode", async () => {
+    const { deps, state } = world({ issues: [{ id: "I92", identifier: "LOC-92", status: "blocked", assigneeAgentId: "A1", assigneeUserId: null, blockedBy: [{ id: "I91", status: "in_progress" }] }] });
+    expect(await reconcile(deps, { apply: true })).toEqual([]);
+    state.issues[0]!.blockedBy = [{ id: "I91", status: "done" }];
+    state.comments.I91 = [`<!-- orchestration-publish {"branch":"codex/loc-91","headSha":"${"b".repeat(40)}","prUrl":"https://github.com/me/game/pull/91"} -->`];
+    expect(await reconcile(deps, { apply: false })).toMatchObject([{ action: "would_retry_dependency_wake" }]);
+    expect(state.writes).toEqual([]);
+  });
+  it("surfaces a ready dependency whose completed blocker has no orchestration publication", async () => {
+    const { deps, state } = world({ issues: [{ id: "I92", identifier: "LOC-92", status: "blocked", assigneeAgentId: "A1", assigneeUserId: null, blockedBy: [{ id: "I91", status: "done" }] }] });
+    expect(await reconcile(deps, { apply: true })).toMatchObject([{ action: "dependency_ready_missing_publication", issue: "LOC-92" }]);
+    expect(state.writes).toEqual([]);
+  });
+  it("does not repeat dependency wakes while Paperclip requires execution reconciliation", async () => {
+    const { deps, state } = world({
+      issues: [{ id: "I92", identifier: "LOC-92", status: "blocked", assigneeAgentId: "A1", assigneeUserId: null, blockedBy: [{ id: "I91", status: "done" }] }],
+      paperclipRuns: { I92: [{ status: "failed", errorCode: "adapter_failed", execution: { phase: "recovery_needed", cause: "legacy_execution_requires_reconciliation" } }] },
+      comments: { I91: [`<!-- orchestration-publish {"branch":"codex/loc-91","headSha":"${"b".repeat(40)}","prUrl":"https://github.com/me/game/pull/91"} -->`] },
+    });
+    expect(await reconcile(deps, { apply: true })).toMatchObject([{ issue: "LOC-92", action: "dependency_ready_recovery_required" }]);
+    expect(state.writes).toEqual([]);
+  });
   it("tells the user to retry when the workflow itself failed, without inventing a result", async () => {
     const { deps, state } = world({ issues: [{ id: "I65", identifier: "LOC-65", status: "blocked" }], runs: [{ workflowId: wf, status: "FAILED" }], details: { [wf]: { status: "FAILED" } } });
     const [finding] = await reconcile(deps, { apply: true });
@@ -145,6 +177,27 @@ describe("automatic resume of a failed run", () => {
     const { deps, resumed } = setup(failed("quality check failed: unity test", "verify_quality_gate_failed", ["instances cannot open the same project"]));
     expect(await reconcile(deps, { apply: true, autoResume: true, now })).toMatchObject([{ action: "auto_resumed" }]);
     expect(resumed).toHaveLength(1);
+  });
+  it("never resumes or reposts a stale failure while Paperclip has an execution-recovery hold", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    state.issues[0]!.executionBlocker = { recoveryActionId: "hold-1", runId: "paperclip-run-1", cause: "legacy_execution_requires_reconciliation" };
+    expect(await reconcile(deps, { apply: true, autoResume: true, now })).toMatchObject([{ action: "recovery_required", status: "blocked" }]);
+    expect(resumed).toEqual([]);
+    expect(state.writes).toEqual([]);
+  });
+  it("does not revive a stale failed workflow or post a duplicate comment after the task reaches review", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    state.issues[0]!.status = "in_review";
+    expect(await reconcile(deps, { apply: true, autoResume: true, now })).toMatchObject([{ action: "stale_failure_suppressed", status: "in_review" }]);
+    expect(resumed).toEqual([]);
+    expect(state.writes).toEqual([]);
+  });
+  it("suppresses an older Temporal failure when a later Paperclip recovery run already succeeded", async () => {
+    const { deps, state, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"));
+    state.paperclipRuns.I65 = [{ status: "succeeded", startedAt: "2026-10-23T17:45:00Z" }];
+    expect(await reconcile(deps, { apply: true, autoResume: true, now })).toMatchObject([{ action: "stale_failure_suppressed" }]);
+    expect(resumed).toEqual([]);
+    expect(state.writes).toEqual([]);
   });
   it("only says what it would do in a dry run", async () => {
     const { deps, state, resumed } = setup(failed("ETIMEDOUT calling the provider", "implement_activity_failed"));
