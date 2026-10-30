@@ -8,6 +8,7 @@ import { TIERS, type Lane, type Tier } from "./lanes.js";
 export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint", "design"]);
 export type StageName = z.infer<typeof StageNameSchema>;
 export const ProviderIdSchema = z.enum(["fake", "claude", "codex", "gemini", "openrouter"]);
+const RouteBaseSchema = z.object({ provider: ProviderIdSchema, model: z.string().min(1).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional() });
 export const UiUxSkillIdSchema = z.enum(["ui-ux-pro-max", "frontend-design", "vercel-composition-patterns", "vercel-react-native-skills"]);
 export type UiUxSkillId = z.infer<typeof UiUxSkillIdSchema>;
 export const UiUxConfigSchema = z.object({
@@ -78,13 +79,10 @@ export const ProjectManifestSchema = z.object({
   containerRoot: z.string().min(1).optional(),
   defaultProfile: z.string().min(1),
   providers: z.object({ default: ProviderIdSchema.optional() }).default({}),
-  providerRouting: z.partialRecord(StageNameSchema, z.object({
-    provider: ProviderIdSchema,
-    model: z.string().min(1).optional(),
-    reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
-  })).default({}).superRefine((routes, ctx) => {
+  providerRouting: z.partialRecord(StageNameSchema, RouteBaseSchema.extend({ fallback: z.array(RouteBaseSchema).max(3).optional() })).default({}).superRefine((routes, ctx) => {
     for (const [stage, route] of Object.entries(routes)) {
       if (route.provider === "openrouter" && !route.model) ctx.addIssue({ code: "custom", path: [stage, "model"], message: "OpenRouter routes require a model ID" });
+      route.fallback?.forEach((item, index) => { if (item.provider === "openrouter" && !item.model) ctx.addIssue({ code: "custom", path: [stage, "fallback", index, "model"], message: "OpenRouter routes require a model ID" }); });
     }
   }),
   providerTimeouts: z.partialRecord(StageNameSchema, z.number().int().positive().max(14_400_000)).default({}),
@@ -131,7 +129,7 @@ export const ProjectManifestSchema = z.object({
 });
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;
 
-export type ProviderRoute = { provider: "fake" | "claude" | "codex" | "gemini" | "openrouter"; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" };
+export type ProviderRoute = { provider: "fake" | "claude" | "codex" | "gemini" | "openrouter"; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"; /** Routes tried in order when this one hits a usage limit, instead of waiting for it to reset (ADR 0019). Absent: the stage waits. */ fallback?: Array<Omit<ProviderRoute, "fallback">> };
 export type PluginRequirement = { id: string; version?: string; capabilities?: string[]; dependencies?: string[]; required: boolean; enabled: boolean; config?: Record<string, unknown>; permissions?: string[]; errorPolicy?: { maxAttempts: number; timeoutMs: number } };
 export type StageInput = { runId: string; taskId: string; projectId: string; profile: string; stage: StageName; prompt: string; attempt: number; activityAttempt?: number; provider: string; model?: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"; providerTimeoutMs?: number; projectRoot: string; artifactsDir: string; plugins: PluginRequirement[]; qualityCommands?: QualityCommand[]; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; openSpecChangeId?: string; /** Review only: screenshot capture settings (ADR 0007). */ visual?: VisualConfig; /** Image files attached to the prompt by providers that accept images. */ images?: string[]; /** The task's token budget (manifest `budget`); checked before every provider stage. */ budget?: { maxCostUnits: number; warnAt: number } };
 export type StageOutput = { stage?: StageName; ok: boolean; summary: string; findings: string[]; review?: ReviewAssessment; artifactRefs: string[]; provider: string; durationMs: number; metadata?: Record<string, unknown> };

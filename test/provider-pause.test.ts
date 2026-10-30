@@ -83,17 +83,17 @@ describe("workflow pause", () => {
   beforeAll(async () => { env = await TestWorkflowEnvironment.createTimeSkipping(); }, 120_000);
   afterAll(async () => { await env?.teardown(); });
 
-  async function run(script: Record<string, Array<ApplicationFailure | Error>>, online: boolean[] = [true]) {
+  async function run(script: Record<string, Array<ApplicationFailure | Error>>, online: boolean[] = [true], providerRouting: RunInput["providerRouting"] = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), "orch-pause-"));
     const worktree = path.join(root, "worktree"); await mkdir(worktree);
-    const calls: string[] = []; let probes = 0;
+    const calls: string[] = []; const providers: string[] = []; let probes = 0;
     const activities = {
       checkDependencies: async () => undefined,
       prepareWorktree: async () => worktree,
       prepareProjectDependencies: async () => ({ installed: true, summary: "ready" }),
       probeConnectivity: async () => ({ online: online[Math.min(probes++, online.length - 1)]! }),
       executeStage: async (input: StageInput): Promise<StageOutput> => {
-        calls.push(input.stage);
+        calls.push(input.stage); providers.push(`${input.stage}:${input.provider}`);
         const next = script[input.stage]?.shift();
         if (next) throw next;
         return { stage: input.stage, ok: true, summary: input.stage === "review" ? "Review passed" : `Completed ${input.stage}`, findings: [], ...(input.stage === "review" ? { review: { verdict: "pass" as const, findings: [], notes: [] } } : {}), artifactRefs: [], provider: input.provider, durationMs: 0 };
@@ -104,12 +104,12 @@ describe("workflow pause", () => {
     const taskQueue = `pause-${Math.random().toString(36).slice(2)}`;
     const worker = await Worker.create({ connection: env.nativeConnection, namespace: env.namespace, taskQueue, workflowsPath: fileURLToPath(new URL("../src/workflows.ts", import.meta.url)), activities });
     const input = {
-      runId: `pause-${taskQueue}`, taskId: "PAUSE-1", taskRevision: "rev-1", projectId: "p", profile: "implementation", prompt: "Add a percentage button.", openSpec: false, provider: "fake", providerRouting: {},
+      runId: `pause-${taskQueue}`, taskId: "PAUSE-1", taskRevision: "rev-1", projectId: "p", profile: "implementation", prompt: "Add a percentage button.", openSpec: false, provider: "fake", providerRouting,
       projectRoot: root, artifactsDir: path.join(root, "artifacts"), repository: { remote: "origin", targetBranch: "main", branch: "codex/pause-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Pause" },
       approval: false, plugins: [], qualityCommands: [{ executable: "npm", args: ["test"] }],
     } as unknown as RunInput;
     const result = await worker.runUntil(env.client.workflow.execute(projectWorkflow, { taskQueue, workflowId: `wf-${taskQueue}`, args: [input] }));
-    return { result, calls, probes: () => probes };
+    return { result, calls, providers, probes: () => probes };
   }
   const quota = (waitMs?: number) => ApplicationFailure.nonRetryable("codex quota pause: usage limit", PROVIDER_PAUSE, { kind: "quota", ...(waitMs ? { waitMs } : {}), reason: "usage limit" });
   const network = () => ApplicationFailure.nonRetryable("claude network pause: ENOTFOUND", PROVIDER_PAUSE, { kind: "network", reason: "ENOTFOUND" });
@@ -131,6 +131,20 @@ describe("workflow pause", () => {
     expect(result.status).toBe("failed");
     expect(result.message).toContain("quota pause exceeded");
     expect(calls.filter(stage => stage === "implement")).toHaveLength(1);
+  }, 60_000);
+  it("moves a stage to its fallback route on a usage limit instead of waiting, and tells the user", async () => {
+    const routing = { implement: { provider: "claude", fallback: [{ provider: "codex", model: "gpt-x" }] } } as RunInput["providerRouting"];
+    const { result, providers } = await run({ implement: [quota(3 * HOUR)] }, [true], routing);
+    expect(result.status, result.message).not.toBe("failed");
+    expect(providers.filter(item => item.startsWith("implement:"))).toEqual(["implement:claude", "implement:codex"]);
+    expect(result.message + JSON.stringify(result.metadata ?? {})).toContain("continues on codex");
+  }, 60_000);
+  it("waits as before when the route has no fallback, and never falls back on a lost connection", async () => {
+    const plain = await run({ implement: [quota(2 * HOUR)] }, [true], { implement: { provider: "claude" } });
+    expect(plain.providers.filter(item => item.startsWith("implement:"))).toEqual(["implement:claude", "implement:claude"]);
+    const routing = { implement: { provider: "claude", fallback: [{ provider: "codex" }] } } as RunInput["providerRouting"];
+    const offline = await run({ implement: [network()] }, [true], routing);
+    expect(offline.providers.filter(item => item.startsWith("implement:"))).toEqual(["implement:claude", "implement:claude"]);
   }, 60_000);
   it("does not pause on an ordinary failure: it is not retried beyond the activity policy and the run fails", async () => {
     const { result, calls } = await run({ implement: [ApplicationFailure.nonRetryable("claude exited 2: compile error", "ProviderError")] });

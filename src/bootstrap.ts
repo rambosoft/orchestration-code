@@ -23,7 +23,8 @@ export type BootstrapOutcome = {
 export type BootstrapState = { phase: "planning" | "awaiting_approval" | "creating" | "done"; stack?: StackDecision; charter?: Charter; design?: GameDesign; blueprint?: Blueprint; summary?: string; warnings: string[] };
 
 // --- Global configuration (bootstrap.global.json): which providers plan the project and which a generated project starts with. ---
-const RouteSchema = z.object({ provider: ProviderIdSchema, model: z.string().min(1).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional() });
+const RouteBase = z.object({ provider: ProviderIdSchema, model: z.string().min(1).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional() });
+const RouteSchema = RouteBase.extend({ fallback: z.array(RouteBase).max(3).optional() });
 export const BootstrapGlobalConfigSchema = z.object({
   /** Routes for the three bootstrap stages. */
   stages: z.partialRecord(z.enum(["stack", "charter", "blueprint", "design"]), RouteSchema).default({}),

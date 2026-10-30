@@ -228,6 +228,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
   let openSpecChangeId: string | undefined;
   let deterministicVerification: StageOutput | undefined;
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
+  const limitedProviders = new Set<string>();
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
@@ -237,11 +238,22 @@ async function runProject(input: RunInput): Promise<RunResult> {
     // A usage limit or a lost connection waits on a timer and runs the same stage again without spending its retry attempts (ADR 0016); a pause that outlasts MAX_PAUSE_TOTAL_MS surfaces as a failure.
     // patched(): runs recorded before this change saw such a failure as an ordinary activity error.
     let output: StageOutput;
+    // A usage limit on a route with fallbacks moves the stage to the next route instead of waiting (ADR 0019); a caller that chose its own provider keeps it.
+    const fallbacks = options.provider ? [] : [...(route.fallback ?? [])];
+    // A provider that already hit its limit in this run is not tried again first by the next stage.
+    while (fallbacks.length > 0 && limitedProviders.has(args.provider)) { const skip = fallbacks.shift()!; Object.assign(args, { provider: skip.provider, model: skip.model, reasoningEffort: skip.reasoningEffort }); }
     for (let pauses = 0, waitedMs = 0; ; pauses++) {
       try { output = await executeStage(args); break; }
       catch (error) {
         const pause = isCancellation(error) ? undefined : pauseFrom(error);
         if (!pause || !patched("provider-pause")) throw error;
+        const next = pause.kind === "quota" && fallbacks.length > 0 && patched("provider-fallback") ? fallbacks.shift() : undefined;
+        if (next) {
+          warnings.push({ stage, message: `${args.provider} hit a usage limit (${pause.reason.slice(0, 160)}); this stage continues on ${next.provider}${next.model ? `:${next.model}` : ""}` });
+          limitedProviders.add(args.provider);
+          Object.assign(args, { provider: next.provider, model: next.model, reasoningEffort: next.reasoningEffort });
+          pauses--; continue;
+        }
         let wait = pauseWaitMs(pause.kind, pause.waitMs, pauses);
         if (waitedMs + wait > MAX_PAUSE_TOTAL_MS) throw new Error(`provider ${pause.kind} pause exceeded ${Math.round(MAX_PAUSE_TOTAL_MS / 3_600_000)} hours in stage ${stage}: ${pause.reason}`);
         pausedState = { kind: pause.kind, stage, waitMs: wait, count: pauses + 1, reason: pause.reason };

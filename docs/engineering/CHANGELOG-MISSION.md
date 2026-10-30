@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-30 provider fallback chains (ADR 0019)
+- A route in `providerRouting` may list `fallback` routes (max 3). A quota pause moves the stage to the next route at once, with a warning; a lost connection never falls back; later stages of the run skip a provider that hit its limit. Opt-in, nothing configured by default; `patched("provider-fallback")`. Tests in `test/provider-pause.test.ts`. Not built: CLI session resume.
+
 ## 2026-10-30 milestone checks and worker reports (P4, ADR 0018)
 
 - A prototype project ends each milestone with one check task (heavy lane: Codex plan, Claude fix, Codex review) instead of reviewing every task. A run can report its own result to the Paperclip issue (`ORCHESTRATOR_WORKER_REPORTS=1`, off by default): idempotent `reportResult` step, `reportedToPaperclip` on the result, the adapter skips its own post. Failed runs are never commented on. No replay change. Tests: test/result-report.test.ts, test/lanes.test.ts.
