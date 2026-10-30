@@ -393,11 +393,39 @@ export function gameAcceptance(task: { title: string; description: string; accep
   return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.\n\nTime budget: the full PlayMode suite takes several minutes and grows with every task. While you work run EditMode and only the PlayMode fixtures you touched (unity test --mode PlayMode --filter <Fixture>); run the full PlayMode suite and the hygiene check once at the end, before you finish.`;
 }
 
-export function buildIssuePlan(blueprint: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {
+/** Tiers whose tasks run without a review of their own (src/lanes.ts): the milestone gets one check instead. */
+const MILESTONE_CHECK_TIERS = ["prototype"];
+const CHECK_SUFFIX = "-CHECK";
+export const isMilestoneCheck = (task: { key: string }): boolean => task.key.endsWith(CHECK_SUFFIX);
+
+/**
+ * A prototype reviews nothing per task, so each milestone ends with one check task in the heavy lane (a plan and a review by Codex around one implementation by Claude): it verifies the milestone's
+ * exit criteria against the running result, fixes what falls short with the smallest change and adds a test for each fix. It waits for every task of its milestone, and the next milestone waits for it.
+ */
+export function withMilestoneChecks(blueprint: Blueprint, options: Record<string, OptionValue>): Blueprint {
+  if (!MILESTONE_CHECK_TIERS.includes(String(options.maturity))) return blueprint;
+  return {
+    ...blueprint,
+    milestones: blueprint.milestones.map(milestone => {
+      const real = milestone.tasks.filter(task => task.type === "task");
+      if (real.length === 0) return milestone;
+      const criteria = milestone.exit_criteria.length ? milestone.exit_criteria : [`${milestone.title} works as its goal describes`];
+      const check: BlueprintTask = {
+        key: `${milestone.key}`.slice(0, 24 - CHECK_SUFFIX.length) + CHECK_SUFFIX, title: `Check milestone: ${milestone.title}`.slice(0, 120),
+        description: `Check the work of milestone "${milestone.title}" against its exit criteria. Do not add features. For each criterion, run the tests or the app and confirm it holds. Fix what falls short in the code the earlier tasks wrote, with the smallest change, and add a test for every defect you fix. Report a criterion you cannot meet as UNMET_ACCEPTANCE instead of working around it.`.slice(0, 900),
+        type: "task", size: "large", acceptance: criteria.slice(0, 6).map(item => item.slice(0, 200)), depends_on: real.map(task => task.key).slice(0, 6),
+      };
+      return { ...milestone, tasks: [...milestone.tasks, check] };
+    }),
+  };
+}
+
+export function buildIssuePlan(original: Blueprint, options: Record<string, OptionValue>, runnable: boolean, charter?: Charter): PlannedIssue[] {
+  const blueprint = withMilestoneChecks(original, options);
   const autostart = String(options.autostart);
   const issues: PlannedIssue[] = [];
   const blockers = planBlockers(blueprint, isParallelPlan(options));
-  const lastTask = blueprint.milestones.at(-1)?.tasks.at(-1);
+  const lastTask = original.milestones.at(-1)?.tasks.at(-1);
   let taskNumber = 0;
   const designBlock = (last: boolean) => { const block = designTaskBlock(options, charter, last); return block ? `\n\n${block}` : ""; };
   for (const [index, milestone] of blueprint.milestones.entries()) {
@@ -406,7 +434,7 @@ export function buildIssuePlan(blueprint: Blueprint, options: Record<string, Opt
     issues.push({ key: milestoneKey, kind: "milestone", title: `Milestone ${index + 1}: ${milestone.title}`, description: `${milestone.goal}${checklist}\n\nTasks:\n${milestone.tasks.map(task => `- ${task.title}`).join("\n")}`, labels: ["milestone"], blockedByKeys: [], start: false });
     for (const task of milestone.tasks) {
       const reliesOn = task.depends_on.length ? `\n\nRelies on: ${task.depends_on.join(", ")}.` : "";
-      const acceptance = isGame(options) && task.type === "task" ? gameAcceptance(task, ++taskNumber) : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
+      const acceptance = isGame(options) && task.type === "task" && !isMilestoneCheck(task) ? gameAcceptance(task, ++taskNumber) : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
         key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}${task.type === "task" && task.size !== "normal" ? `\n\nLane: ${task.size === "small" ? "light" : "heavy"}` : ""}\n\n${CONTRACT_FOOTER}`,
         labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: blockers.get(`task:${task.key}`) ?? [],

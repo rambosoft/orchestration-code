@@ -12,6 +12,9 @@ import { budgetStatus, runUsage } from "./usage.js";
 import { detectPause, isOnline } from "./provider-gate.js";
 import { PROVIDER_PAUSE } from "./pause-policy.js";
 import type { ChangeStats } from "./lanes.js";
+import { reportResultTo, type ReportOutcome } from "./result-report.js";
+import { paperclipClient } from "./reconcile-service.js";
+import type { RunResult } from "./contracts.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
 import { compactLog } from "./log-compact.js";
@@ -203,6 +206,12 @@ export async function assessChanges(input: { worktree: string }): Promise<Change
   let changedLines = 0;
   for (const row of numstat) { const match = /^(\d+)\s+(\d+)/.exec(row); if (match) changedLines += Number(match[1]) + Number(match[2]); }
   return { files: [...new Set([...changed, ...added])], lines: changedLines, deletedFiles };
+}
+
+/** Reports a finished run to its Paperclip issue (ADR 0018). Safe to retry: a result already on the issue is not posted again. Needs PAPERCLIP_API_TOKEN on the worker, like the reconcile service. */
+export async function reportResult(input: { workflowId: string; issueId: string; result: RunResult }): Promise<ReportOutcome> {
+  const token = process.env.PAPERCLIP_API_TOKEN;
+  return reportResultTo(token ? paperclipClient(process.env.PAPERCLIP_API_URL ?? "http://127.0.0.1:3100", token) : undefined, input);
 }
 
 /** Asked by the workflow while a network pause waits: is the connection back? */

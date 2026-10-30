@@ -2,6 +2,7 @@
 
 ## Current checkout audit and provider update (2026-10-26)
 - Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-30 P4 done: milestone check tasks for prototypes and the opt-in worker-side result report (ADR 0018). The report flag is untested against a live Paperclip: enable `ORCHESTRATOR_WORKER_REPORTS=1` for one task first. Reconcile is unchanged (still the backstop). Next: provider fallback chains and session resume (tokens), doctor checks, live Minesweeper run.
 - 2026-10-30 P3 done: `.meta` heal in verify, similar-line folding, stack profiles + packs, `npm run onboard` (ADR 0017). Not run against a real Editor or a real Spring/Angular repo yet. Next: P4 (result outbox, reconcile reduction), milestone review, doctor checks for mvn/gradle.
 - 2026-10-30 P2 done: lanes and tiers (ADR 0015, test/lanes.test.ts). New bootstrap projects get `tier`; existing manifests keep the full pipeline until given one. Needs build, worker restart and bridge rebuild. Next: milestone review task kind for prototypes, P3 gates and stack packs.
 - 2026-10-30 P1 done: durable pause on provider quota and network loss (ADR 0016, test/provider-pause.test.ts); needs build + worker restart to take effect. Next: P2 pipeline lanes/tiers. Not built yet: session resume after a pause, provider fallback chains.

@@ -10,6 +10,7 @@ import { Worker } from "@temporalio/worker";
 import type { RunInput, StageInput, StageOutput } from "../src/contracts.js";
 import { ESCALATION, LANES, TIERS, escalationReasons, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
 import { parseTaskDirectives } from "../src/openspec-policy.js";
+import { buildIssuePlan } from "../src/bootstrap.js";
 import { projectWorkflow } from "../src/workflows.js";
 
 const GOLDEN: Record<Tier, Record<Lane, string>> = {
@@ -38,6 +39,39 @@ describe("lane table", () => {
     expect(parseTaskDirectives("Build the board.\n\nLane: light\nOpenSpec: off")).toMatchObject({ prompt: "Build the board.", lane: "light", openSpec: false });
     expect(parseTaskDirectives("Build the board.").lane).toBeUndefined();
     expect(parseTaskDirectives("Lane: light\nLane: heavy").error).toContain("conflicting Lane");
+  });
+});
+
+describe("milestone checks", () => {
+  const task = (key: string, over: Record<string, unknown> = {}) => ({ key, title: `Task ${key}`, description: "d", type: "task" as const, size: "normal" as const, acceptance: ["works"], depends_on: [] as string[], ...over });
+  const blueprint = {
+    summary: "s",
+    milestones: [
+      { key: "M1", title: "Core", goal: "g", exit_criteria: ["Board renders", "Mines are placed"], tasks: [task("T1"), task("T2")] },
+      { key: "M2", title: "Polish", goal: "g", exit_criteria: [], tasks: [task("T3")] },
+      { key: "M3", title: "Study", goal: "g", exit_criteria: [], tasks: [task("R1", { type: "research" })] },
+    ],
+  };
+  const issues = (maturity: string) => buildIssuePlan(blueprint as never, { maturity, autostart: "none" }, true);
+  const titles = (maturity: string) => issues(maturity).filter(issue => issue.kind === "task").map(issue => issue.title);
+
+  it("ends each prototype milestone with one check task, and only a prototype", () => {
+    expect(titles("prototype")).toEqual(["Task T1", "Task T2", "Check milestone: Core", "Task T3", "Check milestone: Polish", "Task R1"]);
+    for (const maturity of ["throwaway", "mvp", "production"]) expect(titles(maturity)).toEqual(["Task T1", "Task T2", "Task T3", "Task R1"]);
+  });
+  it("runs the check in the heavy lane against the milestone's exit criteria, and chains it between the tasks", () => {
+    const plan = issues("prototype"); const byKey = new Map(plan.map(issue => [issue.key, issue]));
+    const check = byKey.get("task:M1-CHECK")!;
+    expect(check.description).toContain("Lane: heavy");
+    expect(check.description).toContain("- Board renders");
+    expect(check.description).toContain("- Mines are placed");
+    expect(byKey.get("task:M2-CHECK")!.description).toContain("Polish works as its goal describes");
+    expect(check.blockedByKeys).toEqual(["task:T2"]);
+    expect(byKey.get("task:T3")!.blockedByKeys).toEqual(["task:M1-CHECK"]);
+  });
+  it("keeps the whole-product polish block on the last real task, not on a check", () => {
+    const plan = buildIssuePlan(blueprint as never, { maturity: "prototype", autostart: "none", product_kind: "app", ui_ux: true }, true, { design_rules: ["rule"], page_directions: [] } as never);
+    expect(plan.find(issue => issue.key === "task:M2-CHECK")!.description).not.toContain("visual polish");
   });
 });
 

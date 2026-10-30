@@ -14,6 +14,7 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: orchestration
+      ORCHESTRATOR_WORKER_REPORTS: ${ORCHESTRATOR_WORKER_REPORTS:-0}
       ORCHESTRATOR_API_TOKEN: ${ORCHESTRATOR_API_TOKEN:?Run setup.ps1 first}
       ORCHESTRATOR_PROJECT_FILE: /app/project.example.json
       ORCHESTRATOR_PROJECTS_DIR: /app/projects

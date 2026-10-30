@@ -1,4 +1,4 @@
-import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched, sleep } from "@temporalio/workflow";
+import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched, sleep, workflowInfo } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import { MAX_PAUSE_TOTAL_MS, pauseFrom, pauseWaitMs, type PauseKind } from "./pause-policy.js";
 import { classifyFailure } from "./failure-class.js";
@@ -27,6 +27,8 @@ const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, pr
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 // Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
 const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
+// Reporting the finished run to Paperclip (ADR 0018): idempotent, so it may retry for a long time without posting twice.
+const { reportResult } = proxyActivities<typeof activities>({ startToCloseTimeout: "2 minutes", retry: { initialInterval: "5 seconds", maximumInterval: "1 minute", maximumAttempts: 8 } });
 // The connection check while a network pause waits: one quick attempt, no retries (the workflow loop is the retry).
 const { probeConnectivity } = proxyActivities<typeof activities>({ startToCloseTimeout: "30 seconds", retry: { maximumAttempts: 1 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
@@ -147,7 +149,23 @@ Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"
   return prompt;
 }
 
+/**
+ * The workflow entry. A run started with `reportToPaperclip` reports its own result to the Paperclip issue as its last step, so the task is updated even when the adapter has lost its lease
+ * (ADR 0018). Without the flag (every run recorded before this existed) it is exactly the pipeline below.
+ */
 export async function projectWorkflow(input: RunInput): Promise<RunResult> {
+  const result = await runProject(input);
+  if (!input.reportToPaperclip) return result;
+  try {
+    const outcome = await reportResult({ workflowId: workflowInfo().workflowId, issueId: input.taskId, result });
+    return outcome.reported ? { ...result, reportedToPaperclip: true } : result;
+  } catch (error) {
+    if (isCancellation(error)) throw error;
+    return result; // the adapter or the reconcile step reports it instead
+  }
+}
+
+async function runProject(input: RunInput): Promise<RunResult> {
   const taskType = input.taskType ? taskTypes[input.taskType] : undefined;
   const investigating = taskType?.flow === "investigation";
   const profile = profiles[taskType?.profile ?? input.profile];

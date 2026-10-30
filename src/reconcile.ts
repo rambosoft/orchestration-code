@@ -61,14 +61,14 @@ export function statusFor(result: RunResult | undefined): string | undefined {
   return undefined;
 }
 
-export function resultComment(workflowId: string, status: string, result: RunResult | undefined): string {
+export function resultComment(workflowId: string, status: string, result: RunResult | undefined, source: "reconcile" | "worker" = "reconcile"): string {
   const body = result?.report?.markdown ? `### ${result.report.title}\n\n${String(result.report.markdown).slice(0, 30_000)}` : (result?.stages ?? []).map(stage => `${stage.stage}: ${String(stage.summary).slice(0, 400)}`).join("\n");
   const publish = result?.publish;
   const publication = publish ? `\n\nBranch: \`${publish.branch}\`\nHead SHA: \`${publish.headSha}\`\nDraft PR: ${publish.prUrl} (base \`${publish.prBaseBranch}\`)\nDone means gates passed and the draft PR was created; it does not mean merged.` : "";
   const open = result?.status === "needs_review" ? (result.metadata?.review.unresolvedFindings ?? []).map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}`).join("\n") : "";
   const decision = open ? `\n\n### Decision needed\nThe tests and build pass and the draft PR is published, but the automated review still has unresolved findings (also posted as a comment on the PR):\n${open}` : "";
   const marker = publish ? `\n<!-- orchestration-publish ${JSON.stringify(publish)} -->` : "";
-  return `Temporal workflow \`${workflowId}\` finished with status **${result?.status ?? status}**. ${result?.message ?? status}${body ? `\n\n${body}` : ""}${publication}${decision}\n\n_Reported by the orchestrator's reconcile step: Paperclip had lost its connection to this run (for example the machine was off), but the workflow finished._${marker}`;
+  return `Temporal workflow \`${workflowId}\` finished with status **${result?.status ?? status}**. ${result?.message ?? status}${body ? `\n\n${body}` : ""}${publication}${decision}\n\n${source === "worker" ? "_Reported by the orchestrator worker when the workflow finished._" : "_Reported by the orchestrator's reconcile step: Paperclip had lost its connection to this run (for example the machine was off), but the workflow finished._"}${marker}`;
 }
 
 /**
