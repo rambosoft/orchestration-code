@@ -138,7 +138,7 @@ describe("OpenRouter provider", () => {
   it("keeps the OpenRouter key out of other provider CLI environments", () => {
     const filtered = cliProviderEnvironment({ OPENROUTER_API_KEY: "secret", PATH: "C:/tools" });
     expect(filtered.OPENROUTER_API_KEY).toBeUndefined();
-    expect(filtered.PATH?.split(path.delimiter).at(-1)).toBe("C:/tools");
+    expect(filtered.PATH?.endsWith(`${path.delimiter}C:/tools`)).toBe(true);
   });
 
   it("sends the configured model and returns structured output without exposing the key", async () => {
