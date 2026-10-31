@@ -98,7 +98,7 @@ export async function startReconcileService(env: NodeJS.ProcessEnv = process.env
   const file = heartbeatFile(env.ORCHESTRATOR_DATA_DIR ?? "data");
   const controller = new AbortController();
   void reconcileLoop({
-    cycle: overrides.cycle ?? (() => reconcile({ paperclip, listRuns: async () => await real!.listRuns() as RunRow[], inspect: async id => await real!.inspectRun(id) as RunDetail, resume: async id => (await real!.resumeRun(id)).workflowId }, { apply: true, autoResume })),
+    cycle: overrides.cycle ?? (() => reconcile({ paperclip, listRuns: async () => await real!.listRuns() as RunRow[], inspect: async id => await real!.inspectRun(id) as RunDetail, resume: async id => (await real!.resumeRun(id)).workflowId }, { apply: true, autoResume, workerStartedAt: new Date(Date.now() - process.uptime() * 1000) })),
     writeHeartbeat: heartbeat => writeHeartbeat(file, heartbeat),
     sleep: (ms, signal) => new Promise<void>((resolve, reject) => { const timer = setTimeout(resolve, ms); signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("stopped")); }, { once: true }); }),
     now: () => new Date(),

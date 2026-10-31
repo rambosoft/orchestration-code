@@ -210,8 +210,15 @@ describe("automatic resume of a failed run", () => {
     expect(await reconcile(deps, { apply: true, now })).toMatchObject([{ action: "reported" }]);
     expect(resumed).toEqual([]); expect(state.writes).toHaveLength(1);
   });
-  it("leaves failures that need a person alone: code failures, unusable model output, approvals", async () => {
-    for (const run of [failed("quality check failed: npm test", "verify_quality_gate_failed", ["1 test failed"]), failed("review output could not be read", "review_unparseable"), failed("review stopped: external prerequisite requires operator action", "external_or_approval_prerequisite")]) {
+  it("resumes a code (gate) failure and unusable model output once, because the resume repairs and reviews again (ADR 0027)", async () => {
+    for (const run of [failed("quality check failed: npm test", "verify_quality_gate_failed", ["1 test failed"]), failed("review output could not be read", "review_unparseable")]) {
+      const { deps, resumed } = setup(run);
+      expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "auto_resumed" });
+      expect(resumed).toEqual([wf]);
+    }
+  });
+  it("leaves failures that need a person alone: approvals, budgets, failures nobody can classify", async () => {
+    for (const run of [failed("review stopped: external prerequisite requires operator action", "external_or_approval_prerequisite"), failed("token budget exceeded for the run", "budget_exceeded"), failed("something nobody has seen before", "mystery")]) {
       const { deps, resumed } = setup(run);
       expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "reported" });
       expect(resumed).toEqual([]);
@@ -238,6 +245,17 @@ describe("automatic resume of a failed run", () => {
     deps.listRuns = async () => [{ workflowId: wf, status: "COMPLETED" }, { workflowId: `${wf}-resume1`, status: "RUNNING" }];
     expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "running" });
     expect(resumed).toEqual([]);
+  });
+  it("resumes once more a failure that ended before the current worker started, because a deploy may have fixed it, and ignores the age window then (ADR 0027)", () => {
+    const gate = failed("quality check failed: npm test", "verify_quality_gate_failed", ["1 test failed"]);
+    const started = new Date("2026-10-23T17:50:00Z");
+    expect(autoResumeDecision(`${wf}-resume1`, gate, closed, now)).toMatchObject({ resume: false });
+    expect(autoResumeDecision(`${wf}-resume1`, gate, closed, now, undefined, started)).toMatchObject({ resume: true });
+    expect(autoResumeDecision(`${wf}-resume2`, gate, closed, now, undefined, started)).toMatchObject({ resume: false });
+    expect(autoResumeDecision(wf, gate, "2026-10-23T09:00:00Z", now, undefined, started)).toMatchObject({ resume: true });
+    expect(autoResumeDecision(wf, gate, closed, now, undefined, new Date("2026-10-23T16:00:00Z"))).toMatchObject({ resume: true });
+    expect(autoResumeDecision(`${wf}-resume1`, gate, closed, now, undefined, new Date("2026-10-23T16:00:00Z"))).toMatchObject({ resume: false });
+    expect(autoResumeDecision(wf, failed("token budget exceeded for the run", "budget_exceeded"), closed, now, undefined, started)).toMatchObject({ resume: false });
   });
   it("autoResumeDecision names the reason", () => {
     expect(autoResumeDecision(wf, failed("ETIMEDOUT", "implement_activity_failed"), closed, now)).toMatchObject({ resume: true });

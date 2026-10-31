@@ -2,6 +2,7 @@
 
 ## Current checkout audit and provider update (2026-10-26)
 - Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-31 Root cause of the repeated manual recoveries fixed (ADR 0027, B-100): recovery ladder. LOC-135 done; LOC-137 running; ladder to be deployed at the next gap.
 - 2026-10-31 Eighth finding fixed (ADR 0026, B-099): a check with nothing to change publishes a report. LOC-135 to be re-run.
 - 2026-10-30 Seventh finding fixed (ADR 0025, B-098): the gate reports the acceptance trace with a failing command. ADR 0024 deployed (adapter and worker). LOC-132 to be recovered.
 - 2026-10-30 Sixth finding fixed (ADR 0024, B-097): run storm from `blocked`; 225 stale worktrees on disk to clean; LOC-132 running.

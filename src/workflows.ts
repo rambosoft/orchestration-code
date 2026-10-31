@@ -806,7 +806,10 @@ ${(latest?.summary ?? "").slice(0, 6000)}
         // A failed comment must not hide the published PR: the findings are also in the result and the Paperclip comment.
         try { await commentOnPullRequest({ worktree: workspace, prUrl: publish.prUrl, body: openFindingsComment(openFindings, { rounds: reviewCount }) }); }
         catch (error) { if (isCancellation(error)) throw error; warnings.push({ stage: "review", message: `the open review findings could not be posted as a PR comment: ${failureDetails(error, 300)}` }); }
-        return { ...finish("needs_review", withWarnings(`quality gates passed; draft PR published with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"} (see the PR comment)`)), publish };
+        // A prototype or throwaway project reviews per task only as advice (ADR 0015): the findings stay on the pull request and the milestone check verifies the result, so the chain goes on instead of waiting for a person (ADR 0027).
+        // patched(): runs recorded before this change rested in review.
+        const advisory = (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-open-findings-prototype");
+        return { ...finish(advisory ? "completed" : "needs_review", withWarnings(`quality gates passed; draft PR published with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"} (see the PR comment)${advisory ? `; accepted for a ${input.tier} project, the milestone check verifies it` : ""}`)), publish };
       }
       return { ...finish("completed", withWarnings("quality gates passed; draft PR published")), publish };
     } catch (error) {

@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-31 unattended recovery ladder (ADR 0027)
+- Root cause behind four manual recoveries (LOC-116, 117, 132, 135): only transient and machine failures healed themselves; every other ending waited for a person and stopped the chain. Now a gate or model failure is auto-resumed once, a failure that ended before the current worker started is resumed once more (a deploy may have fixed it, no age window), and a prototype or throwaway task whose review still blocks after the bounded rounds finishes with the findings on the pull request (`patched("accept-open-findings-prototype")`). Budgets, external prerequisites and unknown failures still wait for a person. Tests in `test/reconcile.test.ts` and `test/typed-flows.test.ts`.
+
 ## 2026-10-31 a check with nothing to change publishes a report (ADR 0026, eighth live finding)
 - Minesweeper LOC-135: the second run of the UX shell check verified everything, correctly changed nothing, and failed at the publish gate ("no changes were committed"), which stopped the project. A check recognised by its title now writes `docs/checks/<task>.md` when it changed no file, so it publishes and finishes. Ordinary tasks still fail on no changes. Tests in `test/lanes.test.ts`. The first run's review finding (board clipped on Advanced) was by design: the board pans, since 30 columns cannot fit a portrait phone at 48-unit cells.
 

@@ -31,14 +31,18 @@ export type Finding = { issue: string; workflowId?: string; workflowStatus?: str
 /** A failed run is resumed on its own only when the failure is transient or caused by the machine, at most once, and only while it is recent. */
 export const AUTO_RESUME_WINDOW_MINUTES = 360;
 export type ResumeDecision = { resume: boolean; reason: string; failure: FailureClass };
-export function autoResumeDecision(workflowId: string, result: RunResult, closeTime: string | undefined, now: Date, windowMinutes = AUTO_RESUME_WINDOW_MINUTES): ResumeDecision {
+export function autoResumeDecision(workflowId: string, result: RunResult, closeTime: string | undefined, now: Date, windowMinutes = AUTO_RESUME_WINDOW_MINUTES, workerStartedAt?: Date): ResumeDecision {
   const lastStage = result.stages.at(-1);
   const failure = classifyFailure({ message: result.message, ...(result.metadata?.review?.stopReason ? { stopReason: result.metadata.review.stopReason } : {}), findings: lastStage ? [lastStage.summary, ...lastStage.findings] : [] });
   if (result.status !== "failed") return { resume: false, reason: "the run did not fail", failure };
-  if (!isResumable(failure)) return { resume: false, reason: `${failure.kind} failure: ${failure.reason}`, failure };
+  // A gate or model failure is resumed once as well (ADR 0027): the resume keeps the finished implementation and runs the gates, one bounded repair pass and the review again, which is what an operator did by hand every time.
+  // Budgets, external prerequisites and failures nobody can classify still wait for a person.
+  if (!isResumable(failure) && failure.kind !== "gate" && failure.kind !== "model") return { resume: false, reason: `${failure.kind} failure: ${failure.reason}`, failure };
   const resumes = Number(/-resume(\d+)$/.exec(workflowId)?.[1] ?? 0);
-  if (resumes >= MAX_AUTO_RESUMES) return { resume: false, reason: `this run was already resumed ${resumes} time(s); a person should look at it`, failure };
-  if (closeTime && now.getTime() - new Date(closeTime).getTime() > windowMinutes * 60_000) return { resume: false, reason: `it ended more than ${windowMinutes} minutes ago; resume it by hand if it is still wanted`, failure };
+  // A worker that started after the run ended carries new code (a deploy): the failure may be gone, so one more resume is allowed and the age window does not apply (ADR 0027).
+  const redeployed = Boolean(workerStartedAt && closeTime && workerStartedAt.getTime() > new Date(closeTime).getTime());
+  if (resumes >= MAX_AUTO_RESUMES + (redeployed ? 1 : 0)) return { resume: false, reason: `this run was already resumed ${resumes} time(s); a person should look at it`, failure };
+  if (!redeployed && closeTime && now.getTime() - new Date(closeTime).getTime() > windowMinutes * 60_000) return { resume: false, reason: `it ended more than ${windowMinutes} minutes ago; resume it by hand if it is still wanted`, failure };
   return { resume: true, reason: `${failure.kind} failure: ${failure.reason}`, failure };
 }
 
@@ -117,7 +121,7 @@ const rows = <T>(value: unknown, key: string): T[] => Array.isArray(value) ? val
 /** Only runs that ended within `days` days are considered, so old history is never rewritten. */
 export const DEFAULT_WINDOW_DAYS = 3;
 
-export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; days?: number; now?: Date; /** Only this task (identifier such as LOC-65, or id). */ only?: string; /** Resume a run that failed for a transient or machine reason (src/failure-class.ts), once, instead of only reporting it. */ autoResume?: boolean }): Promise<Finding[]> {
+export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; days?: number; now?: Date; /** Only this task (identifier such as LOC-65, or id). */ only?: string; /** Resume a run that failed for a transient or machine reason (src/failure-class.ts), once, instead of only reporting it. */ autoResume?: boolean; /** When the worker running this service started; a failure that ended before it is resumed once more (a deploy may have fixed it). */ workerStartedAt?: Date }): Promise<Finding[]> {
   const cutoff = (options.now ?? new Date()).getTime() - (options.days ?? DEFAULT_WINDOW_DAYS) * 86_400_000;
   const findings: Finding[] = [];
   const runs = await deps.listRuns();
@@ -165,7 +169,7 @@ export async function reconcile(deps: ReconcileDeps, options: { apply: boolean; 
           findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "stale_failure_suppressed", status: issue.status, detail: `a newer Paperclip run (${newerSuccess.startedAt}) already succeeded; suppressing automatic resume of this older failure` });
           continue;
         }
-        const decision = autoResumeDecision(run.workflowId, detail.result, detail.closeTime, options.now ?? new Date());
+        const decision = autoResumeDecision(run.workflowId, detail.result, detail.closeTime, options.now ?? new Date(), undefined, options.workerStartedAt);
         if (decision.resume) {
           if (!options.apply) { findings.push({ issue: name, workflowId: run.workflowId, workflowStatus: detail.status, action: "would_resume", detail: decision.reason }); continue; }
           try {

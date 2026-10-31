@@ -427,6 +427,15 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(state.comments[0]!.body).toContain("Open review findings");
     expect(state.comments[0]!.body).toContain("two obstacles on screen at score 3000");
   });
+  it("finishes a prototype task whose review still blocks after the last round: the findings stay on the pull request and the chain goes on (ADR 0027)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", repeatReviewFailure: true, tier: "prototype", lane: "heavy" }, [], { stage: "implement", apply: declare, mode: "always" });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.message).toContain("accepted for a prototype project");
+    expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments).toHaveLength(1);
+    expect(state.comments[0]!.body).toContain("Open review findings");
+  });
   it("still fails, with no PR, when the deterministic checks fail after the repair", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]", injectReviewFailure: true });
     expect(result.status).toBe("failed");
