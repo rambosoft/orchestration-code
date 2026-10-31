@@ -235,7 +235,7 @@ beforeAll(async () => {
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY_ENV]")) return { stage: "verify", ok: false, summary: "quality check failed: unity test", findings: ["Unity exited 198: No valid Unity Editor license found"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY]")) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["1 test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       const out = { ...(await fake.run(input)), stage: input.stage };
-      if (input.stage === "review" && state.unfixable) { const review = { verdict: "needs_changes" as const, findings: [{ severity: "high" as const, category: state.unfixable as "acceptance" | "environment", title: "Device measurement missing", evidence: "An acceptance check that no code change can satisfy", fixableInCode: false }], notes: [] }; return { ...out, ok: false, review, findings: ["Device measurement missing"] }; }
+      if (input.stage === "review" && state.unfixable) { const review = { verdict: "needs_changes" as const, findings: [{ severity: "high" as const, category: state.unfixable as "acceptance" | "environment" | "approval", title: "Device measurement missing", evidence: "An acceptance check that no code change can satisfy", fixableInCode: false }], notes: [] }; return { ...out, ok: false, review, findings: ["Device measurement missing"] }; }
       const nth = state.calls.filter(call => call.stage === input.stage).length;
       return state.defect?.stage === input.stage && (state.defect.mode === "always" || nth === 1) ? { ...out, summary: state.defect.apply(out.summary) } : out;
     },
@@ -246,7 +246,7 @@ beforeAll(async () => {
 afterAll(async () => { worker.shutdown(); await running; await env.teardown(); await rm(tmp, { recursive: true, force: true }); });
 
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
-async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment"): Promise<{ result: RunResult; state: RunState }> {
+async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment" | "approval"): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
   const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
   runs.set(id, state); currentRun = state;
@@ -445,13 +445,15 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.publish?.prUrl).toContain("/pull/1");
     expect(state.comments[0]!.body).toContain("Device measurement missing");
   });
-  it("still stops an MVP task on a finding no code change can satisfy, and a prototype on a missing setup", async () => {
+  it("still stops an MVP task on a finding no code change can satisfy, and a prototype on an approval", async () => {
     const mvp = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "mvp", lane: "heavy" }, [], undefined, "acceptance");
     expect(mvp.result.status).toBe("failed");
     expect(mvp.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
-    const setup = await run({ profile: "implementation", prompt: "Needs a key", tier: "prototype", lane: "heavy" }, [], undefined, "environment");
-    expect(setup.result.status).toBe("failed");
-    expect(setup.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
+    const approval = await run({ profile: "implementation", prompt: "Needs a sign-off", tier: "prototype", lane: "heavy" }, [], undefined, "approval");
+    expect(approval.result.status).toBe("failed");
+    expect(approval.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
+    const device = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "prototype", lane: "heavy" }, [], undefined, "environment");
+    expect(device.result.status, device.result.message).toBe("completed");
   });
   it("still fails, with no PR, when the deterministic checks fail after the repair", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]", injectReviewFailure: true });

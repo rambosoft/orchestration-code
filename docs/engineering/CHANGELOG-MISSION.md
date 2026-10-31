@@ -5,6 +5,7 @@
 
 ## 2026-10-31 device-only acceptance no longer stops a prototype (ADR 0028, ninth live finding)
 - Minesweeper LOC-138: after two reviews Claude's implementation was correct for everything code could fix; the last high finding (no mid-range Android device profile) is `fixableInCode: false`, an external blocker, so the run failed and the task rested in review. For prototype and throwaway tiers such a finding (not environment or approval) now rides on the draft PR as the open-findings comment and the task completes with a warning. `patched("accept-unfixable-prototype")`, replay fixture unchanged. Tests in `test/typed-flows.test.ts`.
+- Correction: the reviewer filed the same device gap under `environment` on the next review, so only `approval` findings still stop a prototype.
 
 ## 2026-10-31 unattended recovery ladder (ADR 0027)
 - Root cause behind four manual recoveries (LOC-116, 117, 132, 135): only transient and machine failures healed themselves; every other ending waited for a person and stopped the chain. Now a gate or model failure is auto-resumed once, a failure that ended before the current worker started is resumed once more (a deploy may have fixed it, no age window), and a prototype or throwaway task whose review still blocks after the bounded rounds finishes with the findings on the pull request (`patched("accept-open-findings-prototype")`). Budgets, external prerequisites and unknown failures still wait for a person. Tests in `test/reconcile.test.ts` and `test/typed-flows.test.ts`.

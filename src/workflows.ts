@@ -695,9 +695,9 @@ async function runProject(input: RunInput): Promise<RunResult> {
         // independent, code-fixable blockers in the same review. Repair those
         // within the existing round budget, then stop if the prerequisite stays.
         if (!blocking.length) {
-          // A check only a device, a person or a later task can satisfy (acceptance, not a missing setup or approval) cannot be fixed by another round. For a prototype or throwaway
+          // A check only a device, a person or a later task can satisfy (not an approval) cannot be fixed by another round. For a prototype or throwaway
           // project it rides on the draft pull request like any open finding and the milestone check verifies it (ADR 0028). patched(): earlier runs failed here.
-          const unfixableAcceptance = external.length > 0 && external.every(finding => finding.category !== "environment" && finding.category !== "approval") && (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-unfixable-prototype");
+          const unfixableAcceptance = external.length > 0 && external.every(finding => finding.category !== "approval") && (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-unfixable-prototype");
           if (unfixableAcceptance) { openFindings = external; stopReason = "review_findings_unresolved"; break; }
           if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action after code-fixable findings were addressed"); }
           break;
