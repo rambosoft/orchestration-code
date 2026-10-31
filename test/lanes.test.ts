@@ -99,7 +99,7 @@ describe("workflow lanes", () => {
   beforeAll(async () => { env = await TestWorkflowEnvironment.createTimeSkipping(); }, 120_000);
   afterAll(async () => { await env?.teardown(); });
 
-  async function run(extra: Partial<RunInput>, options: { changes?: ChangeStats; failVerifyOnce?: boolean; implementSummary?: string } = {}) {
+  async function run(extra: Partial<RunInput>, options: { changes?: ChangeStats; failVerifyOnce?: boolean; implementSummary?: string; documents?: Array<{ docsDir: string; taskId: string; markdown: string }> } = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), "orch-lane-"));
     const worktree = path.join(root, "worktree"); await mkdir(worktree);
     const calls: StageInput[] = []; let verifyFailures = options.failVerifyOnce ? 1 : 0;
@@ -108,6 +108,7 @@ describe("workflow lanes", () => {
       prepareWorktree: async () => worktree,
       prepareProjectDependencies: async () => ({ installed: true, summary: "ready" }),
       assessChanges: async (): Promise<ChangeStats> => options.changes ?? { files: ["src/a.ts"], lines: 10, deletedFiles: [] },
+      writeAnalysisDocument: async (document: { docsDir: string; taskId: string; markdown: string }) => { options.documents?.push(document); return `${document.docsDir}/${document.taskId}.md`; },
       executeStage: async (input: StageInput): Promise<StageOutput> => {
         calls.push(input);
         if (input.stage === "verify" && verifyFailures-- > 0) return { stage: "verify", ok: false, summary: "quality check failed", findings: ["npm test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
@@ -169,4 +170,26 @@ describe("workflow lanes", () => {
     expect(stages.indexOf("brief")).toBeLessThan(stages.indexOf("implement"));
     expect(stages).toContain("review");
   }, 60_000);
+
+  // ADR 0026: a milestone check that verifies everything and changes nothing used to fail at the publish gate ("no changes were committed") and stop the project.
+  const checkRepository = (taskTitle: string) => ({ repository: { remote: "origin", targetBranch: "main", branch: "codex/check-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle } });
+  it("commits a report for a milestone check that changed nothing, so it publishes and the next milestone has a branch", async () => {
+    const documents: Array<{ docsDir: string; taskId: string; markdown: string }> = [];
+    const { result } = await run({ tier: "prototype", lane: "heavy", ...checkRepository("Check milestone: UX shell") }, { changes: { files: [], lines: 0, deletedFiles: [] }, documents, implementSummary: "Verification found no defects, so I changed no files." });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(documents).toHaveLength(1);
+    expect(documents[0]).toMatchObject({ docsDir: "docs/checks", taskId: "LANE-1" });
+    expect(documents[0]!.markdown).toContain("Check milestone: UX shell");
+    expect(documents[0]!.markdown).toContain("nothing needed to change");
+    expect(documents[0]!.markdown).toContain("Verification found no defects");
+  }, 60_000);
+  it("writes no report when the check changed something, and none for an ordinary task that changed nothing (that one still fails at the publish gate)", async () => {
+    const withChanges: Array<{ docsDir: string; taskId: string; markdown: string }> = [];
+    await run({ tier: "prototype", lane: "heavy", ...checkRepository("Check milestone: Core logic") }, { documents: withChanges });
+    expect(withChanges).toEqual([]);
+    const ordinary: Array<{ docsDir: string; taskId: string; markdown: string }> = [];
+    await run({ tier: "prototype", lane: "light", ...checkRepository("Add a percentage button") }, { changes: { files: [], lines: 0, deletedFiles: [] }, documents: ordinary });
+    expect(ordinary).toEqual([]);
+  }, 90_000);
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ANSWER_SHAPE } from "./answer-shape.js";
 import { SLICE_PREFIX } from "./acceptance.js";
+import { MILESTONE_CHECK_PREFIX } from "./lanes.js";
 import { parseJsonLoose } from "./json-extract.js";
 import { PLAN_LIMITS, projectSlug, textLines, type BootstrapForm, type OptionValue, type PlanLimits } from "./bootstrap-options.js";
 import { templateSummaries, usableTemplate, type ScaffoldTemplate } from "./bootstrap-templates.js";
@@ -412,7 +413,7 @@ export function withMilestoneChecks(blueprint: Blueprint, options: Record<string
       if (real.length === 0) return milestone;
       const criteria = milestone.exit_criteria.length ? milestone.exit_criteria : [`${milestone.title} works as its goal describes`];
       const check: BlueprintTask = {
-        key: `${milestone.key}`.slice(0, 24 - CHECK_SUFFIX.length) + CHECK_SUFFIX, title: `Check milestone: ${milestone.title}`.slice(0, 120),
+        key: `${milestone.key}`.slice(0, 24 - CHECK_SUFFIX.length) + CHECK_SUFFIX, title: `${MILESTONE_CHECK_PREFIX} ${milestone.title}`.slice(0, 120),
         description: `Check the work of milestone "${milestone.title}" against its exit criteria. Do not add features. For each criterion, run the tests or the app and confirm it holds. Fix what falls short in the code the earlier tasks wrote, with the smallest change, and add a test for every defect you fix. Report a criterion you cannot meet as UNMET_ACCEPTANCE instead of working around it.`.slice(0, 900),
         type: "task", size: "large", acceptance: criteria.slice(0, 6).map(item => item.slice(0, 200)), depends_on: real.map(task => task.key).slice(0, 6),
       };

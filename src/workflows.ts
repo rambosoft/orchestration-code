@@ -5,7 +5,7 @@ import { classifyFailure } from "./failure-class.js";
 import { digestContract } from "./contract-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles, type WorkflowProfile } from "./profiles.js";
-import { LANE_PROFILES, escalationReasons, lanePlan } from "./lanes.js";
+import { LANE_PROFILES, MILESTONE_CHECK_PREFIX, escalationReasons, lanePlan } from "./lanes.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
@@ -779,6 +779,23 @@ async function runProject(input: RunInput): Promise<RunResult> {
       if (isCancellation(error)) throw error;
       stopReason = "diagnosis_document_failed";
       return finish("failed", `diagnosis document could not be written: ${failureDetails(error)}`);
+    }
+  }
+  // A milestone check that verified everything and changed nothing is a result: its report is committed so the task publishes, finishes and gives the next milestone a branch to build on (ADR 0026).
+  // patched(): runs recorded before this change ended in a failed publish.
+  if (workspace !== input.projectRoot && input.repository?.taskTitle?.startsWith(MILESTONE_CHECK_PREFIX) && patched("milestone-check-report")) {
+    const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
+    if (changes && changes.files.length === 0) {
+      const latest = [...stages].reverse().find(stage => stage.stage === "implement");
+      try { artifactRefs.push(await writeAnalysisDocument({ worktree: workspace, docsDir: "docs/checks", taskId: input.taskId, markdown: `# ${input.repository.taskTitle}
+
+Task: ${input.taskId}
+
+Result: every exit criterion held and nothing needed to change.
+
+${(latest?.summary ?? "").slice(0, 6000)}
+` })); }
+      catch (error) { if (isCancellation(error)) throw error; stopReason = "check_report_failed"; return finish("failed", `the check report could not be written: ${failureDetails(error)}`); }
     }
   }
   if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));

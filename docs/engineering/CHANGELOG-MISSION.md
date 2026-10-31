@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-31 a check with nothing to change publishes a report (ADR 0026, eighth live finding)
+- Minesweeper LOC-135: the second run of the UX shell check verified everything, correctly changed nothing, and failed at the publish gate ("no changes were committed"), which stopped the project. A check recognised by its title now writes `docs/checks/<task>.md` when it changed no file, so it publishes and finishes. Ordinary tasks still fail on no changes. Tests in `test/lanes.test.ts`. The first run's review finding (board clipped on Advanced) was by design: the board pans, since 30 columns cannot fit a portrait phone at 48-unit cells.
+
 ## 2026-10-30 gate reports all static problems (ADR 0025, seventh live finding)
 - Minesweeper LOC-132 failed because a flaky timing test used the one repair pass and the acceptance trace (two criteria without tests, a static file read) only ran afterwards. The trace is now computed before the commands and travels with a failing command, so one repair sees both. Test in `test/gate-trace.test.ts`.
 

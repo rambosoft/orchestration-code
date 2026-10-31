@@ -18,6 +18,8 @@ export type LanePlan = {
 };
 
 /** The lane of a task: an explicit "Lane:" line wins, otherwise the size the blueprint gave it. */
+/** The title every milestone check task starts with (src/bootstrap.ts writes it, the workflow recognises it): a check that finds nothing to change is a result, not a failed publish (ADR 0026). */
+export const MILESTONE_CHECK_PREFIX = "Check milestone:";
 export function laneFor(size?: SizeHint, override?: Lane): Lane {
   return override ?? (size === "small" ? "light" : size === "large" ? "heavy" : "standard");
 }
