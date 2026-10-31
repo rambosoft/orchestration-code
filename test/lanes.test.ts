@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import type { QualityCommand, RunInput, StageInput, StageOutput } from "../src/contracts.js";
-import { ESCALATION, LANES, TIERS, MILESTONE_CHECK_PREFIX, effectiveLane, escalationReasons, gateCommandsFor, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
+import { ESCALATION, LANES, TIERS, MILESTONE_CHECK_PREFIX, authoredLines, effectiveLane, isGeneratedFile, escalationReasons, gateCommandsFor, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
 import { unityGates } from "../src/bootstrap-templates.js";
 import { parseTaskDirectives } from "../src/openspec-policy.js";
 import { buildIssuePlan } from "../src/bootstrap.js";
@@ -94,6 +94,12 @@ describe("escalation", () => {
     const art = Array.from({ length: ESCALATION.maxFiles + 20 }, (_, i) => `Assets/Art/Golf/Tiles/t${i}.png.meta`);
     expect(escalationReasons(stats({ files: art, countedFiles: ["Assets/Scripts/Runtime/GolfArt.cs"] }), false)).toEqual([]);
     expect(escalationReasons(stats({ files: art }), false)[0]).toContain("files changed"); // a result recorded without countedFiles keeps counting every file
+  });
+  it("counts changed lines without the rewritten .meta files of a sprite import (regression: 5129 lines on LOC-144)", () => {
+    const metas = Array.from({ length: 233 }, (_, i) => `22	0	Assets/Art/Golf/Tiles/t${i}.png.meta`);
+    expect(authoredLines([...metas, "40	5	Assets/Scripts/Runtime/GolfArt.cs", "-	-	Assets/Art/Golf/Ui/x.png", "7	1	docs/GOLF_ART.md"])).toBe(53);
+    expect(authoredLines(["10	2	src/a.ts"])).toBe(12);
+    expect([isGeneratedFile("a/b.png.meta"), isGeneratedFile("a\b.PNG"), isGeneratedFile("a/Board.cs"), isGeneratedFile("a/Catalog.asset")]).toEqual([true, true, false, false]);
   });
   it("does not mistake a path that only contains the word for a risky one", () => {
     expect(escalationReasons(stats({ files: ["src/authors/list.ts", "src/schemas-doc.md"] }), false)).toEqual([]);
