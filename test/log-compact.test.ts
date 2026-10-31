@@ -3,6 +3,25 @@ import { compactEmbeddedLogs, compactLog } from "../src/log-compact.js";
 
 const frames = (count: number, make: (index: number) => string) => Array.from({ length: count }, (_, index) => make(index));
 
+describe("compactLog: lines that differ only by an item id", () => {
+  const rule = (id: string) => `warning rule-trace: ${id} from docs/RULES_SPEC.md is not referenced by any test (add "Covers: ${id}" to the test that proves it)`;
+  it("folds a run of three or more into the first line with a count and the last id", () => {
+    const out = compactLog(Array.from({ length: 16 }, (_, i) => rule(`R-${String(i + 1).padStart(3, "0")}`)).join("\n"));
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).toContain("R-001");
+    expect(out).toContain("[+15 similar, up to R-016]");
+  });
+  it("leaves two lines, lines without ids, and different messages alone", () => {
+    expect(compactLog([rule("R-001"), rule("R-002")].join("\n")).split("\n")).toHaveLength(2);
+    expect(compactLog("build failed\nbuild failed because Foo is missing\nbuild ok").split("\n")).toHaveLength(3);
+    expect(compactLog([rule("R-001"), "error: Game.cs(3): CS1002", rule("R-002"), rule("R-003")].join("\n")).split("\n")).toHaveLength(4);
+  });
+  it("does not hide a failing test id among passing ones", () => {
+    const out = compactLog(["T1-AC1 passed", "T1-AC2 passed", "T1-AC3 passed", "T1-AC4 FAILED: expected 3 got 4"].join("\n"));
+    expect(out).toContain("T1-AC4 FAILED: expected 3 got 4");
+  });
+});
+
 describe("compactLog: stack traces of every supported stack", () => {
   it("keeps the project frames and the cause chain of a Spring Boot failure and folds the framework frames", () => {
     const text = [

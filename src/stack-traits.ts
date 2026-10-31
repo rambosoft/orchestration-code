@@ -42,7 +42,9 @@ export function detectStack(root: string): StackInfo {
  * commit on purpose (vendor/, a hand-written dist/) is not listed. Digest-only noise is in NOISY below.
  */
 const GENERATED: Record<Family, RegExp[]> = {
-  unity: [/^(?:Library|Temp|Obj|Logs|UserSettings|Builds|MemoryCaptures|Recordings|\.utmp|\.gradle)\//, /\.(?:apk|aab|keystore|csproj|sln)$/i],
+  unity: [/^(?:Library|Temp|Obj|Logs|UserSettings|Builds|MemoryCaptures|Recordings|\.utmp|\.gradle)\//, /\.(?:apk|aab|keystore|csproj|sln)$/i,
+    // The Unity test runner writes a scratch scene under Assets for each run and leaves it behind when the run is cut short (Minesweeper PR #27 carried one, main holds three).
+    /^Assets\/InitTestScene[0-9a-f-]+\.unity(?:\.meta)?$/i],
   node: [/(?:^|\/)(?:node_modules|coverage|\.next|\.nuxt|\.turbo|\.parcel-cache|storybook-static)\//, /\.tsbuildinfo$/],
   jvm: [/(?:^|\/)(?:target|\.gradle|out)\//, /(?:^|\/)build\/(?:classes|libs|tmp|reports|generated|resources|kotlin|test-results|distributions)\//, /\.(?:class|war|ear)$/],
   dotnet: [/(?:^|\/)(?:bin|obj)\//, /\.user$/],

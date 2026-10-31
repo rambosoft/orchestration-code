@@ -27,6 +27,7 @@
     "timing": "node dist/src/cli.js timing",
     "unity:plugin": "node scripts/unity-plugin.mjs",
     "resume-run": "node dist/src/cli.js resume-run",
+    "onboard": "node dist/src/cli.js onboard",
     "reconcile:watch": "node scripts/reconcile-watch.mjs",
     "drain": "node dist/src/cli.js drain",
     "reconcile": "node dist/src/cli.js reconcile",

@@ -1,9 +1,10 @@
 // Stack profiles (docs/engineering/research/unity-game-support.md): the toolchain a project uses is data. `node-web` is the default and keeps today's behaviour; `unity-mobile` adds the Unity CLI.
-export const STACK_PROFILE_IDS = ["node-web", "unity-mobile"] as const;
+export const STACK_PROFILE_IDS = ["node-web", "unity-mobile", "react-ts", "angular", "spring-boot"] as const;
 export type StackProfileId = (typeof STACK_PROFILE_IDS)[number];
 
 export const CORE_EXECUTABLES = ["node", "npm", "pnpm", "yarn"] as const;
-const STACK_EXECUTABLES: Record<StackProfileId, readonly string[]> = { "node-web": CORE_EXECUTABLES, "unity-mobile": [...CORE_EXECUTABLES, "unity"] };
+// Web stacks use the same package managers as node-web; Spring Boot adds the system Maven and Gradle (a wrapper script is a path, which a quality command may not be).
+const STACK_EXECUTABLES: Record<StackProfileId, readonly string[]> = { "node-web": CORE_EXECUTABLES, "react-ts": CORE_EXECUTABLES, angular: CORE_EXECUTABLES, "unity-mobile": [...CORE_EXECUTABLES, "unity"], "spring-boot": [...CORE_EXECUTABLES, "mvn", "gradle"] };
 export function allowedExecutables(profile: StackProfileId = "node-web"): readonly string[] { return STACK_EXECUTABLES[profile]; }
 
 type CommandLike = { executable: string; args: string[]; cwd?: string };

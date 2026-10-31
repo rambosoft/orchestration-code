@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { childEnv } from "../src/env.js";
 import { cliProviderEnvironment } from "../src/providers.js";
 
@@ -21,7 +23,8 @@ describe("childEnv", () => {
   });
   it("also removes cloud and private-key style variables, but keeps Claude CLI auth for the claude provider", () => {
     const env = cliProviderEnvironment({ AWS_ACCESS_KEY_ID: "x", DATABASE_URL: "x", SSH_PASSPHRASE: "x", CLAUDE_CODE_OAUTH_TOKEN: "ok", PATH: "/bin" });
-    expect(env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "ok", PATH: "/bin" });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("ok");
+    expect(env.PATH?.split(path.delimiter)).toEqual([expect.any(String), "/bin"]);
   });
   it("cli providers keep only their own credentials", () => {
     const env = cliProviderEnvironment({ ...secrets, PATH: "/bin" });
@@ -29,5 +32,10 @@ describe("childEnv", () => {
     expect(env.OPENROUTER_API_KEY).toBeUndefined();
     expect(env.PAPERCLIP_API_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
+  });
+  it("exposes the orchestrator-pinned OpenSpec CLI to project worktree agents", () => {
+    const env = cliProviderEnvironment({ PATH: "/bin" });
+    const openSpecShim = path.join(env.PATH!.split(path.delimiter)[0]!, process.platform === "win32" ? "openspec.cmd" : "openspec");
+    expect(existsSync(openSpecShim)).toBe(true);
   });
 });

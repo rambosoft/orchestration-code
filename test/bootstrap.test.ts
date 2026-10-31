@@ -68,6 +68,12 @@ describe("options and presets", () => {
     expect(api.values).toMatchObject({ ui_ux: false, architecture: "backend_only" });
     expect(resolveOptions({ repo_create: false }).values.autostart).toBe("none");
   });
+  it("releases every milestone of an auto-approved project, because nobody is there to release the next one, and keeps an explicit choice", () => {
+    expect(resolveOptions({ approval: "auto" }).values.autostart).toBe("all");
+    expect(resolveOptions({ approval: "auto", autostart: "first_milestone" }).values.autostart).toBe("first_milestone");
+    expect(resolveOptions({ approval: "auto", repo_create: false }).values.autostart).toBe("none");
+    expect(resolveOptions({ approval: "required" }).values.autostart).toBe("first_milestone");
+  });
   it("rejects invalid values and ignores unknown options with a warning", () => {
     const resolved = resolveOptions({ platform: "toaster", review_rounds: "9", ui_ux: "yes", mystery: "x" });
     expect(resolved.errors.join(" ")).toContain("'platform' must be one of");
@@ -505,11 +511,12 @@ describe("bootstrap workflow", () => {
     const result: RunResult = await handle.result();
     expect(result.status).toBe("completed");
     expect(result.bootstrap).toMatchObject({ template: "vite-react-ts", repositoryUrl: "https://github.com/me/shop" });
-    expect(result.bootstrap!.issues).toHaveLength(6);
-    expect(result.report?.markdown).toContain("issues created:** 6");
-    expect(result.message).toContain("6 Paperclip issues");
+    // A prototype ends each of its two milestones with a check task (ADR 0018): 2 milestones, 4 planned tasks and 2 check tasks.
+    expect(result.bootstrap!.issues).toHaveLength(8);
+    expect(result.report?.markdown).toContain("issues created:** 8");
+    expect(result.message).toContain("8 Paperclip issues");
     expect(state.scaffolds[0]!.run.options.maturity).toBe("prototype");
-    expect(state.materialized[0]!.issues).toHaveLength(6);
+    expect(state.materialized[0]!.issues).toHaveLength(8);
   });
   it("creates nothing when the plan is rejected", async () => {
     const { handle, state } = await start({});

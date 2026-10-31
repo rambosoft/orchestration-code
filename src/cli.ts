@@ -15,6 +15,10 @@ import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
+import { onboardManifest } from "./stack-packs.js";
+import { TIERS, type Tier } from "./lanes.js";
+import { STACK_PROFILE_IDS, type StackProfileId } from "./stack-profiles.js";
+import { access, writeFile } from "node:fs/promises";
 
 const [command, ...args] = process.argv.slice(2);
 const data = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data");
@@ -126,6 +130,18 @@ async function main() {
     const [worktree, childBranch, parentPrUrl, targetBranch, remote = "origin"] = args;
     if (!worktree || !childBranch || !parentPrUrl || !targetBranch) throw new Error("usage: dev sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
+  }
+  if (command === "onboard") {
+    // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--remote origin] [--branch main] [--write]
+    const option = (name: string): string | undefined => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
+    const folder = args[0]; const name = option("name"); const tier = option("tier") as Tier | undefined; const profile = option("profile") as StackProfileId | undefined;
+    if (!folder || folder.startsWith("--") || !name || !tier || !TIERS.includes(tier) || (profile !== undefined && !STACK_PROFILE_IDS.includes(profile))) throw new Error(`usage: dev onboard <repo folder> --name <name> --tier ${TIERS.join("|")} [--id <id>] [--profile ${STACK_PROFILE_IDS.join("|")}] [--remote origin] [--branch main] [--write]`);
+    const { manifest, notes } = onboardManifest({ root: folder, name, tier, ...(option("id") ? { id: option("id")! } : {}), ...(profile ? { profile } : {}), ...(option("remote") ? { remote: option("remote")! } : {}), ...(option("branch") ? { targetBranch: option("branch")! } : {}) });
+    const text = `${JSON.stringify(manifest, null, 2)}\n`;
+    if (!args.includes("--write")) { console.log(text); console.error(notes.map(note => `- ${note}`).join("\n")); return; }
+    const file = path.join(path.resolve("projects"), `${String(manifest.id)}.json`);
+    if (await access(file).then(() => true, () => false)) throw new Error(`${file} already exists; remove it or pass another --id`);
+    await writeFile(file, text, "utf8"); console.log(`wrote ${file}`); console.log(notes.map(note => `- ${note}`).join("\n")); return;
   }
   if (command === "resume-run") {
     const budgetIndex = args.indexOf("--budget"); const budget = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;

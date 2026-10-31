@@ -52,7 +52,7 @@ describe("guard edge cases", () => {
 
 describe("generated build output (Unity)", () => {
   const unityFiles = { "ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.3.11f1\n", "Assets/Scripts/A.cs": "class A {}\n", "Assets/Library/Cards.cs": "class Cards {}\n" };
-  const generated = { ".utmp/RelWithDebInfo/x/cache.json": "{}", "Library/Bee/x.dll": "x", "Builds/game.aab": "x", "Logs/screenshots/a.png": "x", "Game.csproj": "<x/>" };
+  const generated = { ".utmp/RelWithDebInfo/x/cache.json": "{}", "Library/Bee/x.dll": "x", "Builds/game.aab": "x", "Logs/screenshots/a.png": "x", "Game.csproj": "<x/>", "Assets/InitTestScene207cfa2b-64fc-46af-aef4-5a6a8c49cc64.unity": "x", "Assets/InitTestScene207cfa2b-64fc-46af-aef4-5a6a8c49cc64.unity.meta": "x" };
 
   it("detects a Unity worktree from its project folder", async () => {
     const root = await repo();

@@ -38,6 +38,12 @@ describe("reconcileLoop", () => {
     expect(heartbeats[0]!.lastSummary).toBe("reported LOC-2, auto_resumed LOC-3");
     expect(heartbeats[1]!.resumed).toBe(1);
   });
+  it("logs a finding that waits for a person once, not every cycle, and again when it comes back", async () => {
+    const held = finding("dependency_ready_recovery_required", "LOC-93");
+    const { deps, logs } = loop([[held], [held], [held], [], [held]]);
+    await reconcileLoop(deps, { intervalSeconds: 60, maxCycles: 5 });
+    expect(logs).toHaveLength(2);
+  });
   it("survives a failing cycle, records the error and pauses longer with each consecutive failure", async () => {
     const { deps, heartbeats, sleeps } = loop([new Error("Paperclip down"), new Error("Paperclip down"), new Error("Paperclip down"), []]);
     await reconcileLoop(deps, { intervalSeconds: 100, maxCycles: 4 });

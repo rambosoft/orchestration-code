@@ -45,12 +45,18 @@ const viteReactTs: ScaffoldTemplate = {
   visual: { enabled: true, engine: "web", command: { executable: "npm", args: ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5199", "--strictPort"] }, url: "http://127.0.0.1:5199/", readyTimeoutMs: 60_000, viewports: [{ name: "desktop", width: 1280, height: 800 }, { name: "mobile", width: 390, height: 844 }], steps: [{ do: "shot", name: "initial" }], maxImages: 4, required: false },
 };
 
-const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
+export const unityGates = (maturity: string, testDepth: string): QualityCommand[] => {
   const unity = (args: string[], severity?: "warn"): QualityCommand => ({ executable: "unity", args, ...(severity ? { severity } : {}) });
-  const gates: QualityCommand[] = [{ executable: "node", args: ["scripts/check-unity-hygiene.mjs"] }, unity(["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"])];
-  if (testDepth !== "none" && testDepth !== "smoke") gates.push(unity(["test", "--mode", "PlayMode", "--retries", "1", "--output", "Logs/playmode-results.xml"]));
+  // Unity's test import pass creates missing .meta files for newly authored
+  // assets. Run engine checks first so hygiene reports project defects rather
+  // than files that Unity has not imported yet. If Unity itself is unavailable,
+  // fail with that concrete cause instead of a misleading hygiene failure.
+  const gates: QualityCommand[] = [unity(["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"])];
+  // A prototype runs the slow PlayMode suite once per milestone check, not after every task (ADR 0029); other tiers gate every task on it.
+  if (testDepth !== "none" && testDepth !== "smoke") gates.push({ ...unity(["test", "--mode", "PlayMode", "--retries", "1", "--output", "Logs/playmode-results.xml"]), ...(maturity === "prototype" ? { scope: "milestone" as const } : {}) });
   if (maturity === "production") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"]));
   else if (maturity === "mvp") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"], "warn"));
+  gates.push({ executable: "node", args: ["scripts/check-unity-hygiene.mjs"] });
   return gates;
 };
 const unityMobile2d: ScaffoldTemplate = {

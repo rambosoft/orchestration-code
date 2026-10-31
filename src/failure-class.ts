@@ -25,6 +25,7 @@ const TRANSIENT: RegExp[] = [
   /ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|network error|fetch failed/i,
   /\b429\b|rate.?limit|overloaded|\b50[234]\b|temporarily unavailable|service unavailable/i,
   /Activity failed after bounded retries|heartbeat timeout/i,
+  /network pause exceeded|stalled: no output/i,
 ];
 const EXTERNAL: RegExp[] = [/external prerequisite|operator action|approval/i, /needs_info/i, /\b(?:401|403)\b|unauthori[sz]ed|authentication|not logged in/i];
 const BUDGET = /TokenBudgetExceeded|token budget/i;
@@ -39,6 +40,8 @@ const first = (patterns: RegExp[], text: string): string | undefined => patterns
 export function classifyFailure(input: { message?: string; stopReason?: string; findings?: string[] }): FailureClass {
   const text = [input.message ?? "", input.stopReason ?? "", ...(input.findings ?? [])].join("\n");
   if (BUDGET.test(text)) return { kind: "budget", action: "escalate", reason: "a token budget was exceeded; a person decides whether to raise it" };
+  // The run already waited out as much of a usage limit as a stage may; only the operator (a new plan window, another provider) can move it on.
+  if (/quota pause exceeded/i.test(text)) return { kind: "external", action: "escalate", reason: "a provider usage limit outlasted the longest wait a stage may take; resume after the limit resets or route the stage to another provider" };
   const environment = first(ENVIRONMENT, text);
   if (environment) return { kind: "environment", action: "heal-and-resume", reason: "the machine or the project lock is the problem, not the code; the preflight heals it when the run is resumed" };
   const stop = input.stopReason ?? "";

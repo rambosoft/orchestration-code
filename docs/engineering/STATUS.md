@@ -1,5 +1,25 @@
 # STATUS (rewritten each update)
 
+## Current checkout audit and provider update (2026-10-26)
+- Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
+- 2026-10-31 Ninth finding fixed (ADR 0028, B-101): LOC-138 stopped on a device-only criterion (mid-range Android profile) after two reviews; a prototype now finishes with the finding on the PR. To be deployed at the next gap, LOC-138 then resumed.
+- 2026-10-31 Root cause of the repeated manual recoveries fixed (ADR 0027, B-100): recovery ladder. LOC-135 done; LOC-137 running; ladder to be deployed at the next gap.
+- 2026-10-31 Eighth finding fixed (ADR 0026, B-099): a check with nothing to change publishes a report. LOC-135 to be re-run.
+- 2026-10-30 Seventh finding fixed (ADR 0025, B-098): the gate reports the acceptance trace with a failing command. ADR 0024 deployed (adapter and worker). LOC-132 to be recovered.
+- 2026-10-30 Sixth finding fixed (ADR 0024, B-097): run storm from `blocked`; 225 stale worktrees on disk to clean; LOC-132 running.
+- 2026-10-30 Fifth finding fixed (ADR 0023, B-096): auto-approved projects release all milestones. Milestone 1 done (LOC-115..118); milestones 2-5 released by hand, LOC-120 running.
+- 2026-10-30 Third and fourth live findings fixed (ADR 0022, B-095): failed runs are recorded with an unblockDescriptor; the slice gate counts a boot in setup. LOC-117 to be resumed.
+- 2026-10-30 Second live finding fixed: adapter keepalive (ADR 0021, B-094). Paperclip recreated to load it. LOC-116 re-running.
+- 2026-10-31 Speed (ADR 0029, B-104): a prototype task is implement + verify whatever its Lane, the full PlayMode suite and the one review run only in the milestone check, generated files no longer trigger escalation. Needs `npm run build`, worker restart and `docker compose up -d --build orchestrator`; not measured on a live task yet.
+- 2026-10-30 Live run of Cinderfield Minesweeper (LOC-113..): first finding fixed (ADR 0020, B-093). Run in progress.
+- 2026-10-30 Provider fallback chains done (ADR 0019, opt-in `fallback` on a route). Session resume not built. Next: deploy and run Minesweeper (Unity prototype).
+- 2026-10-30 P4 done: milestone check tasks for prototypes and the opt-in worker-side result report (ADR 0018). The report flag is untested against a live Paperclip: enable `ORCHESTRATOR_WORKER_REPORTS=1` for one task first. Reconcile is unchanged (still the backstop). Next: provider fallback chains and session resume (tokens), doctor checks, live Minesweeper run.
+- 2026-10-30 P3 done: `.meta` heal in verify, similar-line folding, stack profiles + packs, `npm run onboard` (ADR 0017). Not run against a real Editor or a real Spring/Angular repo yet. Next: P4 (result outbox, reconcile reduction), milestone review, doctor checks for mvn/gradle.
+- 2026-10-30 P2 done: lanes and tiers (ADR 0015, test/lanes.test.ts). New bootstrap projects get `tier`; existing manifests keep the full pipeline until given one. Needs build, worker restart and bridge rebuild. Next: milestone review task kind for prototypes, P3 gates and stack packs.
+- 2026-10-30 P1 done: durable pause on provider quota and network loss (ADR 0016, test/provider-pause.test.ts); needs build + worker restart to take effect. Next: P2 pipeline lanes/tiers. Not built yet: session resume after a pause, provider fallback chains.
+- 2026-10-30: B-087 (forced Codex) is withdrawn; manifests route again with Claude implementing. See docs/engineering/research/orchestration-v2-redesign.md for the analysis and the v2 plan (P0 stabilization done in this change).
+- LOC-92's failed Codex-linked retry is being reconciled and retried under Codex routing; its prior worktree contains OpenSpec planning artifacts and no product code changes.
+
 - Phase: hardening through the e2e passes and the Paperclip runs (LOC-38, LOC-39). Real project e2e (dino-runner) green; CI green on the branch.
 - Done: B-001..B-014, B-017..B-019, B-028, B-033 (drain-aware deploy), B-038 (visual verification), B-039 (OpenSpec delta correction). B-015 is partly done (SECURITY.md, PR template, Dependabot); LICENSE waits on the owner.
 - In progress: B-027 (restart supervision done; the build stamp, where the worker logs its git SHA and doctor compares it to HEAD, is open).

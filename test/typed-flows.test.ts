@@ -206,7 +206,7 @@ describe("context pack", () => {
 
 type Doc = { dir?: string; docsDir?: string; name?: string; taskId?: string; markdown: string };
 type Defect = { stage: string; apply: (summary: string) => string; mode: "first" | "always" };
-type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect };
+type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
@@ -235,6 +235,7 @@ beforeAll(async () => {
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY_ENV]")) return { stage: "verify", ok: false, summary: "quality check failed: unity test", findings: ["Unity exited 198: No valid Unity Editor license found"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY]")) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["1 test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       const out = { ...(await fake.run(input)), stage: input.stage };
+      if (input.stage === "review" && state.unfixable) { const review = { verdict: "needs_changes" as const, findings: [{ severity: "high" as const, category: state.unfixable as "acceptance" | "environment" | "approval", title: "Device measurement missing", evidence: "An acceptance check that no code change can satisfy", fixableInCode: false }], notes: [] }; return { ...out, ok: false, review, findings: ["Device measurement missing"] }; }
       const nth = state.calls.filter(call => call.stage === input.stage).length;
       return state.defect?.stage === input.stage && (state.defect.mode === "always" || nth === 1) ? { ...out, summary: state.defect.apply(out.summary) } : out;
     },
@@ -245,9 +246,9 @@ beforeAll(async () => {
 afterAll(async () => { worker.shutdown(); await running; await env.teardown(); await rm(tmp, { recursive: true, force: true }); });
 
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
-async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect): Promise<{ result: RunResult; state: RunState }> {
+async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment" | "approval"): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
-  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}) };
+  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
   runs.set(id, state); currentRun = state;
   const full: RunInput = { runId: id, taskId: `T-${sequence}`, projectId: "p", profile: "bugfix", provider: "fake", projectRoot: tmp, artifactsDir: tmp, repository, qualityCommands: [{ executable: "npm", args: ["test"] }], ...input };
   const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "typed", workflowId: id, args: [full] });
@@ -407,17 +408,59 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.metadata?.review.repairCount).toBe(1);
     expect(state.calls.filter(call => call.stage === "implement")[1]!.prompt).toContain("Declared unmet by the implementation: two obstacles on screen at score 3000");
   });
-  it("publishes the draft with the unmet item as a PR comment when it is still declared after the last review round, instead of failing", async () => {
+  it("accepts the item as a documented deferral when the implementer declares it again after rework and the review then passes, so the task finishes and its dependents can start", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time" }, [], { stage: "implement", apply: declare, mode: "always" });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.metadata?.review.repairCount).toBe(1);
+    expect(result.metadata?.warnings?.some(warning => warning.message.includes("accepted as a documented deferral after review") && warning.message.includes("two obstacles on screen at score 3000"))).toBe(true);
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments).toEqual([]);
+  });
+  it("publishes the draft with the unmet item as a PR comment when the review still blocks after the last round, instead of failing", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", repeatReviewFailure: true }, [], { stage: "implement", apply: declare, mode: "always" });
     expect(result.status).toBe("needs_review");
-    expect(result.message).toContain("1 unresolved review finding");
+    expect(result.message).toContain("unresolved review finding");
     expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
-    expect(result.metadata?.review.unresolvedFindings[0]?.title).toContain("two obstacles on screen at score 3000");
+    expect(result.metadata?.review.unresolvedFindings.some(item => item.title.includes("two obstacles on screen at score 3000"))).toBe(true);
     expect(result.publish?.prUrl).toContain("/pull/1");
     expect(state.comments).toHaveLength(1);
     expect(state.comments[0]!.prUrl).toBe(result.publish!.prUrl);
     expect(state.comments[0]!.body).toContain("Open review findings");
     expect(state.comments[0]!.body).toContain("two obstacles on screen at score 3000");
+  });
+  it("finishes a prototype task whose review still blocks after the last round: the findings stay on the pull request and the chain goes on (ADR 0027)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", repeatReviewFailure: true, tier: "prototype", lane: "heavy" }, [], { stage: "implement", apply: declare, mode: "always" });
+    expect(result.status, result.message).toBe("completed");
+    expect(result.message).toContain("accepted for a prototype project");
+    expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments).toHaveLength(1);
+    expect(state.comments[0]!.body).toContain("Open review findings");
+  });
+  it("finishes a prototype task whose last review finding no code change can satisfy (a device measurement): it rides on the pull request (ADR 0028)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "prototype", lane: "heavy" }, [], undefined, "acceptance");
+    expect(result.status, result.message).toBe("completed");
+    expect(result.message).toContain("accepted for a prototype project");
+    expect(result.metadata?.review.repairCount).toBe(0);
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments[0]!.body).toContain("Device measurement missing");
+  });
+  it("also finishes a prototype when the implementer keeps declaring an item and the review rounds run out beside such a finding (LOC-138 resume)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", tier: "prototype", lane: "heavy" }, [], { stage: "implement", apply: declare, mode: "always" }, "environment");
+    expect(result.status, result.message).toBe("completed");
+    expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
+    expect(state.comments[0]!.body).toContain("Device measurement missing");
+    expect(state.comments[0]!.body).toContain("two obstacles on screen at score 3000");
+  });
+  it("still stops an MVP task on a finding no code change can satisfy, and a prototype on an approval", async () => {
+    const mvp = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "mvp", lane: "heavy" }, [], undefined, "acceptance");
+    expect(mvp.result.status).toBe("failed");
+    expect(mvp.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
+    const approval = await run({ profile: "implementation", prompt: "Needs a sign-off", tier: "prototype", lane: "heavy" }, [], undefined, "approval");
+    expect(approval.result.status).toBe("failed");
+    expect(approval.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
+    const device = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "prototype", lane: "heavy" }, [], undefined, "environment");
+    expect(device.result.status, device.result.message).toBe("completed");
   });
   it("still fails, with no PR, when the deterministic checks fail after the repair", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]", injectReviewFailure: true });

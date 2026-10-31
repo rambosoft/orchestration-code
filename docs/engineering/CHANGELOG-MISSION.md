@@ -1,5 +1,68 @@
 # Mission changelog
 
+## 2026-10-31 Unity scratch scene no longer published (B-103)
+- LOC-141's pull request (#27) carried `Assets/InitTestScene<guid>.unity`, a scene the Unity test runner writes for a run and leaves behind when the run is cut short; the project's main already holds three. It is now in the Unity generated-output list, so `excludeGeneratedPaths` drops a newly added one before the commit. Regression test in `test/publish-guard.test.ts` (fails without the pattern). Existing copies on the project's main are untouched.
+
+## 2026-10-31 worker watchdog (B-102)
+- At 03:32 the whole worker supervisor disappeared without an exit line and nothing restarted it for 20 minutes (Temporal: "No workers polling"; the stranded activity retried by itself once a worker came back). The installer now adds a 5-minute repeating trigger to the worker task; with `MultipleInstances IgnoreNew` it does nothing while the supervisor runs and starts it when it is gone. Cause of the disappearance not found. Re-run `npm run worker:install` on any other machine.
+
+## 2026-10-31 device-only acceptance no longer stops a prototype (ADR 0028, ninth live finding)
+- Minesweeper LOC-138: after two reviews Claude's implementation was correct for everything code could fix; the last high finding (no mid-range Android device profile) is `fixableInCode: false`, an external blocker, so the run failed and the task rested in review. For prototype and throwaway tiers such a finding (not environment or approval) now rides on the draft PR as the open-findings comment and the task completes with a warning. `patched("accept-unfixable-prototype")`, replay fixture unchanged. Tests in `test/typed-flows.test.ts`.
+- Correction: the reviewer filed the same device gap under `environment` on the next review, so only `approval` findings still stop a prototype.
+
+## 2026-10-31 unattended recovery ladder (ADR 0027)
+- Root cause behind four manual recoveries (LOC-116, 117, 132, 135): only transient and machine failures healed themselves; every other ending waited for a person and stopped the chain. Now a gate or model failure is auto-resumed once, a failure that ended before the current worker started is resumed once more (a deploy may have fixed it, no age window), and a prototype or throwaway task whose review still blocks after the bounded rounds finishes with the findings on the pull request (`patched("accept-open-findings-prototype")`). Budgets, external prerequisites and unknown failures still wait for a person. Tests in `test/reconcile.test.ts` and `test/typed-flows.test.ts`.
+
+## 2026-10-31 a check with nothing to change publishes a report (ADR 0026, eighth live finding)
+- Minesweeper LOC-135: the second run of the UX shell check verified everything, correctly changed nothing, and failed at the publish gate ("no changes were committed"), which stopped the project. A check recognised by its title now writes `docs/checks/<task>.md` when it changed no file, so it publishes and finishes. Ordinary tasks still fail on no changes. Tests in `test/lanes.test.ts`. The first run's review finding (board clipped on Advanced) was by design: the board pans, since 30 columns cannot fit a portrait phone at 48-unit cells.
+
+## 2026-10-30 gate reports all static problems (ADR 0025, seventh live finding)
+- Minesweeper LOC-132 failed because a flaky timing test used the one repair pass and the acceptance trace (two criteria without tests, a static file read) only ran afterwards. The trace is now computed before the commands and travels with a failing command, so one repair sees both. Test in `test/gate-trace.test.ts`.
+
+## 2026-10-30 run storm stopped (ADR 0024, sixth live finding, caused by ADR 0022)
+- Minesweeper LOC-132: the `blocked` status of ADR 0022 made Paperclip wake the failed task again at once (`issue_blockers_resolved`): 225 workflows in three hours, 225 Unity worktrees, a full disk. A failed or needs-info task now rests in `in_review`; the adapter refuses to start a seventh run within 30 minutes; the CLI failure text keeps the real error (ENOSPC was hidden behind a stdin warning). `statusPatch` removed. Tests in `test/adapter-resilience.test.ts`, `test/reconcile.test.ts`, `test/result-report.test.ts`, `test/provider-pause.test.ts`.
+
+## 2026-10-30 auto-approved projects release all milestones (ADR 0023, fifth live finding)
+- Minesweeper stopped after milestone 1 with 17 tasks in the backlog: `autostart` defaulted to `first_milestone` and nobody was there to release the next. `resolveOptions` now derives `autostart: all` for `approval: auto` (explicit choice kept, no repository keeps none). Test in `test/bootstrap.test.ts`. Applies to new bootstraps (bridge rebuild); the running project was released by hand.
+
+## 2026-10-30 failure recording and slice gate (ADR 0022, third and fourth live findings)
+- Minesweeper LOC-117: (1) Paperclip refuses `blocked` without an `unblockDescriptor` (HTTP 422); the adapter never sent one, so every failed run was unrecorded. `statusPatch` (reconcile, worker report) and the adapter now send owner `board` plus an action. (2) The reachability gate read only the lines after the `Covers:` comment and rejected a correct menu test whose fixture booted the scene in `[UnitySetUp]`; it now counts a boot in a setup method or a called helper of the same file. Tests in `test/reconcile.test.ts`, `test/adapter-resilience.test.ts`, `test/acceptance.test.ts`.
+
+## 2026-10-30 adapter keepalive (ADR 0021, second live finding)
+- Minesweeper LOC-116 sat idle for an hour: during a silent Unity dependency step the adapter wrote no output, Paperclip let the run lease lapse (it renews only on output, about a minute), cancelled the run and put the issue on an execution-reconciliation hold that refuses every wake. The adapter now logs a line every 20 s (`keepaliveMs`). Test in `test/adapter-resilience.test.ts`. The hold was resolved with a true attestation (workflow completed, PR 2 open).
+
+## 2026-10-30 reviewed deferral accepted (ADR 0020, first live run)
+- Minesweeper LOC-116 ended `needs_review` because an acceptance item the implementer deferred (allowed by the contract) stayed blocking although the reviewer passed twice; every dependent task waited. A re-declared item after one rework plus a passing review is now an accepted, recorded deferral (`patched("accept-reviewed-deferral")`); a still-blocking review keeps `needs_review`. Tests in `test/typed-flows.test.ts`.
+
+## 2026-10-30 provider fallback chains (ADR 0019)
+- A route in `providerRouting` may list `fallback` routes (max 3). A quota pause moves the stage to the next route at once, with a warning; a lost connection never falls back; later stages of the run skip a provider that hit its limit. Opt-in, nothing configured by default; `patched("provider-fallback")`. Tests in `test/provider-pause.test.ts`. Not built: CLI session resume.
+
+## 2026-10-30 milestone checks and worker reports (P4, ADR 0018)
+
+- A prototype project ends each milestone with one check task (heavy lane: Codex plan, Claude fix, Codex review) instead of reviewing every task. A run can report its own result to the Paperclip issue (`ORCHESTRATOR_WORKER_REPORTS=1`, off by default): idempotent `reportResult` step, `reportedToPaperclip` on the result, the adapter skips its own post. Failed runs are never commented on. No replay change. Tests: test/result-report.test.ts, test/lanes.test.ts.
+
+## 2026-10-30 gates and stack packs (P3, ADR 0017)
+
+- Missing Unity `.meta` files are generated by one Editor import inside the verify activity and the check repeats, before any model sees the failure. Gate output folds consecutive lines that differ only by an item id. Stack profiles `react-ts`, `angular`, `spring-boot` (system `mvn`/`gradle` allowed for it only) and stack packs (`src/stack-packs.ts`) derive gates from an existing repository; `npm run onboard -- <folder> --name N --tier T [--write]` writes its manifest. Tests: test/stack-packs.test.ts, log-compact. Needs build + restart; bridge rebuild for the new executables.
+
+## 2026-10-30 lanes and tiers (P2, ADR 0015)
+
+- A project manifest can carry a `tier` (the bootstrap maturity) and a task a lane (blueprint `size`, or a `Lane:` line). The pair picks the stages from one table (prototype task = implement + verify; production = full pipeline), OpenSpec and analysis only for heavy production tasks, a deterministic brief when plan/brief are skipped, direct verify with one gate repair, and an automatic review for risky results (`assessChanges`). Run input data, so no `patched()` and an unchanged replay fixture. Manifests without a tier keep the full pipeline. Tests: test/lanes.test.ts.
+
+## 2026-10-30 resilience layer (P1, ADR 0016)
+
+- A provider usage limit or a lost connection now pauses the stage on a durable timer and runs it again without using retry attempts (cap 24 hours per stage); Codex error events and Claude `is_error` results are read as errors; a silent Codex run is killed after 15 minutes (45 for build stages) and retried. Behind `patched("provider-pause")`, no replay fixture change. `progress` query shows `paused`. Tests: test/provider-pause.test.ts.
+
+## 2026-10-30 stabilization (P0, B-087 withdrawn)
+
+- The bridge-wide Codex override (`ORCHESTRATOR_FORCE_CODEX`) was removed: Codex cannot run the Unity CLI in its sandbox, so Unity implement rounds changed no files (Cinderfield, task 00e09cd3). Manifests route again (Claude implements). The Unity serial verify then review order and the review-blocker order are now behind `patched()`; tests write to a temporary data directory; the reconcile service logs a waiting finding once per 20 cycles. Plan: docs/engineering/research/orchestration-v2-redesign.md.
+
+## 2026-10-26 provider routing update (B-087, withdrawn)
+- Implement stage defaults now use Codex across existing project manifests and newly bootstrapped projects.
+- Provider-backed orchestration stages now default to Codex globally, including review, after LOC-92's OpenRouter review returned no text. Set `ORCHESTRATOR_FORCE_CODEX=0` to restore per-manifest routing; deterministic quality gates remain local.
+- OpenRouter timeout now respects each stage's configured timeout, with a five-minute default for free endpoint latency variance.
+- This changes the previously live-tested Codex review / Claude implementation split. No tests, typecheck, build, or live provider run were performed in this update; representative project runs remain necessary to establish review quality and operational fit.
+
 One line per completed item: id, commit, evidence.
 
 - baseline 99c5f00 (main): existing code committed; 70 tests / typecheck green (knowledge/metrics/baseline.json).
@@ -74,3 +137,9 @@ One line per completed item: id, commit, evidence.
 - Answer shape (B-085): `src/answer-shape.ts` is added before the output format of the nine structured stage prompts. Token budgets are unchanged, so the big phases stay complete.
 - Per-run Claude settings (B-086): the Claude CLI is started with `--settings` carrying (1) `enabledPlugins` false for the operator's own plugins (read from the user settings; plugins the project enables stay on; `--plugin-dir` unaffected) and (2) on stages that run commands, a PreToolUse hook (`src/rtk-claude-hook.ts`) that lets RTK shorten git, Maven, Gradle, pytest, Go, Cargo, dotnet, Vitest/Jest, tsc, npm/pnpm and lint output and never rewrites reads, searches or listings. Measured with the real CLI: a bare session started at 51 133 tokens of context, 36 095 with the plugins off, 31 541 with only project and local settings; the hook rewrote `git status` to `rtk git status` (RTK's own command counter +1, none without the hook). Opt-outs: `ORCHESTRATOR_RTK_HOOK=0`, `ORCHESTRATOR_CLAUDE_USER_PLUGINS=1`; opt-in: `ORCHESTRATOR_CLAUDE_SETTING_SOURCES=project,local`.
 - Not verified live: a full Unity or Spring Boot task through these changes; how much of the first game's cache-read cost the plugin baseline accounts for (the bare-session numbers are measured, the share of a long session is not).
+
+## 2026-10-31 Prototype reviews and slow tests once per milestone [B-104]
+- Measured on the Cinderfield log: implement is 543 of 566 stage-minutes; the per-task review rejected 22 of 43 times and each rejection cost another implement round; the full PlayMode suite ran in the gate and again in the agent's own end-of-task run.
+- `effectiveLane` (src/lanes.ts, called by src/server.ts): on a prototype every non-check task is at most standard, the check is always heavy. `QualityCommand.scope: "milestone"` + `gateCommandsFor`: the PlayMode suite gates only the milestone check (Unity template sets it for prototypes). Prototype task text no longer asks for the full PlayMode run. `assessChanges.countedFiles` keeps .meta and media files out of the 15-file escalation limit; `files` is unchanged.
+- Replay safety: decided in the bridge and in activity output, no workflow command change, no `patched()`, fixture unchanged. Tests: test/lanes.test.ts, test/acceptance.test.ts.
+- Not verified live: needs build, worker restart and a bridge rebuild; the time saved is estimated from the log, not measured after the change.

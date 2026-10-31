@@ -54,6 +54,8 @@ describe("game task descriptions", () => {
   it("adds a standing capture criterion to a task that builds a screen, and not to one that does not", () => {
     expect(acceptanceIds(gameAcceptance(task, 8))).toEqual(["T8-AC1", "T8-AC2", "T8-AC3", "T8-AC4"]);
     expect(gameAcceptance(task, 8)).toContain("PlayMode capture test");
+    expect(gameAcceptance(task, 8)).toContain("run the full PlayMode suite and the hygiene check once at the end");
+    expect(gameAcceptance(task, 8, true)).toContain("the full PlayMode suite runs at the milestone check, not per task");
     expect(sliceIds(gameAcceptance(task, 8))).toEqual(["T8-AC4"]);
     expect(gameAcceptance(task, 8)).toContain(`T8-AC4: ${SLICE_PREFIX}`);
     expect(sliceIds(gameAcceptance({ title: "Implement merge rules", description: "Pure C# rules.", acceptance: ["x"] }, 5))).toEqual([]);
@@ -126,6 +128,15 @@ describe("reachability from the real game (slice gate)", () => {
     expect(sliceProblem(taskPrompt, [play(slice("    yield return SliceHarness.Boot();"))])).toContain("asserts nothing");
     expect(sliceProblem(taskPrompt, [play(slice("    yield return SliceHarness.Boot();\n    Assert.Pass();"), "Assets/Tests/EditMode/SettingsTests.cs")])).toContain("outside Assets/Tests/PlayMode");
     expect(sliceProblem(taskPrompt, [play("// nothing here")])).toContain('add a PlayMode test that says "Covers: T4-AC2"');
+  });
+  it("counts a boot done by the fixture's setup method or by a helper of the same file that the test calls (found in the first live run of a screen task)", () => {
+    const setup = `[UnitySetUp]\npublic IEnumerator Boot()\n{\n    yield return SliceHarness.Boot();\n    menu = SliceHarness.Find<MenuScreen>();\n}\n// Covers: T4-AC2\n[UnityTest]\npublic IEnumerator ButtonsFit()\n{\n    yield return Show(size);\n    Assert.Greater(menu.Root.layout.size.x, 0f);\n}\n`;
+    expect(sliceProblem(taskPrompt, [play(setup)])).toBeUndefined();
+    const helper = `IEnumerator OpenGame()\n{\n    yield return SliceHarness.Boot();\n}\n// Covers: T4-AC2\n[UnityTest]\npublic IEnumerator ReachesSettings()\n{\n    yield return OpenGame();\n    Assert.IsTrue(true);\n}\n`;
+    expect(sliceProblem(taskPrompt, [play(helper)])).toBeUndefined();
+    // the same setup does not excuse a test that asserts nothing, and a helper the test never calls does not count
+    expect(sliceProblem(taskPrompt, [play(setup.replace("Assert.Greater(menu.Root.layout.size.x, 0f);", ""))])).toContain("asserts nothing");
+    expect(sliceProblem(taskPrompt, [play(helper.replace("yield return OpenGame();", "var view = new SettingsView();"))])).toContain("does not boot");
   });
   it("looks only at the test the Covers comment names: a boot in another test does not count", () => {
     const text = `// Covers: T4-AC1\n[Test] public void Volume() { Assert.Pass(); }\n// Covers: T4-AC2\n[Test] public void Direct() { new SettingsView(); Assert.Pass(); }\n// Covers: T9-AC1\n[UnityTest] public IEnumerator Other() { yield return SliceHarness.Boot(); Assert.Pass(); }`;

@@ -1,9 +1,11 @@
-import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched } from "@temporalio/workflow";
+import { proxyActivities, defineSignal, defineQuery, setHandler, condition, isCancellation, patched, sleep, workflowInfo } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
+import { MAX_PAUSE_TOTAL_MS, pauseFrom, pauseWaitMs, type PauseKind } from "./pause-policy.js";
 import { classifyFailure } from "./failure-class.js";
 import { digestContract } from "./contract-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
-import { profiles } from "./profiles.js";
+import { profiles, type WorkflowProfile } from "./profiles.js";
+import { LANE_PROFILES, MILESTONE_CHECK_PREFIX, escalationReasons, lanePlan } from "./lanes.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
@@ -21,13 +23,17 @@ import { deterministicScope, explorePrompt, formatReportMarkdown, rawReport, rep
 import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest, assessChanges } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 // Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
 const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
+// Reporting the finished run to Paperclip (ADR 0018): idempotent, so it may retry for a long time without posting twice.
+const { reportResult } = proxyActivities<typeof activities>({ startToCloseTimeout: "2 minutes", retry: { initialInterval: "5 seconds", maximumInterval: "1 minute", maximumAttempts: 8 } });
+// The connection check while a network pause waits: one quick attempt, no retries (the workflow loop is the retry).
+const { probeConnectivity } = proxyActivities<typeof activities>({ startToCloseTimeout: "30 seconds", retry: { maximumAttempts: 1 } });
 const { timeoutProbe } = proxyActivities<typeof activities>({ startToCloseTimeout: "1 second", retry: { initialInterval: "100 milliseconds", maximumInterval: "100 milliseconds", maximumAttempts: 2 } });
 export const approveSignal = defineSignal<[boolean]>("approval");
-export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[] }>("progress");
+export const progressQuery = defineQuery<{ currentStage: string | null; completedStages: string[]; /** Set while a stage waits for a usage limit to reset or the connection to return. */ paused?: { kind: PauseKind; stage: string; waitMs: number; count: number; reason: string } }>("progress");
 export const bootstrapStateQuery = defineQuery<BootstrapState>("bootstrap");
 
 export function stageRoute(input: RunInput, stage: StageName) {
@@ -119,9 +125,19 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
     : priorReview?.findings.length ? priorReview.findings.map(finding => `- ${finding}`).join("\n")
     : "No prior actionable review findings.";
   const verification = [...stageResults].reverse().find(result => result.stage === "verify");
-  const verificationSummary = verification ? `\nDeterministic check result before this review: ${verification.ok ? "PASS" : "FAIL"}. ${verification.summary}\n` : "";
+  const verificationChecks = Array.isArray(verification?.metadata?.checks)
+    ? (verification.metadata.checks as Array<{ executable?: unknown; args?: unknown; exitCode?: unknown; output?: unknown; stderr?: unknown }>)
+      .map((check, index) => {
+        const command = [String(check.executable ?? ""), ...(Array.isArray(check.args) ? check.args.map(String) : [])].filter(Boolean).join(" ");
+        const evidence = [check.output, check.stderr].filter(value => typeof value === "string" && value.length).map(value => String(value).slice(-1200)).join("\n");
+        return `${index + 1}. ${command || "deterministic check"} (exit ${String(check.exitCode ?? "unknown")})${evidence ? `\n${evidence}` : ""}`;
+      }).join("\n")
+    : "";
+  const verificationSummary = verification
+    ? `\nDeterministic check result before this review: ${verification.ok ? "PASS" : "FAIL"}. ${verification.summary}${verificationChecks ? `\nCheck evidence:\n${verificationChecks.slice(0, 9000)}` : ""}\n`
+    : "";
   const reviewMode = reviewNumber <= 1
-    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report EVERY blocking problem you can substantiate in this single pass, not only the most salient one: a follow-up round only re-checks your list, so a problem left out now can no longer block. Report substantiated findings only.\n\n${reviewChecklist}`
+    ? `FIRST REVIEW — check this checklist against the full diff and relevant tests. Also check correctness, regressions, security, accessibility/responsive behavior, and test coverage. Report EVERY blocking problem you can substantiate in this single pass, not only the most salient one: a follow-up round only re-checks your list, so a problem left out now can no longer block. Report substantiated findings only.${verificationSummary}\n${reviewChecklist}`
     : `FOLLOW-UP REVIEW ${reviewNumber} — verify only prior blockers, the acceptance checks, and regressions introduced by repair. Do not restart broad review or repeat fixed findings. A new blocking finding is allowed only for a defect the repair introduced, shown by a concrete scenario; asking for code or tests to be stricter, more thorough or differently structured is not a defect. If all fixes are correct, return pass.\n\nPrior blocking findings:\n${previousFindings}${verificationSummary}\n${reviewChecklist}`;
   const checkStatus = verificationPending ? "Deterministic checks are running concurrently with this review. Do not infer their result, treat their pending status as a defect, or claim that they passed or failed." : "Deterministic checks are authoritative; report their supplied result without overriding it.";
   const uiChecks = uiUxContext ? "\nUI checks: responsive reflow, keyboard access, semantics, contrast, reduced motion, and relevant loading/empty/error states." : "";
@@ -133,7 +149,23 @@ Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"
   return prompt;
 }
 
+/**
+ * The workflow entry. A run started with `reportToPaperclip` reports its own result to the Paperclip issue as its last step, so the task is updated even when the adapter has lost its lease
+ * (ADR 0018). Without the flag (every run recorded before this existed) it is exactly the pipeline below.
+ */
 export async function projectWorkflow(input: RunInput): Promise<RunResult> {
+  const result = await runProject(input);
+  if (!input.reportToPaperclip) return result;
+  try {
+    const outcome = await reportResult({ workflowId: workflowInfo().workflowId, issueId: input.taskId, result });
+    return outcome.reported ? { ...result, reportedToPaperclip: true } : result;
+  } catch (error) {
+    if (isCancellation(error)) throw error;
+    return result; // the adapter or the reconcile step reports it instead
+  }
+}
+
+async function runProject(input: RunInput): Promise<RunResult> {
   const taskType = input.taskType ? taskTypes[input.taskType] : undefined;
   const investigating = taskType?.flow === "investigation";
   const profile = profiles[taskType?.profile ?? input.profile];
@@ -146,7 +178,8 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   }
   const stages: StageOutput[] = []; const artifactRefs: string[] = []; let approved = !input.approval; let rejected = false;
   let currentStage: string | null = null; const completedStages: string[] = [];
-  setHandler(progressQuery, () => ({ currentStage, completedStages: [...completedStages] }));
+  let pausedState: { kind: PauseKind; stage: string; waitMs: number; count: number; reason: string } | undefined;
+  setHandler(progressQuery, () => ({ currentStage, completedStages: [...completedStages], ...(pausedState ? { paused: pausedState } : {}) }));
   let workspace = input.projectRoot;
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
   if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
@@ -195,13 +228,47 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
   let openSpecChangeId: string | undefined;
   let deterministicVerification: StageOutput | undefined;
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
+  const limitedProviders = new Set<string>();
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
     if (input.budget) args.budget = input.budget;
-    const output = await executeStage(args);
+    // A usage limit or a lost connection waits on a timer and runs the same stage again without spending its retry attempts (ADR 0016); a pause that outlasts MAX_PAUSE_TOTAL_MS surfaces as a failure.
+    // patched(): runs recorded before this change saw such a failure as an ordinary activity error.
+    let output: StageOutput;
+    // A usage limit on a route with fallbacks moves the stage to the next route instead of waiting (ADR 0019); a caller that chose its own provider keeps it.
+    const fallbacks = options.provider ? [] : [...(route.fallback ?? [])];
+    // A provider that already hit its limit in this run is not tried again first by the next stage.
+    while (fallbacks.length > 0 && limitedProviders.has(args.provider)) { const skip = fallbacks.shift()!; Object.assign(args, { provider: skip.provider, model: skip.model, reasoningEffort: skip.reasoningEffort }); }
+    for (let pauses = 0, waitedMs = 0; ; pauses++) {
+      try { output = await executeStage(args); break; }
+      catch (error) {
+        const pause = isCancellation(error) ? undefined : pauseFrom(error);
+        if (!pause || !patched("provider-pause")) throw error;
+        const next = pause.kind === "quota" && fallbacks.length > 0 && patched("provider-fallback") ? fallbacks.shift() : undefined;
+        if (next) {
+          warnings.push({ stage, message: `${args.provider} hit a usage limit (${pause.reason.slice(0, 160)}); this stage continues on ${next.provider}${next.model ? `:${next.model}` : ""}` });
+          limitedProviders.add(args.provider);
+          Object.assign(args, { provider: next.provider, model: next.model, reasoningEffort: next.reasoningEffort });
+          pauses--; continue;
+        }
+        let wait = pauseWaitMs(pause.kind, pause.waitMs, pauses);
+        if (waitedMs + wait > MAX_PAUSE_TOTAL_MS) throw new Error(`provider ${pause.kind} pause exceeded ${Math.round(MAX_PAUSE_TOTAL_MS / 3_600_000)} hours in stage ${stage}: ${pause.reason}`);
+        pausedState = { kind: pause.kind, stage, waitMs: wait, count: pauses + 1, reason: pause.reason };
+        try {
+          await sleep(wait); waitedMs += wait;
+          // After a lost connection, wait until the network answers before spending a model call again.
+          while (pause.kind === "network" && !(await probeConnectivity().then(result => result.online, () => false))) {
+            wait = pauseWaitMs("network", undefined, ++pauses);
+            if (waitedMs + wait > MAX_PAUSE_TOTAL_MS) throw new Error(`provider network pause exceeded ${Math.round(MAX_PAUSE_TOTAL_MS / 3_600_000)} hours in stage ${stage}: ${pause.reason}`);
+            pausedState = { kind: "network", stage, waitMs: wait, count: pauses + 1, reason: pause.reason };
+            await sleep(wait); waitedMs += wait;
+          }
+        } finally { pausedState = undefined; }
+      }
+    }
     // Warnings reported by an activity (non-blocking quality commands, screenshot capture problems) reach the final message once.
     const reported = output.metadata?.warnings;
     if (Array.isArray(reported)) for (const message of reported) if (typeof message === "string" && !warnings.some(item => item.stage === stage && item.message === message)) warnings.push({ stage, message });
@@ -495,8 +562,16 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
     }
     return { ...finish("completed", withWarnings("report produced")), report };
   }
-  for (const stage of profile.stages) {
+  // ADR 0015: with a tier and a lane the stage list comes from the lane table (a prototype task is implement + verify); runs recorded without them keep the profile's own list.
+  const lane = input.tier && input.lane && LANE_PROFILES.includes(profile.id) && profile.stages.includes("implement") ? lanePlan(input.tier, input.lane) : undefined;
+  const stageList: WorkflowProfile["stages"] = lane ? [...lane.stages] : [...profile.stages];
+  for (const stage of stageList) {
     currentStage = stage;
+    // Without a plan and brief stage the brief comes from the task text: no model call, the acceptance criteria are already in it.
+    if (lane && stage === "implement" && !executionBrief) {
+      plan ??= { ...deterministicPlan({ taskPrompt: workflowPrompt }), hard_constraints: [...new Set([...extractHardConstraints(openSpecContext), ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])] };
+      executionBrief = deterministicBrief(plan, openSpecContext);
+    }
     if (stage === "implement" && input.approval) {
       // patched(): runs already waiting without a timer must replay the original unbounded wait.
       if (patched("approval-timeout")) { if (!(await condition(() => approved || rejected, input.approvalTimeoutMs ?? 86_400_000))) { stopReason = "approval_timeout"; return finish("failed", "human approval timed out; no changes were published"); } }
@@ -551,20 +626,37 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         });
         executionBrief = briefed.value;
         output = briefed.output;
-      } else if (stage === "review" && profile.stages.includes("verify")) {
+      } else if (stage === "review" && stageList.includes("verify")) {
         const round = ++reviewCount;
-        const [review, verification] = await Promise.all([
-          execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
-          execute("verify", { provider: "fake", verificationOnly: true }),
-        ]);
-        output = review;
-        deterministicVerification = verification;
+        // Verification can launch Unity and review can capture Unity visuals: for a Unity project they run one after the other so two Editor processes never contend for one project
+        // and review sees the finished checks. Every other stack keeps them concurrent. patched(): runs recorded before this replayed the concurrent pair for every stack.
+        if (input.visual?.engine === "unity" && patched("serial-verify-review-unity")) {
+          try { deterministicVerification = await execute("verify", { provider: "fake", verificationOnly: true }); }
+          catch (error) {
+            if (isCancellation(error)) throw error;
+            stopReason = "verify_activity_failed";
+            return finish("failed", `verify Activity failed before review: ${failureDetails(error)}`);
+          }
+          output = await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) });
+        } else {
+          const [review, verification] = await Promise.all([
+            execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
+            execute("verify", { provider: "fake", verificationOnly: true }),
+          ]);
+          output = review;
+          deterministicVerification = verification;
+        }
       } else if (stage === "verify" && deterministicVerification) {
         // The deterministic quality commands are the verification. A second model call here could only ever pass, so it is skipped
         // (patched(): runs already past this point replay the original call).
         if (!deterministicVerification.ok) deterministicVerification = await repairGate(deterministicVerification);
         if (!deterministicVerification.ok || patched("skip-model-verify")) output = deterministicVerification;
         else output = await execute("verify", { deterministicChecksAlreadyPassed: true, qualityCommands: [] });
+      } else if (stage === "verify" && lane) {
+        // A lane without a paired review: the deterministic checks run directly, with the same one bounded repair pass.
+        let verification = await execute("verify", { provider: "fake", verificationOnly: true });
+        if (!verification.ok) verification = await repairGate(verification);
+        deterministicVerification = verification; output = verification;
       } else {
         output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })
           : await execute(stage);
@@ -589,14 +681,32 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       for (;;) {
         if (output.metadata?.reviewUnparseable) { stopReason = "review_unparseable"; unresolvedFindings.push({ severity: "high", category: "other", title: "Review output unreadable", evidence: output.summary.slice(0, 400), fixableInCode: false }); return finish("failed", "review output could not be read as an assessment, even after a request to restate it; the gate fails closed"); }
         const external = externalBlockers(output);
-        if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
+        // patched(): runs recorded before the change below stopped here, before any code-fixable blocker was repaired.
+        if (external.length && !patched("external-blocker-after-repair")) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action"); }
         const latestImplementation = [...stages].reverse().find(result => result.stage === "implement");
-        const blocking = [...blockingFindings(output), ...(latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [])];
-        if (!blocking.length) break;
+        const declared = latestImplementation ? declaredUnmetAcceptance(latestImplementation.summary) : [];
+        // An implementer sent back once that declares the same items again, and a reviewer that then passes the change with that declaration in front of it, have settled the question:
+        // a documented deferral (the contract allows one for work that belongs to a later task). It is recorded, not blocking, so the task finishes and its dependents can start (ADR 0020).
+        // patched(): runs recorded before this change kept such a task in review.
+        const deferred = declared.length > 0 && repairCount >= 1 && !blockingFindings(output).length && !external.length && patched("accept-reviewed-deferral");
+        if (deferred) warnings.push({ stage: "review", message: `accepted as a documented deferral after review (${declared.length}): ${declared.map(item => item.title.replace(/^Declared unmet by the implementation: /, "").slice(0, 120)).join("; ")}` });
+        const blocking = [...blockingFindings(output), ...(deferred ? [] : declared)];
+        // An external prerequisite must stop publication, but it must not mask
+        // independent, code-fixable blockers in the same review. Repair those
+        // within the existing round budget, then stop if the prerequisite stays.
+        // A check only a device, a person or a later task can satisfy (not an approval) cannot be fixed by another round. For a prototype or throwaway
+        // project it rides on the draft pull request like any open finding and the milestone check verifies it (ADR 0028). patched(): earlier runs failed here.
+        const unfixableAcceptance = external.length > 0 && external.every(finding => finding.category !== "approval") && (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-unfixable-prototype");
+        if (!blocking.length) {
+          if (unfixableAcceptance) { openFindings = external; stopReason = "review_findings_unresolved"; break; }
+          if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action after code-fixable findings were addressed"); }
+          break;
+        }
         if (reviewCount >= maxRounds) {
-          unresolvedFindings.push(...blocking);
+          unresolvedFindings.push(...blocking, ...external);
+          if (external.length && !unfixableAcceptance) { stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite remains after the bounded code-repair rounds"); }
           // The deterministic gates are not affected by review findings: publish the draft with the open findings as a PR comment and let a human accept or send it back.
-          if (patched("publish-with-open-findings")) { openFindings = blocking; stopReason = "review_findings_unresolved"; break; }
+          if (patched("publish-with-open-findings")) { openFindings = [...blocking, ...(unfixableAcceptance ? external : [])]; stopReason = "review_findings_unresolved"; break; }
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
         try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
@@ -620,6 +730,12 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       }
     }
     if (!output.ok && !(stage === "review" && openFindings.length)) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
+    // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons).
+    if (lane?.escalation && stage === "implement" && !stageList.includes("review")) {
+      const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
+      const reasons = changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0) : [];
+      if (reasons.length) { stageList.splice(stageList.indexOf("verify"), 0, "review"); warnings.push({ stage: "review", message: `review added to this ${input.lane} task: ${reasons.join("; ")}` }); }
+    }
     completedStages.push(stage);
   }
   currentStage = null;
@@ -669,6 +785,23 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
       return finish("failed", `diagnosis document could not be written: ${failureDetails(error)}`);
     }
   }
+  // A milestone check that verified everything and changed nothing is a result: its report is committed so the task publishes, finishes and gives the next milestone a branch to build on (ADR 0026).
+  // patched(): runs recorded before this change ended in a failed publish.
+  if (workspace !== input.projectRoot && input.repository?.taskTitle?.startsWith(MILESTONE_CHECK_PREFIX) && patched("milestone-check-report")) {
+    const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
+    if (changes && changes.files.length === 0) {
+      const latest = [...stages].reverse().find(stage => stage.stage === "implement");
+      try { artifactRefs.push(await writeAnalysisDocument({ worktree: workspace, docsDir: "docs/checks", taskId: input.taskId, markdown: `# ${input.repository.taskTitle}
+
+Task: ${input.taskId}
+
+Result: every exit criterion held and nothing needed to change.
+
+${(latest?.summary ?? "").slice(0, 6000)}
+` })); }
+      catch (error) { if (isCancellation(error)) throw error; stopReason = "check_report_failed"; return finish("failed", `the check report could not be written: ${failureDetails(error)}`); }
+    }
+  }
   if (workspace !== input.projectRoot) artifactRefs.push(await collectWorktree({ runId: input.runId, projectRoot: input.projectRoot, worktree: workspace, artifactsDir: input.artifactsDir }));
   if (repository && workspace !== input.projectRoot) {
     try {
@@ -677,7 +810,10 @@ export async function projectWorkflow(input: RunInput): Promise<RunResult> {
         // A failed comment must not hide the published PR: the findings are also in the result and the Paperclip comment.
         try { await commentOnPullRequest({ worktree: workspace, prUrl: publish.prUrl, body: openFindingsComment(openFindings, { rounds: reviewCount }) }); }
         catch (error) { if (isCancellation(error)) throw error; warnings.push({ stage: "review", message: `the open review findings could not be posted as a PR comment: ${failureDetails(error, 300)}` }); }
-        return { ...finish("needs_review", withWarnings(`quality gates passed; draft PR published with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"} (see the PR comment)`)), publish };
+        // A prototype or throwaway project reviews per task only as advice (ADR 0015): the findings stay on the pull request and the milestone check verifies the result, so the chain goes on instead of waiting for a person (ADR 0027).
+        // patched(): runs recorded before this change rested in review.
+        const advisory = (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-open-findings-prototype");
+        return { ...finish(advisory ? "completed" : "needs_review", withWarnings(`quality gates passed; draft PR published with ${openFindings.length} unresolved review finding${openFindings.length === 1 ? "" : "s"} (see the PR comment)${advisory ? `; accepted for a ${input.tier} project, the milestone check verifies it` : ""}`)), publish };
       }
       return { ...finish("completed", withWarnings("quality gates passed; draft PR published")), publish };
     } catch (error) {

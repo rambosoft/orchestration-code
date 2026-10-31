@@ -30,6 +30,7 @@ export function checkUnityHygiene(root, { strictRules = false } = {}) {
   for (const generated of ["Library", "Temp", "Obj", "Logs", "UserSettings", "Builds", ".utmp"]) {
     if (!new RegExp(`^/?${generated}/?\\s*$`, "m").test(ignore)) p("gitignore", `.gitignore does not ignore ${generated}/`);
   }
+  if (!/^\/?ProjectSettings\/PackageManagerSettings\.asset\s*$/m.test(ignore)) p("gitignore", ".gitignore does not ignore Unity's local ProjectSettings/PackageManagerSettings.asset");
 
   // serialization and meta visibility
   const editorSettings = read("ProjectSettings/EditorSettings.asset");

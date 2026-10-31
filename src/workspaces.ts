@@ -62,7 +62,14 @@ export async function prepareWorktree(input: { runId: string; projectRoot: strin
     const top = path.resolve(await git(["rev-parse", "--show-toplevel"], dest));
     const branch = await git(["branch", "--show-current"], dest);
     const head = await git(["rev-parse", "HEAD"], dest);
-    if (top !== dest || branch !== input.branch || head !== input.baseSha) throw new Error(`existing worktree '${dest}' does not match the admitted base and task branch`);
+    const branchHead = await git(["rev-parse", `refs/heads/${input.branch}`], root).catch(() => "");
+    const baseIsAncestor = await git(["merge-base", "--is-ancestor", input.baseSha, head], dest).then(() => true, () => false);
+    // A resumed task may already have committed and published its work. Requiring
+    // HEAD === baseSha discarded that valid continuation; require the dedicated
+    // task branch to still point at this worktree and descend from its admitted base.
+    if (top !== dest || branch !== input.branch || branchHead !== head || !baseIsAncestor) {
+      throw new Error(`existing worktree '${dest}' does not match the admitted base, task branch, or branch head`);
+    }
   } else {
     const branchSha = await git(["rev-parse", `refs/heads/${input.branch}`], root).catch(() => "");
     if (branchSha && branchSha !== input.baseSha) throw new Error(`task branch '${input.branch}' already exists at a different commit`);

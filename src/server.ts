@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
 import { z } from "zod";
-import { cancelRun, inspectRun, listRuns, signalApproval, startRun } from "./client.js";
+import { cancelRun, inspectRun, listRuns, resumeRun, signalApproval, startRun } from "./client.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { profiles } from "./profiles.js";
+import { LANE_PROFILES, effectiveLane, gateCommandsFor, lanePlan, laneFor } from "./lanes.js";
 import { admitRepository, resolveStackBase, taskBranch } from "./workspaces.js";
 import { projectContractBlock } from "./contract.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
@@ -78,6 +79,8 @@ const server = createServer(async (req, res) => {
       if (resolved.error) throw new Error(resolved.error);
       const taskType = resolved.type ? taskTypes[resolved.type] : undefined;
       const profileId = taskType?.profile ?? requestedProfile;
+      // ADR 0015: a project with a tier runs implementation tasks in the lane the task names (a "Lane:" line, else standard); its stage list, OpenSpec and analysis follow the lane.
+      const lane = project.tier && LANE_PROFILES.includes(profileId) && taskType?.flow !== "bug" ? (() => { const name = effectiveLane(project.tier!, laneFor(undefined, parsedPrompt.lane), payload.taskTitle); return { name, plan: lanePlan(project.tier, name) }; })() : undefined;
       const unresolved = payload.blockers.filter(blocker => blocker.status !== "done");
       if (unresolved.length) throw new Error(`task is blocked by unresolved Paperclip dependencies: ${unresolved.map(item => item.id).join(", ")}`);
       const artifactsRoot = process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data");
@@ -86,7 +89,8 @@ const server = createServer(async (req, res) => {
       const uiUx = await resolveProjectUiUx(project, project.containerRoot ?? projectRoot);
       const codeWorkflow = profiles[profileId]?.stages.includes("implement") && project.providerRouting.implement?.provider !== "fake";
       // Quality commands are looked up by task type, then delivery profile, then the agent's profile name (older manifests key by "bugfix").
-      const qualityCommands = [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands;
+      // ADR 0029: on a prototype the slow suite (milestone-scoped commands) gates only the milestone check task.
+      const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle);
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
       const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";
@@ -103,13 +107,22 @@ const server = createServer(async (req, res) => {
         const contractSettings = (await loadBootstrapConfig()).contract;
         projectContract = codeWorkflow ? await projectContractBlock({ gitRoot, baseSha: stack.baseSha, settings: contractSettings }) : undefined;
       }
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: compactEmbeddedLogs(parsedPrompt.prompt), taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands });
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: compactEmbeddedLogs(parsedPrompt.prompt), taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, ...(lane ? { tier: project.tier, lane: lane.name } : {}), openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(lane?.plan.openSpec ?? project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? lane?.plan.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands, ...(process.env.ORCHESTRATOR_WORKER_REPORTS === "1" ? { reportToPaperclip: true } : {}) });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
-    const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject))?$/);
+    const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject|resume))?$/);
     if (match) {
       const id = decodeURIComponent(match[1]!);
       if (req.method === "GET" && !match[2]) { res.end(JSON.stringify(await inspectRun(id))); return; }
+      if (req.method === "POST" && match[2] === "resume") {
+        const current = await inspectRun(id) as { status?: string; result?: { status?: string; publish?: { prUrl?: string } } };
+        const resumable = current.result?.status === "failed"
+          || (current.result?.status === "needs_review" && Boolean(current.result.publish?.prUrl));
+        if (current.status !== "COMPLETED" || !resumable) {
+          res.writeHead(409); res.end(JSON.stringify({ error: "only a completed failed workflow or a published needs_review workflow can be resumed safely" })); return;
+        }
+        res.writeHead(202); res.end(JSON.stringify(await resumeRun(id))); return;
+      }
       if (req.method === "POST" && match[2] === "cancel") { await cancelRun(id); res.end(JSON.stringify({ ok: true })); return; }
       if (req.method === "POST" && (match[2] === "approve" || match[2] === "reject")) { await signalApproval(id, match[2] === "approve"); res.end(JSON.stringify({ ok: true })); return; }
     }

@@ -9,6 +9,12 @@ import { parseUnityEditorVersion } from "./stack-profiles.js";
 import { acceptanceProblem, coverageTable, sliceProblem } from "./acceptance.js";
 import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
+import { detectPause, isOnline } from "./provider-gate.js";
+import { PROVIDER_PAUSE } from "./pause-policy.js";
+import type { ChangeStats } from "./lanes.js";
+import { reportResultTo, type ReportOutcome } from "./result-report.js";
+import { paperclipClient } from "./reconcile-service.js";
+import type { RunResult } from "./contracts.js";
 import { prefilterEnabled, prefilterFindings, prefilterProblem } from "./review-prefilter.js";
 import { worktreeStack } from "./publish-guard.js";
 import { compactLog } from "./log-compact.js";
@@ -193,6 +199,27 @@ export function classifyProviderError(message: string): ProviderErrorCategory {
   return "provider_error";
 }
 
+/** What the implementer changed in the worktree (tracked changes, deletions, new files), for the lane's escalation check (src/lanes.ts). */
+export async function assessChanges(input: { worktree: string }): Promise<ChangeStats> {
+  const lines = async (args: string[]): Promise<string[]> => (await runCommand("git", ["-c", "core.quotepath=false", ...args], input.worktree).catch(() => "")).split(/\r?\n/).filter(Boolean);
+  const [changed, deletedFiles, added, numstat] = await Promise.all([lines(["diff", "--name-only", "HEAD"]), lines(["diff", "--name-only", "--diff-filter=D", "HEAD"]), lines(["ls-files", "--others", "--exclude-standard"]), lines(["diff", "--numstat", "HEAD"])]);
+  let changedLines = 0;
+  for (const row of numstat) { const match = /^(\d+)\s+(\d+)/.exec(row); if (match) changedLines += Number(match[1]) + Number(match[2]); }
+  const files = [...new Set([...changed, ...added])];
+  // Unity .meta files and binary media are imported or generated, not authored risk; they do not count towards the file limit (ADR 0029).
+  return { files, lines: changedLines, deletedFiles, countedFiles: files.filter(file => !GENERATED_FILE.test(file)) };
+}
+const GENERATED_FILE = /\.(meta|png|jpe?g|gif|webp|wav|ogg|mp3|ttf|otf)$/i;
+
+/** Reports a finished run to its Paperclip issue (ADR 0018). Safe to retry: a result already on the issue is not posted again. Needs PAPERCLIP_API_TOKEN on the worker, like the reconcile service. */
+export async function reportResult(input: { workflowId: string; issueId: string; result: RunResult }): Promise<ReportOutcome> {
+  const token = process.env.PAPERCLIP_API_TOKEN;
+  return reportResultTo(token ? paperclipClient(process.env.PAPERCLIP_API_URL ?? "http://127.0.0.1:3100", token) : undefined, input);
+}
+
+/** Asked by the workflow while a network pause waits: is the connection back? */
+export async function probeConnectivity(): Promise<{ online: boolean }> { return { online: await isOnline() }; }
+
 /** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
 export async function executeStage(input: StageInput): Promise<StageOutput> {
   let timer: NodeJS.Timeout | undefined;
@@ -233,6 +260,14 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
     if (reusable) { results.push(...reusable.checks.map(check => ({ ...check, durationMs: 0 }))); qualityWarnings.push(...reusable.warnings, `reused the passing result of verify attempt ${reusable.attempt}: the commands and every file of the working tree are unchanged`); }
     // An Editor the agent left open on this worktree makes every Unity command fail with "instances cannot open the same project".
     if (!reusable && checks.some(check => check.executable === "unity")) { const stopped = await stopProjectEditors(input.projectRoot); if (stopped.length) qualityWarnings.push(`stopped ${stopped.length} Unity process(es) that still had the project open before the checks`); }
+    let healedMeta = false;
+    // The acceptance trace reads test sources only, so it is known before a single Unity run. A failing command used to hide it: the one repair pass fixed the command, and the trace then failed the task
+    // with nothing left to repair it (Minesweeper LOC-132: a flaky timing test first, missing tests for two criteria second). The trace now travels with a failing command, so one repair sees both (ADR 0025).
+    const acceptanceTraceProblem = async (): Promise<string | undefined> => {
+      const testFiles = await readUnityTestFiles(input.projectRoot);
+      return [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
+    };
+    const earlyTraceProblem = !reusable && checks.some(check => check.executable === "unity") ? await acceptanceTraceProblem().catch(() => undefined) : undefined;
     for (const check of reusable ? [] : checks) {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
@@ -246,6 +281,15 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         const evidence = await unityEvidenceProblem(check, checkCwd, result.code);
         const note = [evidence, unityExitHint(check, evidence ? 1 : result.code)].filter(Boolean).join(" ");
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
+      }
+      // Missing .meta files are the Editor's to write (an agent must not invent GUIDs): when a check reports them, one batch import generates them and the check runs again, before anything is handed to a model.
+      if (result.code !== 0 && !isUnity && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
+        healedMeta = true;
+        const unityProject = await detectUnityProject(input.projectRoot).catch(() => undefined);
+        if (unityProject) {
+          const imported = await prepareUnityProject(input.projectRoot, unityProject.editorVersion, runCheck).then(() => true, (error: unknown) => { qualityWarnings.push(`the Unity import that would write the missing .meta files failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`); return false; });
+          if (imported) { qualityWarnings.push("the Unity Editor generated missing .meta files and the check was repeated"); result = await runCheck(check.executable, check.args, checkCwd, CHECK_CAPTURE_CHARS); }
+        }
       }
       let storedOutput = compactLog(result.output, { maxChars: CHECK_STORE_CHARS });
       // A failed check with a test report: the list of failing tests leads, the console output follows shortened (src/test-report.ts).
@@ -261,6 +305,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
+        if (earlyTraceProblem) results.push({ executable: "acceptance-trace", args: [], exitCode: 1, durationMs: 0, output: earlyTraceProblem, stderr: "" });
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
@@ -275,8 +320,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {
-      const testFiles = await readUnityTestFiles(input.projectRoot);
-      const missing = [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
+      const missing = await acceptanceTraceProblem();
       if (missing) {
         const failed = path.join(artifactsDir, `quality-${input.attempt}.json`);
         const activityDurationMs = Date.now() - activityStartedAt;
@@ -362,6 +406,13 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
     const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
+    // A usage limit or a lost connection is a pause, not a failure: the workflow waits on a timer and runs the stage again without spending its retry attempts (ADR 0016).
+    // A timeout counts as an outage only when the connection is really down. patched() in the workflow keeps recorded runs on the old path.
+    const pause = detectPause(message, { now: Date.now(), timedOut: category === "timeout", ...(category === "timeout" || /ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network|connection/i.test(message) ? { online: await isOnline() } : {}) });
+    if (pause) {
+      await emitActivityEvent({ event: "activity.paused", ...activityContext, provider: input.provider, pauseKind: pause.kind, ...(pause.waitMs !== undefined ? { waitMs: pause.waitMs } : {}) });
+      throw ApplicationFailure.nonRetryable(`${input.provider} ${pause.kind} pause: ${pause.reason}`, PROVIDER_PAUSE, pause);
+    }
     // Retrying bad credentials or configuration only repeats the failure (and the cost).
     throw category === "authentication" || category === "configuration" ? ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError") : new Error(detail);
   }
