@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-31 worker watchdog (B-102)
+- At 03:32 the whole worker supervisor disappeared without an exit line and nothing restarted it for 20 minutes (Temporal: "No workers polling"; the stranded activity retried by itself once a worker came back). The installer now adds a 5-minute repeating trigger to the worker task; with `MultipleInstances IgnoreNew` it does nothing while the supervisor runs and starts it when it is gone. Cause of the disappearance not found. Re-run `npm run worker:install` on any other machine.
+
 ## 2026-10-31 device-only acceptance no longer stops a prototype (ADR 0028, ninth live finding)
 - Minesweeper LOC-138: after two reviews Claude's implementation was correct for everything code could fix; the last high finding (no mid-range Android device profile) is `fixableInCode: false`, an external blocker, so the run failed and the task rested in review. For prototype and throwaway tiers such a finding (not environment or approval) now rides on the draft PR as the open-findings comment and the task completes with a warning. `patched("accept-unfixable-prototype")`, replay fixture unchanged. Tests in `test/typed-flows.test.ts`.
 
