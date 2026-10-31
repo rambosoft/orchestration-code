@@ -10,6 +10,7 @@
 - 2026-10-30 Fifth finding fixed (ADR 0023, B-096): auto-approved projects release all milestones. Milestone 1 done (LOC-115..118); milestones 2-5 released by hand, LOC-120 running.
 - 2026-10-30 Third and fourth live findings fixed (ADR 0022, B-095): failed runs are recorded with an unblockDescriptor; the slice gate counts a boot in setup. LOC-117 to be resumed.
 - 2026-10-30 Second live finding fixed: adapter keepalive (ADR 0021, B-094). Paperclip recreated to load it. LOC-116 re-running.
+- 2026-10-31 Speed (ADR 0029, B-104): a prototype task is implement + verify whatever its Lane, the full PlayMode suite and the one review run only in the milestone check, generated files no longer trigger escalation. Needs `npm run build`, worker restart and `docker compose up -d --build orchestrator`; not measured on a live task yet.
 - 2026-10-30 Live run of Cinderfield Minesweeper (LOC-113..): first finding fixed (ADR 0020, B-093). Run in progress.
 - 2026-10-30 Provider fallback chains done (ADR 0019, opt-in `fallback` on a route). Session resume not built. Next: deploy and run Minesweeper (Unity prototype).
 - 2026-10-30 P4 done: milestone check tasks for prototypes and the opt-in worker-side result report (ADR 0018). The report flag is untested against a live Paperclip: enable `ORCHESTRATOR_WORKER_REPORTS=1` for one task first. Reconcile is unchanged (still the backstop). Next: provider fallback chains and session resume (tokens), doctor checks, live Minesweeper run.

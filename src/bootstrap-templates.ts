@@ -52,7 +52,8 @@ export const unityGates = (maturity: string, testDepth: string): QualityCommand[
   // than files that Unity has not imported yet. If Unity itself is unavailable,
   // fail with that concrete cause instead of a misleading hygiene failure.
   const gates: QualityCommand[] = [unity(["test", "--mode", "EditMode", "--output", "Logs/editmode-results.xml"])];
-  if (testDepth !== "none" && testDepth !== "smoke") gates.push(unity(["test", "--mode", "PlayMode", "--retries", "1", "--output", "Logs/playmode-results.xml"]));
+  // A prototype runs the slow PlayMode suite once per milestone check, not after every task (ADR 0029); other tiers gate every task on it.
+  if (testDepth !== "none" && testDepth !== "smoke") gates.push({ ...unity(["test", "--mode", "PlayMode", "--retries", "1", "--output", "Logs/playmode-results.xml"]), ...(maturity === "prototype" ? { scope: "milestone" as const } : {}) });
   if (maturity === "production") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"]));
   else if (maturity === "mvp") gates.push(unity(["build", "--target", "Android", "--execute-method", "Builder.Android", "-o", "Builds/game.aab"], "warn"));
   gates.push({ executable: "node", args: ["scripts/check-unity-hygiene.mjs"] });

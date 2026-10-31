@@ -24,6 +24,21 @@ export function laneFor(size?: SizeHint, override?: Lane): Lane {
   return override ?? (size === "small" ? "light" : size === "large" ? "heavy" : "standard");
 }
 
+export const isMilestoneCheckTitle = (title?: string): boolean => title?.startsWith(MILESTONE_CHECK_PREFIX) ?? false;
+
+/** ADR 0029: a prototype reviews once per milestone, in the check task, which always runs heavy; no other task of it runs heavier than standard, whatever size the blueprint gave it. Other tiers keep the lane as named. */
+export function effectiveLane(tier: Tier, lane: Lane, taskTitle?: string): Lane {
+  if (tier !== "prototype") return lane;
+  return isMilestoneCheckTitle(taskTitle) ? "heavy" : lane === "heavy" ? "standard" : lane;
+}
+
+/** ADR 0029: on a prototype, commands marked `scope: "milestone"` gate only the milestone check task. Never leaves a task without a gate: when every command is milestone-scoped they all stay. */
+export function gateCommandsFor<T extends { scope?: "milestone" }>(tier: Tier | undefined, commands: readonly T[], taskTitle?: string): T[] {
+  if (tier !== "prototype" || isMilestoneCheckTitle(taskTitle)) return [...commands];
+  const perTask = commands.filter(command => command.scope !== "milestone");
+  return perTask.length > 0 ? perTask : [...commands];
+}
+
 const DIRECT: LaneStage[] = ["implement", "verify"];
 // Plan and brief are model calls. Without them the brief is built from the task text (src/fallbacks.ts), which already carries the acceptance criteria.
 const TABLE: Record<Tier, Record<Lane, LanePlan>> = {
@@ -60,13 +75,15 @@ export const LANE_PROFILES: readonly string[] = ["implementation", "refactor"];
 export const ESCALATION = { maxFiles: 15, maxLines: 600 } as const;
 const RISKY_PATH = /(^|\/)(auth|security|crypto|payments?|billing|migrations?|schema|secrets?|\.github|docker-compose[^/]*|dockerfile)(\/|\.|$)|\.(sql|env|pem|key)$/i;
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|tests?\.cs$/i;
-export type ChangeStats = { files: string[]; lines: number; deletedFiles: string[] };
+/** `countedFiles` (ADR 0029) leaves out generated and binary files (.meta, images, audio, fonts) for the file-count limit only; results recorded without it count every file, so replay is unchanged. */
+export type ChangeStats = { files: string[]; lines: number; deletedFiles: string[]; countedFiles?: string[] };
 
 /** Why a result that skipped review should get one anyway. Empty means the lane's own stage list stands. */
 export function escalationReasons(stats: ChangeStats, unmetAcceptance: boolean): string[] {
   const reasons: string[] = [];
   if (unmetAcceptance) reasons.push("the implementer reported acceptance criteria it did not meet");
-  if (stats.files.length > ESCALATION.maxFiles) reasons.push(`${stats.files.length} files changed (limit ${ESCALATION.maxFiles})`);
+  const counted = (stats.countedFiles ?? stats.files).length;
+  if (counted > ESCALATION.maxFiles) reasons.push(`${counted} files changed (limit ${ESCALATION.maxFiles})`);
   if (stats.lines > ESCALATION.maxLines) reasons.push(`${stats.lines} lines changed (limit ${ESCALATION.maxLines})`);
   const risky = stats.files.filter(file => RISKY_PATH.test(file.replace(/\\/g, "/")));
   if (risky.length) reasons.push(`touches security, data or deployment paths (${risky.slice(0, 3).join(", ")})`);

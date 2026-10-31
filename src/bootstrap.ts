@@ -384,7 +384,7 @@ export function planBlockers(blueprint: Blueprint, parallel: boolean): Map<strin
 
 const SCREEN_TASK = /\b(screen|view|menu|hud|popup|dialog|overlay|settings|button|layout|theme|ui)\b/i;
 /** A game task's criteria get ids (T3-AC1) the verify gate traces to tests, plus a standing criterion that every screen it builds is captured, and the convention the agent follows. */
-export function gameAcceptance(task: { title: string; description: string; acceptance: string[] }, number: number): string {
+export function gameAcceptance(task: { title: string; description: string; acceptance: string[] }, number: number, milestoneSuite = false): string {
   const id = `T${number}`;
   const items = [...task.acceptance];
   if (SCREEN_TASK.test(`${task.title} ${task.description}`)) {
@@ -392,7 +392,7 @@ export function gameAcceptance(task: { title: string; description: string; accep
     // The first game passed every test while a feature could not be reached from the running game; this criterion is traced by the verify gate (sliceProblem).
     items.push(`${SLICE_PREFIX} a PlayMode test in Assets/Tests/PlayMode starts the game with "yield return SliceHarness.Boot();", reaches what this task builds by simulated player input only, and asserts what the player sees; building the screen or its view model directly in the test does not count`);
   }
-  return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.\n\nTime budget: the full PlayMode suite takes several minutes and grows with every task. While you work run EditMode and only the PlayMode fixtures you touched (unity test --mode PlayMode --filter <Fixture>); run the full PlayMode suite and the hygiene check once at the end, before you finish.`;
+  return `\n\nTask id: ${id}\n\nAcceptance criteria:\n${items.map((item, index) => `- ${id}-AC${index + 1}: ${item}`).join("\n")}\n\nProof is required: write a test for every criterion (EditMode for rules and logic, PlayMode for screens and flows) and put a comment "Covers: ${id}-AC1" on the test that proves it; the orchestrator fails the task while a criterion has no such test. A criterion that depends on something a later task builds is not met by stubbing: test the interface it exposes now and declare the rest openly in a test comment as "Deferred: ${id}-ACn -> T<later task> reason". Never delete or weaken a criterion.\n\nTime budget: the full PlayMode suite takes several minutes and grows with every task. While you work run EditMode and only the PlayMode fixtures you touched (unity test --mode PlayMode --filter <Fixture>); ${milestoneSuite ? "at the end run EditMode and the hygiene check once; the full PlayMode suite runs at the milestone check, not per task, so run it yourself only when your change is cross-cutting" : "run the full PlayMode suite and the hygiene check once at the end, before you finish"}.`;
 }
 
 /** Tiers whose tasks run without a review of their own (src/lanes.ts): the milestone gets one check instead. */
@@ -436,7 +436,7 @@ export function buildIssuePlan(original: Blueprint, options: Record<string, Opti
     issues.push({ key: milestoneKey, kind: "milestone", title: `Milestone ${index + 1}: ${milestone.title}`, description: `${milestone.goal}${checklist}\n\nTasks:\n${milestone.tasks.map(task => `- ${task.title}`).join("\n")}`, labels: ["milestone"], blockedByKeys: [], start: false });
     for (const task of milestone.tasks) {
       const reliesOn = task.depends_on.length ? `\n\nRelies on: ${task.depends_on.join(", ")}.` : "";
-      const acceptance = isGame(options) && task.type === "task" && !isMilestoneCheck(task) ? gameAcceptance(task, ++taskNumber) : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
+      const acceptance = isGame(options) && task.type === "task" && !isMilestoneCheck(task) ? gameAcceptance(task, ++taskNumber, options.maturity === "prototype") : `\n\nAcceptance criteria:\n${task.acceptance.map(item => `- ${item}`).join("\n")}`;
       issues.push({
         key: `task:${task.key}`, kind: "task", title: task.title, description: `${task.description}${reliesOn}${acceptance}${task.type === "task" ? designBlock(task === lastTask) : ""}${task.type === "task" && task.size !== "normal" ? `\n\nLane: ${task.size === "small" ? "light" : "heavy"}` : ""}\n\n${CONTRACT_FOOTER}`,
         labels: task.type === "task" ? [] : [`type:${task.type}`], parentKey: milestoneKey, blockedByKeys: blockers.get(`task:${task.key}`) ?? [],

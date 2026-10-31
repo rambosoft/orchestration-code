@@ -54,6 +54,8 @@ describe("game task descriptions", () => {
   it("adds a standing capture criterion to a task that builds a screen, and not to one that does not", () => {
     expect(acceptanceIds(gameAcceptance(task, 8))).toEqual(["T8-AC1", "T8-AC2", "T8-AC3", "T8-AC4"]);
     expect(gameAcceptance(task, 8)).toContain("PlayMode capture test");
+    expect(gameAcceptance(task, 8)).toContain("run the full PlayMode suite and the hygiene check once at the end");
+    expect(gameAcceptance(task, 8, true)).toContain("the full PlayMode suite runs at the milestone check, not per task");
     expect(sliceIds(gameAcceptance(task, 8))).toEqual(["T8-AC4"]);
     expect(gameAcceptance(task, 8)).toContain(`T8-AC4: ${SLICE_PREFIX}`);
     expect(sliceIds(gameAcceptance({ title: "Implement merge rules", description: "Pure C# rules.", acceptance: ["x"] }, 5))).toEqual([]);

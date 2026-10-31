@@ -5,7 +5,7 @@ import { ProjectManifestSchema } from "./contracts.js";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { profiles } from "./profiles.js";
-import { LANE_PROFILES, lanePlan, laneFor } from "./lanes.js";
+import { LANE_PROFILES, effectiveLane, gateCommandsFor, lanePlan, laneFor } from "./lanes.js";
 import { admitRepository, resolveStackBase, taskBranch } from "./workspaces.js";
 import { projectContractBlock } from "./contract.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
@@ -80,7 +80,7 @@ const server = createServer(async (req, res) => {
       const taskType = resolved.type ? taskTypes[resolved.type] : undefined;
       const profileId = taskType?.profile ?? requestedProfile;
       // ADR 0015: a project with a tier runs implementation tasks in the lane the task names (a "Lane:" line, else standard); its stage list, OpenSpec and analysis follow the lane.
-      const lane = project.tier && LANE_PROFILES.includes(profileId) && taskType?.flow !== "bug" ? (() => { const name = laneFor(undefined, parsedPrompt.lane); return { name, plan: lanePlan(project.tier, name) }; })() : undefined;
+      const lane = project.tier && LANE_PROFILES.includes(profileId) && taskType?.flow !== "bug" ? (() => { const name = effectiveLane(project.tier!, laneFor(undefined, parsedPrompt.lane), payload.taskTitle); return { name, plan: lanePlan(project.tier, name) }; })() : undefined;
       const unresolved = payload.blockers.filter(blocker => blocker.status !== "done");
       if (unresolved.length) throw new Error(`task is blocked by unresolved Paperclip dependencies: ${unresolved.map(item => item.id).join(", ")}`);
       const artifactsRoot = process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data");
@@ -89,7 +89,8 @@ const server = createServer(async (req, res) => {
       const uiUx = await resolveProjectUiUx(project, project.containerRoot ?? projectRoot);
       const codeWorkflow = profiles[profileId]?.stages.includes("implement") && project.providerRouting.implement?.provider !== "fake";
       // Quality commands are looked up by task type, then delivery profile, then the agent's profile name (older manifests key by "bugfix").
-      const qualityCommands = [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands;
+      // ADR 0029: on a prototype the slow suite (milestone-scoped commands) gates only the milestone check task.
+      const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle);
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
       const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";

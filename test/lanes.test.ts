@@ -7,8 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import type { RunInput, StageInput, StageOutput } from "../src/contracts.js";
-import { ESCALATION, LANES, TIERS, escalationReasons, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
+import type { QualityCommand, RunInput, StageInput, StageOutput } from "../src/contracts.js";
+import { ESCALATION, LANES, TIERS, MILESTONE_CHECK_PREFIX, effectiveLane, escalationReasons, gateCommandsFor, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
+import { unityGates } from "../src/bootstrap-templates.js";
 import { parseTaskDirectives } from "../src/openspec-policy.js";
 import { buildIssuePlan } from "../src/bootstrap.js";
 import { projectWorkflow } from "../src/workflows.js";
@@ -89,8 +90,44 @@ describe("escalation", () => {
     expect(escalationReasons(stats({ deletedFiles: ["Assets/Tests/EditMode/BoardTests.cs"] }), false)[0]).toContain("deletes test files");
     expect(escalationReasons(stats(), true)[0]).toContain("did not meet");
   });
+  it("does not count generated or binary files towards the file limit, but still counts them as changes (ADR 0029)", () => {
+    const art = Array.from({ length: ESCALATION.maxFiles + 20 }, (_, i) => `Assets/Art/Golf/Tiles/t${i}.png.meta`);
+    expect(escalationReasons(stats({ files: art, countedFiles: ["Assets/Scripts/Runtime/GolfArt.cs"] }), false)).toEqual([]);
+    expect(escalationReasons(stats({ files: art }), false)[0]).toContain("files changed"); // a result recorded without countedFiles keeps counting every file
+  });
   it("does not mistake a path that only contains the word for a risky one", () => {
     expect(escalationReasons(stats({ files: ["src/authors/list.ts", "src/schemas-doc.md"] }), false)).toEqual([]);
+  });
+});
+
+describe("prototype reviews and tests once per milestone (ADR 0029)", () => {
+  const check = `${MILESTONE_CHECK_PREFIX} Playable slice`;
+  it("keeps every non-check prototype task out of the heavy lane, and the check heavy", () => {
+    expect(effectiveLane("prototype", "heavy", "Build the board view")).toBe("standard");
+    expect(effectiveLane("prototype", "heavy", undefined)).toBe("standard");
+    expect(effectiveLane("prototype", "heavy", check)).toBe("heavy");
+    expect(effectiveLane("prototype", "standard", check)).toBe("heavy"); // a check written without a Lane line still gets its one review
+    expect(effectiveLane("prototype", "light", "x")).toBe("light");
+    expect(lanePlan("prototype", effectiveLane("prototype", "heavy", "Build the board view")).stages).toEqual(["implement", "verify"]);
+  });
+  it("leaves the other tiers' lanes alone", () => {
+    for (const tier of ["throwaway", "mvp", "production"] as const) expect(effectiveLane(tier, "heavy", "Build the board view")).toBe("heavy");
+  });
+  const fast: QualityCommand = { executable: "unity", args: ["test", "--mode", "EditMode"] };
+  const slow: QualityCommand = { executable: "unity", args: ["test", "--mode", "PlayMode"], scope: "milestone" };
+  it("gates a prototype task on the per-task commands and the milestone check on all of them", () => {
+    expect(gateCommandsFor("prototype", [fast, slow], "Build the board view")).toEqual([fast]);
+    expect(gateCommandsFor("prototype", [fast, slow], check)).toEqual([fast, slow]);
+  });
+  it("ignores the scope on other tiers and never leaves a task without a gate", () => {
+    for (const tier of ["throwaway", "mvp", "production", undefined] as const) expect(gateCommandsFor(tier, [fast, slow], "Build the board view")).toEqual([fast, slow]);
+    expect(gateCommandsFor("prototype", [slow], "Build the board view")).toEqual([slow]);
+  });
+  it("marks the Unity PlayMode gate as milestone-scoped for a prototype only", () => {
+    const playMode = (maturity: string) => unityGates(maturity, "standard").find(command => command.args.includes("PlayMode"));
+    expect(playMode("prototype")?.scope).toBe("milestone");
+    expect(playMode("mvp")?.scope).toBeUndefined();
+    expect(unityGates("prototype", "standard").find(command => command.args.includes("EditMode"))?.scope).toBeUndefined();
   });
 });
 

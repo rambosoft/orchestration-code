@@ -24,7 +24,8 @@ const QualityExecutableSchema = z.enum([...CORE_EXECUTABLES, "unity", "mvn", "gr
 /** severity "warn": a failing command is reported as a warning and never stops the run (for example a first knip or jscpd report). Default "fail". */
 /** Where the command writes its test report (relative to its folder; one `*` allowed in the file name). A failure is then shown to the agent as the list of failing tests, not as the console output. Unity finds its own. */
 export const ReportSpecSchema = z.object({ format: z.enum(["nunit", "junit"]), path: z.string().min(1).max(300).refine(value => !/^([A-Za-z]:|[\/])/.test(value) && !value.split(/[\/]/).includes(".."), "the report path must be relative and stay inside the repository") });
-export const QualityCommandSchema = z.object({ executable: QualityExecutableSchema, args: z.array(z.string()), cwd: z.string().optional(), severity: z.enum(["fail", "warn"]).optional(), report: ReportSpecSchema.optional() });
+// scope "milestone": on a prototype project the command gates only the milestone check task (ADR 0029), so the slow suite runs once per milestone instead of after every task. Other tiers ignore it.
+export const QualityCommandSchema = z.object({ executable: QualityExecutableSchema, args: z.array(z.string()), cwd: z.string().optional(), severity: z.enum(["fail", "warn"]).optional(), report: ReportSpecSchema.optional(), scope: z.enum(["milestone"]).optional() });
 export type QualityCommand = z.infer<typeof QualityCommandSchema>;
 export const VisualStepSchema = z.discriminatedUnion("do", [
   z.object({ do: z.literal("press"), key: z.string().min(1).max(32) }),
