@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-10-31 Unity scratch scene no longer published (B-103)
+- LOC-141's pull request (#27) carried `Assets/InitTestScene<guid>.unity`, a scene the Unity test runner writes for a run and leaves behind when the run is cut short; the project's main already holds three. It is now in the Unity generated-output list, so `excludeGeneratedPaths` drops a newly added one before the commit. Regression test in `test/publish-guard.test.ts` (fails without the pattern). Existing copies on the project's main are untouched.
+
 ## 2026-10-31 worker watchdog (B-102)
 - At 03:32 the whole worker supervisor disappeared without an exit line and nothing restarted it for 20 minutes (Temporal: "No workers polling"; the stranded activity retried by itself once a worker came back). The installer now adds a 5-minute repeating trigger to the worker task; with `MultipleInstances IgnoreNew` it does nothing while the supervisor runs and starts it when it is gone. Cause of the disappearance not found. Re-run `npm run worker:install` on any other machine.
 
