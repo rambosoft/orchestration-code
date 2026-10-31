@@ -206,7 +206,7 @@ describe("context pack", () => {
 
 type Doc = { dir?: string; docsDir?: string; name?: string; taskId?: string; markdown: string };
 type Defect = { stage: string; apply: (summary: string) => string; mode: "first" | "always" };
-type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect };
+type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
@@ -235,6 +235,7 @@ beforeAll(async () => {
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY_ENV]")) return { stage: "verify", ok: false, summary: "quality check failed: unity test", findings: ["Unity exited 198: No valid Unity Editor license found"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       if (input.stage === "verify" && input.prompt.includes("[FAIL_VERIFY]")) return { stage: "verify", ok: false, summary: "quality check failed: npm test", findings: ["1 test failed"], artifactRefs: [], provider: "quality-gate", durationMs: 0 };
       const out = { ...(await fake.run(input)), stage: input.stage };
+      if (input.stage === "review" && state.unfixable) { const review = { verdict: "needs_changes" as const, findings: [{ severity: "high" as const, category: state.unfixable as "acceptance" | "environment", title: "Device measurement missing", evidence: "An acceptance check that no code change can satisfy", fixableInCode: false }], notes: [] }; return { ...out, ok: false, review, findings: ["Device measurement missing"] }; }
       const nth = state.calls.filter(call => call.stage === input.stage).length;
       return state.defect?.stage === input.stage && (state.defect.mode === "always" || nth === 1) ? { ...out, summary: state.defect.apply(out.summary) } : out;
     },
@@ -245,9 +246,9 @@ beforeAll(async () => {
 afterAll(async () => { worker.shutdown(); await running; await env.teardown(); await rm(tmp, { recursive: true, force: true }); });
 
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
-async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect): Promise<{ result: RunResult; state: RunState }> {
+async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment"): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
-  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}) };
+  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
   runs.set(id, state); currentRun = state;
   const full: RunInput = { runId: id, taskId: `T-${sequence}`, projectId: "p", profile: "bugfix", provider: "fake", projectRoot: tmp, artifactsDir: tmp, repository, qualityCommands: [{ executable: "npm", args: ["test"] }], ...input };
   const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "typed", workflowId: id, args: [full] });
@@ -435,6 +436,22 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.publish?.prUrl).toContain("/pull/1");
     expect(state.comments).toHaveLength(1);
     expect(state.comments[0]!.body).toContain("Open review findings");
+  });
+  it("finishes a prototype task whose last review finding no code change can satisfy (a device measurement): it rides on the pull request (ADR 0028)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "prototype", lane: "heavy" }, [], undefined, "acceptance");
+    expect(result.status, result.message).toBe("completed");
+    expect(result.message).toContain("accepted for a prototype project");
+    expect(result.metadata?.review.repairCount).toBe(0);
+    expect(result.publish?.prUrl).toContain("/pull/1");
+    expect(state.comments[0]!.body).toContain("Device measurement missing");
+  });
+  it("still stops an MVP task on a finding no code change can satisfy, and a prototype on a missing setup", async () => {
+    const mvp = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "mvp", lane: "heavy" }, [], undefined, "acceptance");
+    expect(mvp.result.status).toBe("failed");
+    expect(mvp.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
+    const setup = await run({ profile: "implementation", prompt: "Needs a key", tier: "prototype", lane: "heavy" }, [], undefined, "environment");
+    expect(setup.result.status).toBe("failed");
+    expect(setup.result.metadata?.review.stopReason).toBe("external_or_approval_prerequisite");
   });
   it("still fails, with no PR, when the deterministic checks fail after the repair", async () => {
     const { result, state } = await run({ profile: "implementation", prompt: "Add a button [FAIL_VERIFY]", injectReviewFailure: true });
