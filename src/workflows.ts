@@ -694,19 +694,19 @@ async function runProject(input: RunInput): Promise<RunResult> {
         // An external prerequisite must stop publication, but it must not mask
         // independent, code-fixable blockers in the same review. Repair those
         // within the existing round budget, then stop if the prerequisite stays.
+        // A check only a device, a person or a later task can satisfy (not an approval) cannot be fixed by another round. For a prototype or throwaway
+        // project it rides on the draft pull request like any open finding and the milestone check verifies it (ADR 0028). patched(): earlier runs failed here.
+        const unfixableAcceptance = external.length > 0 && external.every(finding => finding.category !== "approval") && (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-unfixable-prototype");
         if (!blocking.length) {
-          // A check only a device, a person or a later task can satisfy (not an approval) cannot be fixed by another round. For a prototype or throwaway
-          // project it rides on the draft pull request like any open finding and the milestone check verifies it (ADR 0028). patched(): earlier runs failed here.
-          const unfixableAcceptance = external.length > 0 && external.every(finding => finding.category !== "approval") && (input.tier === "prototype" || input.tier === "throwaway") && patched("accept-unfixable-prototype");
           if (unfixableAcceptance) { openFindings = external; stopReason = "review_findings_unresolved"; break; }
           if (external.length) { unresolvedFindings.push(...external); stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite requires operator action after code-fixable findings were addressed"); }
           break;
         }
         if (reviewCount >= maxRounds) {
           unresolvedFindings.push(...blocking, ...external);
-          if (external.length) { stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite remains after the bounded code-repair rounds"); }
+          if (external.length && !unfixableAcceptance) { stopReason = "external_or_approval_prerequisite"; return finish("failed", "review stopped: external prerequisite remains after the bounded code-repair rounds"); }
           // The deterministic gates are not affected by review findings: publish the draft with the open findings as a PR comment and let a human accept or send it back.
-          if (patched("publish-with-open-findings")) { openFindings = blocking; stopReason = "review_findings_unresolved"; break; }
+          if (patched("publish-with-open-findings")) { openFindings = [...blocking, ...(unfixableAcceptance ? external : [])]; stopReason = "review_findings_unresolved"; break; }
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
         try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }

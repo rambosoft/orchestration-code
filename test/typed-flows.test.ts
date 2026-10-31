@@ -445,6 +445,13 @@ describe("acceptance checks the implementer declares unmet", () => {
     expect(result.publish?.prUrl).toContain("/pull/1");
     expect(state.comments[0]!.body).toContain("Device measurement missing");
   });
+  it("also finishes a prototype when the implementer keeps declaring an item and the review rounds run out beside such a finding (LOC-138 resume)", async () => {
+    const { result, state } = await run({ profile: "implementation", prompt: "Make it harder over time", tier: "prototype", lane: "heavy" }, [], { stage: "implement", apply: declare, mode: "always" }, "environment");
+    expect(result.status, result.message).toBe("completed");
+    expect(result.metadata?.review.stopReason).toBe("review_findings_unresolved");
+    expect(state.comments[0]!.body).toContain("Device measurement missing");
+    expect(state.comments[0]!.body).toContain("two obstacles on screen at score 3000");
+  });
   it("still stops an MVP task on a finding no code change can satisfy, and a prototype on an approval", async () => {
     const mvp = await run({ profile: "implementation", prompt: "Profile it on a device", tier: "mvp", lane: "heavy" }, [], undefined, "acceptance");
     expect(mvp.result.status).toBe("failed");

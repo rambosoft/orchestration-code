@@ -18,3 +18,4 @@ Status: Accepted (2026-10-31). Found in the first live run of the v2 plan (Mines
 
 ## Correction (same day)
 The first version excluded `environment`. The next review of LOC-138 filed the same missing device measurement under `environment`, so the run stopped again. The rule now excludes only `approval`.
+The third resume (the implementer still declared an item, so the bounded rounds had run out) reached the exhausted-rounds branch, which stopped on any external finding before the rule applied. The rule now covers both branches; the open findings then carry the declared items and the unfixable ones together.
