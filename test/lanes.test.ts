@@ -186,15 +186,24 @@ describe("workflow lanes", () => {
     for (const text of ["Read first: docs/UI_RULES.md", "T33-AC1: A heading element", "T33-AC2: A Woodcut text style renders dynamic labels", "T33-AC3: A scoreboard display uses exactly three colours"]) expect(calls[0]!.prompt, text).toContain(text);
   }, 60_000);
   it("adds a review to a light task whose result is risky, and says why", async () => {
-    const { result, stages } = await run({ tier: "prototype", lane: "light" }, { changes: { files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] } });
+    const { result, stages } = await run({ tier: "mvp", lane: "light" }, { changes: { files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] } });
     expect(result.status, result.message).toBe("completed");
     // Review and the deterministic checks run side by side once review is added, so their order is not fixed.
     expect(stages[0]).toBe("implement");
     expect([...stages].sort()).toEqual(["implement", "review", "verify"]);
     expect(result.message).toContain("review added");
   }, 60_000);
+  it("never escalates a prototype task to a review, however large or risky its result (ADR 0031)", async () => {
+    const huge = { files: Array.from({ length: 40 }, (_, i) => `Assets/UI/Screen${i}.uxml`), lines: 5000, deletedFiles: ["Assets/Tests/EditMode/OldTests.cs"] };
+    for (const [changes, summary] of [[huge, "Done."], [{ files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] }, "Done."], [{ files: ["src/a.ts"], lines: 5, deletedFiles: [] }, "Done.\n\nUNMET_ACCEPTANCE:\n- The button shows a percentage."]] as Array<[ChangeStats, string]>) {
+      const { result, stages } = await run({ tier: "prototype", lane: "standard" }, { changes, implementSummary: summary });
+      expect(result.status, result.message).toBe("completed");
+      expect(stages, JSON.stringify(changes).slice(0, 60)).toEqual(["implement", "verify"]);
+      expect(result.message).not.toContain("review added");
+    }
+  }, 120_000);
   it("adds a review when the implementer reports unmet acceptance", async () => {
-    const { stages } = await run({ tier: "prototype", lane: "light" }, { implementSummary: "Done.\n\nUNMET_ACCEPTANCE:\n- The button shows a percentage." });
+    const { stages } = await run({ tier: "mvp", lane: "light" }, { implementSummary: "Done.\n\nUNMET_ACCEPTANCE:\n- The button shows a percentage." });
     expect(stages).toContain("review");
   }, 60_000);
   it("gives a lane without review the same one bounded repair pass when a check fails", async () => {

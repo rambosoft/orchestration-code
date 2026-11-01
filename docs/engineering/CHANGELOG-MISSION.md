@@ -152,3 +152,8 @@ One line per completed item: id, commit, evidence.
 - Live finding (Fairway Frenzy LOC-157): with no plan or brief stage `deterministicPlan` gives the brief the generic acceptance line, the first task line (300 characters) and only the never/do-not sentences; the implement prompt is the brief alone, so ADR 0015's claim that the criteria are already in it was wrong. The implementer saw only T33-AC1 (it contains "never") and refused to invent AC2 to AC5; LOC-156 passed its gates with its rename criterion unread.
 - `briefFromTask` and `briefText()` in src/workflows.ts put the full task text ahead of the brief at the eight places that hand the brief to a model (implement, gate repair, review repair, review). Prompt text only: no command change, no `patched()`, replay fixture unchanged. Regression test in test/lanes.test.ts, red without the change.
 - Not verified live: needs build, worker restart and a re-run of LOC-156 and LOC-157. ADR 0030.
+
+## 2026-11-01 A prototype task is never escalated to a review [B-106]
+- Measured on LOC-155..162: the escalation net (more than 15 files or 600 lines, risky paths, deleted tests, reported unmet criteria) fired on most screen tasks; LOC-160 spent about 20 of 66 minutes on a rejected review, a repair round and a second review. A prototype reviews once per milestone (ADR 0018, 0029).
+- `lane.escalation = false` for tier prototype in src/workflows.ts under `patched("prototype-no-escalation")`; replay test passes unchanged. The two escalation tests now run on tier mvp; new test "never escalates a prototype task" (40 files, 5000 lines, deleted test, risky path, unmet acceptance) is red without the change. ADR 0031.
+- Not verified live: needs build and worker restart.

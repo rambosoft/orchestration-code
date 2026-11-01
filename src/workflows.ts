@@ -570,6 +570,8 @@ ${formatBrief(brief)}` : formatBrief(brief);
   }
   // ADR 0015: with a tier and a lane the stage list comes from the lane table (a prototype task is implement + verify); runs recorded without them keep the profile's own list.
   const lane = input.tier && input.lane && LANE_PROFILES.includes(profile.id) && profile.stages.includes("implement") ? lanePlan(input.tier, input.lane) : undefined;
+  // ADR 0031: a prototype reviews once per milestone, in the check task; the size and path escalation (more than 15 files or 600 lines, risky paths) added a review to nearly every screen task. patched(): runs recorded before this kept the escalation.
+  if (lane && input.tier === "prototype" && patched("prototype-no-escalation")) lane.escalation = false;
   const stageList: WorkflowProfile["stages"] = lane ? [...lane.stages] : [...profile.stages];
   for (const stage of stageList) {
     currentStage = stage;
