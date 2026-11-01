@@ -178,6 +178,13 @@ describe("workflow lanes", () => {
     expect(stages).toEqual(["implement", "verify"]);
     expect(calls[0]!.prompt).toContain("Add a percentage button");
   }, 60_000);
+  it("gives a lean task's implementer the full task text, so every acceptance criterion reaches it (regression: T33 saw only AC1)", async () => {
+    const prompt = ["Implement the three type roles as reusable pieces.", "", "Read first: docs/UI_RULES.md and docs/SCREEN_SPECS.md.", "", "Acceptance criteria:", "- T33-AC1: A heading element shows a sprite and never breaks a mixed string", "- T33-AC2: A Woodcut text style renders dynamic labels at 16sp or larger", "- T33-AC3: A scoreboard display uses exactly three colours"].join("\n");
+    const { result, stages, calls } = await run({ tier: "prototype", lane: "standard", prompt });
+    expect(result.status, result.message).toBe("completed");
+    expect(stages).toEqual(["implement", "verify"]);
+    for (const text of ["Read first: docs/UI_RULES.md", "T33-AC1: A heading element", "T33-AC2: A Woodcut text style renders dynamic labels", "T33-AC3: A scoreboard display uses exactly three colours"]) expect(calls[0]!.prompt, text).toContain(text);
+  }, 60_000);
   it("adds a review to a light task whose result is risky, and says why", async () => {
     const { result, stages } = await run({ tier: "prototype", lane: "light" }, { changes: { files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] } });
     expect(result.status, result.message).toBe("completed");
