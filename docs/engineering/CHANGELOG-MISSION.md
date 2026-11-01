@@ -143,3 +143,12 @@ One line per completed item: id, commit, evidence.
 - `effectiveLane` (src/lanes.ts, called by src/server.ts): on a prototype every non-check task is at most standard, the check is always heavy. `QualityCommand.scope: "milestone"` + `gateCommandsFor`: the PlayMode suite gates only the milestone check (Unity template sets it for prototypes). Prototype task text no longer asks for the full PlayMode run. `assessChanges.countedFiles` keeps .meta and media files out of the 15-file escalation limit; `files` is unchanged.
 - Replay safety: decided in the bridge and in activity output, no workflow command change, no `patched()`, fixture unchanged. Tests: test/lanes.test.ts, test/acceptance.test.ts.
 - Not verified live: needs build, worker restart and a bridge rebuild; the time saved is estimated from the log, not measured after the change.
+
+## 2026-10-31 Escalation counts authored lines only [B-104]
+- Live finding (Cinderfield LOC-144): a sprite import rewrote 233 `.meta` files and counted 5129 changed lines, so the 600-line escalation added a review to a prototype task. `authoredLines` and `isGeneratedFile` (src/lanes.ts) now leave generated and binary files out of both the line and the file count; `assessChanges` uses them. Activity output only, so replay is unchanged. Regression test in test/lanes.test.ts.
+- Same run: T22 escalated for 27 authored files (a fair trigger); both tasks needed one acceptance-trace repair pass.
+
+## 2026-11-01 Lean lane keeps the task text [B-105]
+- Live finding (Fairway Frenzy LOC-157): with no plan or brief stage `deterministicPlan` gives the brief the generic acceptance line, the first task line (300 characters) and only the never/do-not sentences; the implement prompt is the brief alone, so ADR 0015's claim that the criteria are already in it was wrong. The implementer saw only T33-AC1 (it contains "never") and refused to invent AC2 to AC5; LOC-156 passed its gates with its rename criterion unread.
+- `briefFromTask` and `briefText()` in src/workflows.ts put the full task text ahead of the brief at the eight places that hand the brief to a model (implement, gate repair, review repair, review). Prompt text only: no command change, no `patched()`, replay fixture unchanged. Regression test in test/lanes.test.ts, red without the change.
+- Not verified live: needs build, worker restart and a re-run of LOC-156 and LOC-157. ADR 0030.

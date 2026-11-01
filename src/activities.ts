@@ -11,7 +11,7 @@ import { unityPreflight } from "./preflight.js";
 import { budgetStatus, runUsage } from "./usage.js";
 import { detectPause, isOnline } from "./provider-gate.js";
 import { PROVIDER_PAUSE } from "./pause-policy.js";
-import type { ChangeStats } from "./lanes.js";
+import { authoredLines, isGeneratedFile, type ChangeStats } from "./lanes.js";
 import { reportResultTo, type ReportOutcome } from "./result-report.js";
 import { paperclipClient } from "./reconcile-service.js";
 import type { RunResult } from "./contracts.js";
@@ -203,13 +203,10 @@ export function classifyProviderError(message: string): ProviderErrorCategory {
 export async function assessChanges(input: { worktree: string }): Promise<ChangeStats> {
   const lines = async (args: string[]): Promise<string[]> => (await runCommand("git", ["-c", "core.quotepath=false", ...args], input.worktree).catch(() => "")).split(/\r?\n/).filter(Boolean);
   const [changed, deletedFiles, added, numstat] = await Promise.all([lines(["diff", "--name-only", "HEAD"]), lines(["diff", "--name-only", "--diff-filter=D", "HEAD"]), lines(["ls-files", "--others", "--exclude-standard"]), lines(["diff", "--numstat", "HEAD"])]);
-  let changedLines = 0;
-  for (const row of numstat) { const match = /^(\d+)\s+(\d+)/.exec(row); if (match) changedLines += Number(match[1]) + Number(match[2]); }
   const files = [...new Set([...changed, ...added])];
-  // Unity .meta files and binary media are imported or generated, not authored risk; they do not count towards the file limit (ADR 0029).
-  return { files, lines: changedLines, deletedFiles, countedFiles: files.filter(file => !GENERATED_FILE.test(file)) };
+  // Generated and binary files count towards neither the file nor the line limit (ADR 0029).
+  return { files, lines: authoredLines(numstat), deletedFiles, countedFiles: files.filter(file => !isGeneratedFile(file)) };
 }
-const GENERATED_FILE = /\.(meta|png|jpe?g|gif|webp|wav|ogg|mp3|ttf|otf)$/i;
 
 /** Reports a finished run to its Paperclip issue (ADR 0018). Safe to retry: a result already on the issue is not posted again. Needs PAPERCLIP_API_TOKEN on the worker, like the reconcile service. */
 export async function reportResult(input: { workflowId: string; issueId: string; result: RunResult }): Promise<ReportOutcome> {

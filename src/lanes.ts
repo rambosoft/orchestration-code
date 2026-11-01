@@ -76,7 +76,16 @@ export const ESCALATION = { maxFiles: 15, maxLines: 600 } as const;
 const RISKY_PATH = /(^|\/)(auth|security|crypto|payments?|billing|migrations?|schema|secrets?|\.github|docker-compose[^/]*|dockerfile)(\/|\.|$)|\.(sql|env|pem|key)$/i;
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|tests?\.cs$/i;
 /** `countedFiles` (ADR 0029) leaves out generated and binary files (.meta, images, audio, fonts) for the file-count limit only; results recorded without it count every file, so replay is unchanged. */
-export type ChangeStats = { files: string[]; lines: number; deletedFiles: string[]; countedFiles?: string[] };
+/** Generated or binary files (Unity .meta, images, audio, fonts): imported, not authored risk, so they count towards neither the file limit nor the line limit (ADR 0029). */
+const GENERATED_FILE = /\.(meta|png|jpe?g|gif|webp|wav|ogg|mp3|ttf|otf)$/i;
+export const isGeneratedFile = (file: string): boolean => GENERATED_FILE.test(file.replace(/\\/g, "/"));
+/** Changed lines from `git diff --numstat` rows ("added<TAB>deleted<TAB>path"), leaving out generated files. */
+export function authoredLines(numstat: readonly string[]): number {
+  let total = 0;
+  for (const row of numstat) { const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(row); if (match && !isGeneratedFile(match[3]!)) total += Number(match[1]) + Number(match[2]); }
+  return total;
+}
+export type ChangeStats ={ files: string[]; lines: number; deletedFiles: string[]; countedFiles?: string[] };
 
 /** Why a result that skipped review should get one anyway. Empty means the lane's own stage list stands. */
 export function escalationReasons(stats: ChangeStats, unmetAcceptance: boolean): string[] {

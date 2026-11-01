@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import type { QualityCommand, RunInput, StageInput, StageOutput } from "../src/contracts.js";
-import { ESCALATION, LANES, TIERS, MILESTONE_CHECK_PREFIX, effectiveLane, escalationReasons, gateCommandsFor, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
+import { ESCALATION, LANES, TIERS, MILESTONE_CHECK_PREFIX, authoredLines, effectiveLane, isGeneratedFile, escalationReasons, gateCommandsFor, laneFor, lanePlan, type ChangeStats, type Lane, type Tier } from "../src/lanes.js";
 import { unityGates } from "../src/bootstrap-templates.js";
 import { parseTaskDirectives } from "../src/openspec-policy.js";
 import { buildIssuePlan } from "../src/bootstrap.js";
@@ -95,6 +95,12 @@ describe("escalation", () => {
     expect(escalationReasons(stats({ files: art, countedFiles: ["Assets/Scripts/Runtime/GolfArt.cs"] }), false)).toEqual([]);
     expect(escalationReasons(stats({ files: art }), false)[0]).toContain("files changed"); // a result recorded without countedFiles keeps counting every file
   });
+  it("counts changed lines without the rewritten .meta files of a sprite import (regression: 5129 lines on LOC-144)", () => {
+    const metas = Array.from({ length: 233 }, (_, i) => `22	0	Assets/Art/Golf/Tiles/t${i}.png.meta`);
+    expect(authoredLines([...metas, "40	5	Assets/Scripts/Runtime/GolfArt.cs", "-	-	Assets/Art/Golf/Ui/x.png", "7	1	docs/GOLF_ART.md"])).toBe(53);
+    expect(authoredLines(["10	2	src/a.ts"])).toBe(12);
+    expect([isGeneratedFile("a/b.png.meta"), isGeneratedFile("a\b.PNG"), isGeneratedFile("a/Board.cs"), isGeneratedFile("a/Catalog.asset")]).toEqual([true, true, false, false]);
+  });
   it("does not mistake a path that only contains the word for a risky one", () => {
     expect(escalationReasons(stats({ files: ["src/authors/list.ts", "src/schemas-doc.md"] }), false)).toEqual([]);
   });
@@ -171,6 +177,13 @@ describe("workflow lanes", () => {
     expect(result.status, result.message).toBe("completed");
     expect(stages).toEqual(["implement", "verify"]);
     expect(calls[0]!.prompt).toContain("Add a percentage button");
+  }, 60_000);
+  it("gives a lean task's implementer the full task text, so every acceptance criterion reaches it (regression: T33 saw only AC1)", async () => {
+    const prompt = ["Implement the three type roles as reusable pieces.", "", "Read first: docs/UI_RULES.md and docs/SCREEN_SPECS.md.", "", "Acceptance criteria:", "- T33-AC1: A heading element shows a sprite and never breaks a mixed string", "- T33-AC2: A Woodcut text style renders dynamic labels at 16sp or larger", "- T33-AC3: A scoreboard display uses exactly three colours"].join("\n");
+    const { result, stages, calls } = await run({ tier: "prototype", lane: "standard", prompt });
+    expect(result.status, result.message).toBe("completed");
+    expect(stages).toEqual(["implement", "verify"]);
+    for (const text of ["Read first: docs/UI_RULES.md", "T33-AC1: A heading element", "T33-AC2: A Woodcut text style renders dynamic labels", "T33-AC3: A scoreboard display uses exactly three colours"]) expect(calls[0]!.prompt, text).toContain(text);
   }, 60_000);
   it("adds a review to a light task whose result is risky, and says why", async () => {
     const { result, stages } = await run({ tier: "prototype", lane: "light" }, { changes: { files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] } });

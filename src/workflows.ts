@@ -225,13 +225,19 @@ async function runProject(input: RunInput): Promise<RunResult> {
   let analysisNote: string | undefined;
   let plan: Plan | undefined;
   let executionBrief: ExecutionBrief | undefined;
+  // ADR 0030: a lane without plan and brief stages builds its brief from the task text, which keeps only the goal line and the prohibition sentences, so the acceptance criteria and the reading list never reached the implementer or the reviewer. For such a run the brief text is the full task text (binding) followed by the brief. Prompt text only: no workflow command changes.
+  let briefFromTask = false;
+  const briefText = (brief: ExecutionBrief): string => briefFromTask ? `TASK (the full text from the task board; its acceptance criteria are binding):
+${workflowPrompt}
+
+${formatBrief(brief)}` : formatBrief(brief);
   let openSpecChangeId: string | undefined;
   let deterministicVerification: StageOutput | undefined;
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const limitedProviders = new Set<string>();
   const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
-    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? formatBrief(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
+    const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? briefText(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId };
     if (stage === "review" && input.visual) args.visual = input.visual;
     if (input.budget) args.budget = input.budget;
@@ -309,7 +315,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
     gateRepairCount++;
     const finding: ReviewFinding = { severity: "high", category: "tests", title: `Deterministic gate failed: ${failed.summary.slice(0, 200)}`, evidence: evidence.slice(0, 6000), fixableInCode: true };
     warnings.push({ stage: "verify", message: `a deterministic check failed (${failed.summary.slice(0, 160)}); one repair pass ran before the checks were repeated` });
-    try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief), [finding], gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
+    try { await execute("implement", { prompt: implementationPrompt(briefText(executionBrief), [finding], gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
     catch (error) { if (isCancellation(error)) throw error; return failed; }
     return await execute("verify", { provider: "fake", verificationOnly: true });
   };
@@ -571,6 +577,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
     if (lane && stage === "implement" && !executionBrief) {
       plan ??= { ...deterministicPlan({ taskPrompt: workflowPrompt }), hard_constraints: [...new Set([...extractHardConstraints(openSpecContext), ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])] };
       executionBrief = deterministicBrief(plan, openSpecContext);
+      briefFromTask = true;
     }
     if (stage === "implement" && input.approval) {
       // patched(): runs already waiting without a timer must replay the original unbounded wait.
@@ -637,10 +644,10 @@ async function runProject(input: RunInput): Promise<RunResult> {
             stopReason = "verify_activity_failed";
             return finish("failed", `verify Activity failed before review: ${failureDetails(error)}`);
           }
-          output = await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) });
+          output = await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) });
         } else {
           const [review, verification] = await Promise.all([
-            execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
+            execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext) }),
             execute("verify", { provider: "fake", verificationOnly: true }),
           ]);
           output = review;
@@ -658,7 +665,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
         if (!verification.ok) verification = await repairGate(verification);
         deterministicVerification = verification; output = verification;
       } else {
-        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })
+        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })
           : await execute(stage);
       }
     }
@@ -709,7 +716,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
           if (patched("publish-with-open-findings")) { openFindings = [...blocking, ...(unfixableAcceptance ? external : [])]; stopReason = "review_findings_unresolved"; break; }
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
-        try { await execute("implement", { prompt: implementationPrompt(formatBrief(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
+        try { await execute("implement", { prompt: implementationPrompt(briefText(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext) }); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
         try {
           let verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
@@ -717,7 +724,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
           deterministicVerification = verification;
           if (!verification.ok) { unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${verification.summary}`); }
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }
-        try { output = await readable(await execute("review", { prompt: reviewPrompt(formatBrief(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })); }
+        try { output = await readable(await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext) })); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "follow_up_review_failed"; return finish("failed", `follow-up review failed: ${failureDetails(error)}`); }
         // A follow-up review may only keep blocking findings that restate a prior blocker or show a concrete scenario; the rest become notes.
         output = requireSubstantiatedBlockers(output, blocking);
