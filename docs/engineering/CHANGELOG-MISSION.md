@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 testing, AI files, review, model routing and the native bridge (ADR 0035, 0036, B-130..B-145)
+- Design only. ADR 0035: four test layers with a case matrix, canonical AGENTS.md with rule ids and an enforcement manifest, rule-aware risk-based review, per-area model routing (Opus for critical implementation), area-parallel scheduling, recipes and metrics, deterministic Vue extraction. ADR 0036: a versioned native bridge protocol with a handshake and origin allow-list, Android hardening, native-mediated http provider access, an https site with a temporary http exception, a host simulator, secrets hygiene. Roadmap with phases, readiness and 16 open questions added.
+
 ## 2026-11-02 engineering constitution design (ADR 0034, B-121..B-129)
 - Design only. The operator's React/TypeScript/Vite rules and the TV/media platform demands become pack content with gates: a generic pack, a media-tv-app pack, an Xtream provider skill; page-behaviour docs with an AI map and a drift check; a tech-debt ledger; a unified input layer; a four-level storage contract; a large-catalogue plan that states its provider limit. Source: the operator's rules plus a secondary analysis whose library and standards claims are to be verified at scaffold time. Nothing implemented.
 
