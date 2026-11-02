@@ -1,0 +1,88 @@
+{
+  "id": "luxus-app",
+  "aliases": [],
+  "name": "Luxus App",
+  "root": "luxus-app",
+  "containerRoot": "/workspace/projects/luxus-app",
+  "repository": {
+    "remote": "origin",
+    "targetBranch": "main",
+    "requiredSourcePaths": [
+      "README.md"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "tier": "mvp",
+  "openSpec": {
+    "enabled": false
+  },
+  "analysis": {
+    "enabled": false,
+    "docsDir": "docs/analysis"
+  },
+  "providers": {
+    "default": "codex"
+  },
+  "providerRouting": {
+    "plan": {
+      "provider": "codex"
+    },
+    "research": {
+      "provider": "codex"
+    },
+    "review": {
+      "provider": "codex"
+    },
+    "verify": {
+      "provider": "codex"
+    },
+    "implement": {
+      "provider": "claude"
+    },
+    "analyze": {
+      "provider": "codex"
+    },
+    "openspec": {
+      "provider": "codex"
+    },
+    "survey": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 900000,
+    "openspec": 720000,
+    "survey": 1500000
+  },
+  "stack": {
+    "profile": "node-web"
+  },
+  "qualityCommands": [
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "lint"
+      ],
+      "severity": "warn"
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "uiUx": {
+    "enabled": false,
+    "autoSelect": true,
+    "include": [],
+    "exclude": []
+  },
+  "policy": {
+    "maxReviewRounds": 2,
+    "maxParallelism": 1,
+    "requireApprovalBeforeMerge": false
+  }
+}
