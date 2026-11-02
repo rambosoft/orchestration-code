@@ -1,5 +1,11 @@
 # Mission changelog
 
+## 2026-11-02 first live survey of luxus-app
+- Run through the command line (pilot runbook) after fixing the worker's Node (FM-066) and the dependency install on read-only runs (FM-067). Result: a usable survey with modules, critical areas (cache, player, carousel, search and sort, Xtream), repo constraints and a Chrome 38 versus 53 contract conflict; draft PR 333 on rambosoft/luxus-app. Run record: docs/engineering/knowledge/metrics/runs/2026-11-02-survey-luxus-app.json.
+
+## 2026-11-02 investigations skip the dependency install (FM-067); EGM plugin assessment
+- research, architecture and survey runs no longer run the dependencies stage (npm ci); guarded by patched('investigation-skips-dependencies') so recorded histories replay; reproduced by a failing test first. Found on the first live survey of luxus-app, which sat in npm ci for 20+ minutes. Also an assessment of google/elephant-goldfish-model with a design gate for critical areas as the main takeaway (B-159..B-161).
+
 ## 2026-11-02 parallel gates (B-131) and the wrong Node in the worker (FM-066)
 - A quality command may be marked `parallel: true`: consecutive marked commands run at the same time, results are recorded in the configured order, the first failing command still decides the verdict, warn severity is honoured, Unity commands are never batched and the .meta healing stays out of a batch. The verify loop's per-check body became `runOne`. The deterministic test passes only with real concurrency (one command waits for a file another creates). Separately, the first live survey failed at admission with spawn npm ENOENT: the worker supervisor had picked the Codex desktop app's bundled Node 24, which has no npm beside it; run-worker.ps1 now selects a Node with npm and logs it.
 

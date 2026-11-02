@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "measured": "2026-11-02T16:26:08.965Z",
+  "projectId": "luxus-app",
+  "outcomes": [
+    {
+      "taskId": "LUX-SURVEY-3",
+      "attempt": 1,
+      "workflowId": "pc-LUX-SURVEY-3-1-a1",
+      "status": "completed",
+      "message": "report produced; draft PR published",
+      "publish": {
+        "branch": "codex/lux-survey-3-1-a1",
+        "baseSha": "fb1f17a76e8156abac9e55268b47c03dbfafb9f3",
+        "headSha": "9084ac93d1c12beaa9e2258dd28a63b0e16e9973",
+        "prUrl": "https://github.com/rambosoft/luxus-app/pull/333",
+        "prBaseBranch": "main"
+      },
+      "stages": [
+        {
+          "stage": "survey",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 367
+        },
+        {
+          "stage": "survey",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 107,
+          "inputTokens": 120411,
+          "outputTokens": 6537
+        }
+      ],
+      "totalSeconds": 523
+    }
+  ],
+  "totals": {
+    "seconds": 474,
+    "inputTokens": 120411,
+    "outputTokens": 6537,
+    "byProvider": {
+      "codex": {
+        "seconds": 474,
+        "inputTokens": 120411,
+        "outputTokens": 6537
+      }
+    }
+  }
+}

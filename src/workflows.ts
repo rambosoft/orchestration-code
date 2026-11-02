@@ -194,7 +194,8 @@ async function runProject(input: RunInput): Promise<RunResult> {
       repository = assembled ? { ...input.repository, baseSha: assembled.baseSha, prBaseBranch: assembled.prBaseBranch } : input.repository;
       workspace = await prepareWorktree({ runId: input.runId, projectRoot: input.projectRoot, baseSha: repository.baseSha, branch: repository.branch, requiredSourcePaths: repository.requiredSourcePaths });
       currentStage = "dependencies";
-      await prepareProjectDependencies(workspace);
+      // A read-only investigation (research, architecture, survey) never runs the project's code, so installing its dependencies only costs time and can hang on an old stack (luxus-app: npm ci ran for 20+ minutes). patched(): runs recorded before this installed them.
+      if (!(investigating && patched("investigation-skips-dependencies"))) await prepareProjectDependencies(workspace);
       completedStages.push("dependencies");
     } catch (error) {
       return { runId: input.runId, status: "failed", stages, artifactRefs, message: `admission recheck failed before branch creation: ${failureDetails(error)}` };

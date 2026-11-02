@@ -206,7 +206,7 @@ describe("context pack", () => {
 
 type Doc = { dir?: string; docsDir?: string; name?: string; taskId?: string; markdown: string };
 type Defect = { stage: string; apply: (summary: string) => string; mode: "first" | "always" };
-type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
+type RunState = { dependencyPreps: number; calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
@@ -220,7 +220,7 @@ beforeAll(async () => {
   const activities = {
     checkDependencies: async () => undefined,
     prepareWorktree: async () => path.join(tmp, "wt"),
-    prepareProjectDependencies: async () => ({ installed: false, summary: "none" }),
+    prepareProjectDependencies: async () => { currentRun.dependencyPreps++; return { installed: false, summary: "none" }; },
     writeAnalysisDocument: async (input: { taskId: string; docsDir: string; markdown: string }) => { currentRun.docs.push({ docsDir: input.docsDir, taskId: input.taskId, markdown: input.markdown }); return path.join(tmp, "analysis.md"); },
     writeDocument: async (input: { dir: string; name: string; markdown: string }) => { currentRun.docs.push({ dir: input.dir, name: input.name, markdown: input.markdown }); return path.join(tmp, `${input.name}.md`); },
     buildSurveyContext: async () => ({ inventory: { text: "INVENTORY_MARKER: 2 routes", routes: [{ file: "pages/a.vue", lines: 100 }, { file: "pages/b.vue", lines: 700 }], stores: ["store/session.js"], files: 9 }, packText: "PACK_MARKER: guidance", files: ["AGENTS.md"] }),
@@ -249,7 +249,7 @@ afterAll(async () => { worker.shutdown(); await running; await env.teardown(); a
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
 async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment" | "approval"): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
-  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
+  const state: RunState = { dependencyPreps: 0, calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
   runs.set(id, state); currentRun = state;
   const full: RunInput = { runId: id, taskId: `T-${sequence}`, projectId: "p", profile: "bugfix", provider: "fake", projectRoot: tmp, artifactsDir: tmp, repository, qualityCommands: [{ executable: "npm", args: ["test"] }], ...input };
   const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "typed", workflowId: id, args: [full] });
@@ -322,6 +322,17 @@ describe("bug flow in the workflow", () => {
 });
 
 describe("survey in the workflow (ADR 0032)", () => {
+  it("does not install the project's dependencies for a read-only investigation (survey, research, architecture)", async () => {
+    for (const taskType of ["survey", "research", "architecture"] as const) {
+      const { result, state } = await run({ taskType, profile: "research", prompt: "Look at the app", qualityCommands: [] });
+      expect(result.status, `${taskType}: ${result.message}`).toBe("completed");
+      expect(state.dependencyPreps, taskType).toBe(0);
+    }
+  });
+  it("still installs dependencies for a code task", async () => {
+    const { state } = await run({ prompt: "Implement the requested behavior" });
+    expect(state.dependencyPreps).toBeGreaterThan(0);
+  });
   it("surveys from the inventory, commits the report under docs/survey and implements nothing", async () => {
     const { result, state } = await run({ taskType: "survey", profile: "research", prompt: "Mode: migrate\nSurvey the Vue app for a React rebuild", qualityCommands: [] });
     expect(result.status).toBe("completed");
