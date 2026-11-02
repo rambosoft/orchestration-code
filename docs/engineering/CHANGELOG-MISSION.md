@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 react-ts-vite standards pack and the luxus-app-react repository (B-121..B-124, B-132, B-133, B-147)
+- templates/react-ts-vite (AGENTS.md rules R-001..R-020, enforcement manifest, ESLint rules, check scripts for AI files, debt ledger and page documents, tokens.css as the single root scale unit, Renovate and PR template) and scripts/apply-react-pack.mjs, covered by test/react-pack.test.ts (15 tests). Applied to the new repository luxus-app-react where npm run verify passes. Handled on the way: TypeScript 7 and oxlint from the scaffold conflict with typescript-eslint and the custom rules (pinned TypeScript 6.0 and ESLint 9, recorded), solution-style tsconfig made tsc --noEmit a no-op (gate is tsc -b).
+
 ## 2026-11-02 first live survey of luxus-app
 - Run through the command line (pilot runbook) after fixing the worker's Node (FM-066) and the dependency install on read-only runs (FM-067). Result: a usable survey with modules, critical areas (cache, player, carousel, search and sort, Xtream), repo constraints and a Chrome 38 versus 53 contract conflict; draft PR 333 on rambosoft/luxus-app. Run record: docs/engineering/knowledge/metrics/runs/2026-11-02-survey-luxus-app.json.
 

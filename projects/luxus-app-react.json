@@ -1,0 +1,141 @@
+{
+  "id": "luxus-app-react",
+  "aliases": [],
+  "name": "Luxus App React",
+  "root": "luxus-app-react",
+  "containerRoot": "/workspace/projects/luxus-app-react",
+  "repository": {
+    "remote": "origin",
+    "targetBranch": "main",
+    "requiredSourcePaths": [
+      "AGENTS.md"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "tier": "prototype",
+  "openSpec": {
+    "enabled": false
+  },
+  "analysis": {
+    "enabled": false,
+    "docsDir": "docs/analysis"
+  },
+  "providers": {
+    "default": "codex"
+  },
+  "providerRouting": {
+    "plan": {
+      "provider": "codex"
+    },
+    "research": {
+      "provider": "codex"
+    },
+    "review": {
+      "provider": "codex"
+    },
+    "verify": {
+      "provider": "codex"
+    },
+    "implement": {
+      "provider": "claude"
+    },
+    "analyze": {
+      "provider": "codex"
+    },
+    "openspec": {
+      "provider": "codex"
+    },
+    "survey": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 900000,
+    "openspec": 720000
+  },
+  "stack": {
+    "profile": "react-ts"
+  },
+  "qualityCommands": [
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "typecheck"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "lint"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "knip"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "jscpd"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:ai"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:debt"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:pages"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "test"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "uiUx": {
+    "enabled": true,
+    "autoSelect": true,
+    "include": [],
+    "exclude": []
+  },
+  "policy": {
+    "maxReviewRounds": 1,
+    "maxParallelism": 1,
+    "requireApprovalBeforeMerge": false
+  }
+}

@@ -1,0 +1,22 @@
+[
+  { "id": "R-001", "gate": "lint" },
+  { "id": "R-002", "gate": "lint" },
+  { "id": "R-003", "gate": "lint" },
+  { "id": "R-004", "gate": "lint" },
+  { "id": "R-005", "gate": "lint" },
+  { "id": "R-006", "gate": "lint" },
+  { "id": "R-007", "gate": "lint" },
+  { "id": "R-008", "gate": "knip" },
+  { "id": "R-009", "gate": "jscpd" },
+  { "id": "R-010", "gate": "test" },
+  { "id": "R-011", "gate": "check:debt" },
+  { "id": "R-012", "gate": "check:pages" },
+  { "id": "R-013", "gate": "check:ai" },
+  { "id": "R-014", "gate": "prose" },
+  { "id": "R-015", "gate": "prose" },
+  { "id": "R-016", "gate": "prose" },
+  { "id": "R-017", "gate": "prose" },
+  { "id": "R-018", "gate": "prose" },
+  { "id": "R-019", "gate": "prose" },
+  { "id": "R-020", "gate": "prose" }
+]

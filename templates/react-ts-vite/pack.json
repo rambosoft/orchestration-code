@@ -1,0 +1,45 @@
+{
+  "id": "react-ts-vite",
+  "description": "Engineering standards pack for React + TypeScript + Vite projects (ADR 0034, 0035): canonical AGENTS.md with rule ids, enforcement manifest, lint rules, check scripts, page-doc and debt-ledger templates, root scale tokens.",
+  "copy": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/ai/enforcement.json",
+    "docs/ai/INDEX.md",
+    "docs/technical-debt/LEDGER.md",
+    "docs/pages/_TEMPLATE.md",
+    ".github/pull_request_template.md",
+    "eslint.config.js",
+    "renovate.json",
+    "src/styles/tokens.css",
+    "scripts/check-ai-files.mjs",
+    "scripts/check-debt-ledger.mjs",
+    "scripts/check-page-docs.mjs"
+  ],
+  "render": ["AGENTS.md", "docs/ai/INDEX.md"],
+  "standards": { "from": "docs/standards/react-ts-vite.md", "to": "ENGINEERING_STANDARDS.md" },
+  "directories": ["docs/decisions", "docs/migration", "docs/pages", "src/components", "src/hooks", "src/input", "src/pages", "src/services", "src/storage"],
+  "seed": {
+    "docs/migration/findings.md": "# Findings for a decision\n\nChanges that would alter architecture or visible behaviour. Do not make them silently: describe the finding, the options, the recommendation, and keep the old behaviour until it is decided.\n",
+    "docs/migration/todo.md": "# TODO (not done)\n\nWork a task could not finish or deliberately left. One line each, with the file or page and why.\n",
+    "docs/migration/map.md": "# Migration map\n\n| old file | new file | status | tests |\n|---|---|---|---|\n"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:related": "vitest related --run --passWithNoTests",
+    "test:input": "vitest run src/input --passWithNoTests",
+    "test:storage": "vitest run src/storage --passWithNoTests",
+    "test:services": "vitest run src/services --passWithNoTests",
+    "test:pages": "vitest run src/pages --passWithNoTests",
+    "knip": "knip",
+    "jscpd": "jscpd src --min-lines 10 --threshold 5 --reporters console --silent",
+    "check:ai": "node scripts/check-ai-files.mjs",
+    "check:debt": "node scripts/check-debt-ledger.mjs",
+    "check:pages": "node scripts/check-page-docs.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages"
+  },
+  "devDependencies": ["eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-react-hooks", "eslint-plugin-jsx-a11y", "eslint-plugin-jsdoc", "globals", "knip", "jscpd"],
+  "mainImports": ["./styles/tokens.css"]
+}
