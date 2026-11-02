@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 parallel gates (B-131) and the wrong Node in the worker (FM-066)
+- A quality command may be marked `parallel: true`: consecutive marked commands run at the same time, results are recorded in the configured order, the first failing command still decides the verdict, warn severity is honoured, Unity commands are never batched and the .meta healing stays out of a batch. The verify loop's per-check body became `runOne`. The deterministic test passes only with real concurrency (one command waits for a file another creates). Separately, the first live survey failed at admission with spawn npm ENOENT: the worker supervisor had picked the Codex desktop app's bundled Node 24, which has no npm beside it; run-worker.ps1 now selects a Node with npm and logs it.
+
 ## 2026-11-02 consumption highlight (B-146) and a clone finding (B-148)
 - `timing` now prints a Heavy tasks section: tasks whose busy time is at least 3x the median of the same kind of task (project and dominant activity) in their project, with at least 4 tasks and 10 busy minutes, naming the heaviest activity. Found while testing it on the real log: comparing against the whole project's median flagged ordinary implementation runs at 40x because quick checks pulled the median down, so the group is project plus dominant activity. Also: a fresh Windows clone of luxus-app shows 37 media files as modified because of its `* text eol=lf` attributes (B-148).
 

@@ -30,6 +30,7 @@ import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
+import { gateBatches } from "./gate-batches.js";
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { buildIntegrationBase, resolveRemoteBranch, runCommand } from "./workspaces.js";
@@ -266,7 +267,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       return [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
     };
     const earlyTraceProblem = !reusable && checks.some(check => check.executable === "unity") ? await acceptanceTraceProblem().catch(() => undefined) : undefined;
-    for (const check of reusable ? [] : checks) {
+    // One check, run and summarised. Consecutive commands marked `parallel` run at the same time (B-131, src/gate-batches.ts); the .meta healing below stays out of such a batch.
+    const runOne = async (check: QualityCommand, allowHeal: boolean) => {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
@@ -281,7 +283,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
       }
       // Missing .meta files are the Editor's to write (an agent must not invent GUIDs): when a check reports them, one batch import generates them and the check runs again, before anything is handed to a model.
-      if (result.code !== 0 && !isUnity && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
+      if (result.code !== 0 && !isUnity && allowHeal && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
         healedMeta = true;
         const unityProject = await detectUnityProject(input.projectRoot).catch(() => undefined);
         if (unityProject) {
@@ -299,7 +301,13 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
 --- console output (shortened) ---
 ${compactLog(result.output, { maxChars: 1500 })}`;
       }
-      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
+      return { check, result, entry: { executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) } };
+    };
+    for (const batch of reusable ? [] : gateBatches(checks)) {
+      // Results are recorded in the configured order, so the first failing command decides the verdict whether the batch ran in parallel or not.
+      const ran = batch.length > 1 ? await Promise.all(batch.map(item => runOne(item, false))) : [await runOne(batch[0]!, true)];
+      for (const { check, result, entry } of ran) {
+      results.push(entry);
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
@@ -309,6 +317,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
         await writeFile(failed, JSON.stringify({ passed: false, checks: results, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) }, null, 2));
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
         return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => compactLog([r.output, r.stderr].filter(Boolean).join("\n"))), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
+      }
       }
     }
     if (!reusable && fingerprintBefore) {
