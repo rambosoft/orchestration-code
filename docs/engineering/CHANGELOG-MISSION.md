@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 survey stage (ADR 0032, B-108)
+- New read-only task type `survey`: `buildSurveyContext` (inventory of routes, store modules, dependencies and guidance documents, plus the repository's AGENTS.md/CLAUDE.md/docs) then one structured `survey` stage whose report holds modules, hotspots, duplicated logic, constraints, risks and a sized refactor backlog (items without old file paths are dropped; items that would change behaviour are listed under "Needs a decision"). Unreadable answers fall back to one backlog item per route. A bug found by the tests: the shared `level()` helper lowercases its input, so the S/M/L sizes never matched; sizes are now lowercase in the schema and upper-cased after parsing. Workflow: new branch selected by `taskType === "survey"`, existing runs unchanged. Fake provider only.
+
 ## 2026-11-02 existing-project design (ADR 0032, B-107..B-115); B-107 slice 1 done
 - Design only. A project can be adopted as maintain, refactor, migrate or audit; a read-only survey stage produces a sized refactor backlog that feeds the blueprint; refactor and migrate add characterization tests, a parity check, a migration-map ledger and refactor-not-copy gates; the first pack is Vue 2/Nuxt 2 to React with a tiered device matrix. B-107 slice 1 is implemented and tested (src/existing-project.ts, project_mode and existing_folder options, inspect-folder CLI; 933 tests pass); everything else is design.
 

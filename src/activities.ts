@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { reproductionCommandProblem, TEST_PATH, type ReproVerification } from "./bug.js";
 import { buildContextPack as buildPack, type ContextPack } from "./context-pack.js";
+import { buildSurveyInventory } from "./survey-inventory.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
@@ -469,6 +470,14 @@ async function buildContextPackImpl(input: { worktree: string; terms: string[]; 
   return buildPack({ root: input.worktree, terms: input.terms, paths: input.paths, ...(input.maxChars ? { maxChars: input.maxChars } : {}) });
 }
 export const buildContextPack = heartbeating(timedActivity("buildContextPack", buildContextPackImpl, emitActivityEvent));
+
+/** The survey's starting point (ADR 0032): the deterministic inventory plus the repository's own guidance documents. */
+async function buildSurveyContextImpl(input: { worktree: string }) {
+  const inventory = await buildSurveyInventory(input.worktree);
+  const pack = await buildPack({ root: input.worktree, terms: [], paths: ["AGENTS.md", "CLAUDE.md", "docs"], maxChars: 9000 });
+  return { inventory, packText: pack.text, files: pack.files };
+}
+export const buildSurveyContext = heartbeating(timedActivity("buildSurveyContext", buildSurveyContextImpl, emitActivityEvent));
 
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 

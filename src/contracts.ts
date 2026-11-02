@@ -5,7 +5,7 @@ import { CORE_EXECUTABLES, STACK_PROFILE_IDS, stackCommandProblems } from "./sta
 import type { BootstrapOutcome, BootstrapRunInput } from "./bootstrap.js";
 import { TIERS, type Lane, type Tier } from "./lanes.js";
 
-export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint", "design"]);
+export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint", "design", "survey"]);
 export type StageName = z.infer<typeof StageNameSchema>;
 export const ProviderIdSchema = z.enum(["fake", "claude", "codex", "gemini", "openrouter"]);
 const RouteBaseSchema = z.object({ provider: ProviderIdSchema, model: z.string().min(1).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional() });

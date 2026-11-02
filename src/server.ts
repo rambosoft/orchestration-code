@@ -93,7 +93,7 @@ const server = createServer(async (req, res) => {
       const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle);
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
-      const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";
+      const readsRepository = taskType?.flow === "investigation" && (project.providerRouting[taskType.id === "survey" ? "survey" : "explore"]?.provider ?? project.providers.default ?? "fake") !== "fake";
       let repository; let projectContract: string | undefined;
       if (codeWorkflow || readsRepository) {
         if (!project.repository) throw new Error(`project '${project.id}' has no GitHub repository configuration (remote and targetBranch); refusing patch-only execution`);

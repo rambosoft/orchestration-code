@@ -20,10 +20,11 @@ import { blueprintPrompt, buildIssuePlan, charterPrompt, deterministicBlueprint,
 import { renderPlanSummary } from "./bootstrap-docs.js";
 import { usableTemplate } from "./bootstrap-templates.js";
 import { deterministicScope, explorePrompt, formatReportMarkdown, rawReport, repairReportPrompt, repairScopePrompt, scopePrompt, validateReport, validateScope, type Report, type ReportKind, type Scope } from "./research.js";
+import { deterministicSurvey, formatSurveyMarkdown, repairSurveyPrompt, surveyModeFromText, surveyPrompt, validateSurvey, type Survey } from "./survey.js";
 import { assertTokenBudget, BRIEF_HARD_CEILING, BRIEF_SCHEMA_HINT, changeOnlyContext, PLAN_SCHEMA_HINT, repairStructuredPrompt, specSizeWarnings, type OpenSpecDigest, briefPrompt as makeBriefPrompt, canonicalizeBrief, compressBriefPrompt, compressPlanPrompt, estimateTokens, extractHardConstraints, extractTaskConstraints, ExecutionBriefSchema, formatBrief, HANDOFF_BUDGETS, openSpecOptimizationPrompt, repairOpenSpecDigestPrompt, parseStructured, PlanSchema, planningPrompt as makePlanningPrompt, validateBrief, validateBriefCompression, validateOpenSpecDigest, validatePlanCompression, type ExecutionBrief, type Plan } from "./handoffs.js";
 
 const { executeStage } = proxyActivities<typeof activities>({ startToCloseTimeout: "6 hours", heartbeatTimeout: "90 seconds", cancellationType: "WAIT_CANCELLATION_COMPLETED", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
-const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, verifyReproduction, commentOnPullRequest, assessChanges } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
+const { prepareWorktree, collectWorktree, publishWorktree, checkDependencies, prepareProjectDependencies, writeAnalysisDocument, writeDocument, buildContextPack, buildSurveyContext, verifyReproduction, commentOnPullRequest, assessChanges } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 const { prepareOpenSpec, validateOpenSpec, archiveOpenSpecChange } = proxyActivities<typeof activities>({ startToCloseTimeout: "16 minutes", heartbeatTimeout: "90 seconds", retry: { initialInterval: "1 second", maximumInterval: "15 seconds", maximumAttempts: 2 } });
 // Bootstrap steps (ADR 0009): one attempt each, because a retry of a half-finished scaffold or issue creation would duplicate work; the activities report precisely what exists.
 const { prepareBootstrapSandbox, scaffoldProject, materializeIssues } = proxyActivities<typeof activities>({ startToCloseTimeout: "60 minutes", heartbeatTimeout: "90 seconds", retry: { maximumAttempts: 1 } });
@@ -183,7 +184,7 @@ async function runProject(input: RunInput): Promise<RunResult> {
   let workspace = input.projectRoot;
   if (profile.stages.includes("implement") && stageRoute(input, "implement").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "GitHub publication is required for code workflows; configure a clean GitHub repository, target branch, and remote before dispatch." };
   if (profile.stages.includes("implement") && profile.stages.includes("verify") && stageRoute(input, "implement").provider !== "fake" && (input.qualityCommands ?? []).length === 0 && patched("require-quality-commands")) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "No deterministic quality commands are configured for this project and profile, so nothing could verify the implementation. Add qualityCommands (for example npm test) to the project manifest before running code tasks." };
-  if (investigating && stageRoute(input, "explore").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "Research and architecture reports are published as a draft PR document; configure a clean GitHub repository, target branch, and remote before dispatch." };
+  if (investigating && stageRoute(input, input.taskType === "survey" ? "survey" : "explore").provider !== "fake" && !input.repository) return { runId: input.runId, status: "failed", stages, artifactRefs, message: "Research and architecture reports are published as a draft PR document; configure a clean GitHub repository, target branch, and remote before dispatch." };
   // The repository the task is built and published on. It is the admitted one unless the worker assembled the base from several blockers (ADR 0011); runs recorded before that
   // existed got no result from the check, so they keep the admitted base on replay.
   let repository = input.repository;
@@ -520,37 +521,61 @@ ${formatBrief(brief)}` : formatBrief(brief);
     const request = workflowPrompt;
     let report: NonNullable<RunResult["report"]> | undefined;
     try {
-      currentStage = "scope";
-      const scoped = await structuredStage<Scope>({
-        stage: "scope",
-        prompt: scopePrompt(request, kind),
-        parse: output => { return validateScope(output.summary, stageCompletionTokens(output)); },
-        repairPrompt: (previous, diagnostic) => repairScopePrompt(request, previous.summary, diagnostic),
-        repairs: 1,
-        fallback: () => deterministicScope(request),
-      });
-      completedStages.push("scope");
-      currentStage = "context";
-      const pack = await buildContextPack({ worktree: workspace, terms: scoped.value.search_terms, paths: scoped.value.paths_of_interest });
-      completedStages.push("context");
-      currentStage = "explore";
-      let lastReport = "";
-      const explored = await structuredStage<Report>({
-        stage: "explore",
-        prompt: explorePrompt(request, scoped.value, pack.text, kind),
-        parse: output => { lastReport = output.summary; return validateReport(output.summary, kind, stageCompletionTokens(output)); },
-        repairPrompt: (previous, diagnostic) => repairReportPrompt(request, previous.summary, diagnostic),
-        repairs: 1,
-        // The text of an unreadable answer is kept, marked as unstructured, rather than throwing a finished exploration away.
-        fallback: () => rawReport(lastReport, scoped.value),
-      });
-      completedStages.push("explore");
-      currentStage = "report";
-      const title = input.repository?.taskTitle ?? input.taskId;
-      const markdown = formatReportMarkdown(explored.value, scoped.value, { taskId: input.taskId, title, kind, filesConsulted: pack.files, ...(explored.degraded ? { note: "The exploration answer was not in the expected format; the report is incomplete." } : {}) });
-      report = { title, markdown };
-      if (workspace !== input.projectRoot) artifactRefs.push(await writeDocument({ worktree: workspace, dir: input.documentsDir ?? (kind === "architecture" ? "docs/architecture" : "docs/research"), name: input.taskId, markdown }));
-      else warnings.push({ stage: "report", message: "no isolated worktree, so the report was not committed; it is only in the issue comment" });
+      if (input.taskType === "survey") {
+        currentStage = "context";
+        const surveyContext = await buildSurveyContext({ worktree: workspace });
+        completedStages.push("context");
+        currentStage = "survey";
+        const mode = surveyModeFromText(request);
+        const surveyed = await structuredStage<Survey>({
+          stage: "survey",
+          prompt: surveyPrompt(request, mode, surveyContext.inventory.text, surveyContext.packText),
+          parse: output => validateSurvey(output.summary, stageCompletionTokens(output)),
+          repairPrompt: (previous, diagnostic) => repairSurveyPrompt(request, previous.summary, diagnostic),
+          repairs: 1,
+          // An unreadable answer still yields the deterministic route backlog, marked as such, rather than no survey at all.
+          fallback: () => deterministicSurvey(surveyContext.inventory, "The survey answer could not be read as a structured report."),
+        });
+        completedStages.push("survey");
+        currentStage = "report";
+        const title = input.repository?.taskTitle ?? input.taskId;
+        const markdown = formatSurveyMarkdown(surveyed.value, { project: title, mode, filesConsulted: surveyContext.files, ...(surveyed.degraded ? { note: "The model answer was not in the expected format; the backlog below is only the route list." } : {}) });
+        report = { title, markdown };
+        if (workspace !== input.projectRoot) artifactRefs.push(await writeDocument({ worktree: workspace, dir: "docs/survey", name: input.taskId, markdown }));
+        else warnings.push({ stage: "report", message: "no isolated worktree, so the survey was not committed; it is only in the issue comment" });
+      } else {
+        currentStage = "scope";
+        const scoped = await structuredStage<Scope>({
+          stage: "scope",
+          prompt: scopePrompt(request, kind),
+          parse: output => { return validateScope(output.summary, stageCompletionTokens(output)); },
+          repairPrompt: (previous, diagnostic) => repairScopePrompt(request, previous.summary, diagnostic),
+          repairs: 1,
+          fallback: () => deterministicScope(request),
+        });
+        completedStages.push("scope");
+        currentStage = "context";
+        const pack = await buildContextPack({ worktree: workspace, terms: scoped.value.search_terms, paths: scoped.value.paths_of_interest });
+        completedStages.push("context");
+        currentStage = "explore";
+        let lastReport = "";
+        const explored = await structuredStage<Report>({
+          stage: "explore",
+          prompt: explorePrompt(request, scoped.value, pack.text, kind),
+          parse: output => { lastReport = output.summary; return validateReport(output.summary, kind, stageCompletionTokens(output)); },
+          repairPrompt: (previous, diagnostic) => repairReportPrompt(request, previous.summary, diagnostic),
+          repairs: 1,
+          // The text of an unreadable answer is kept, marked as unstructured, rather than throwing a finished exploration away.
+          fallback: () => rawReport(lastReport, scoped.value),
+        });
+        completedStages.push("explore");
+        currentStage = "report";
+        const title = input.repository?.taskTitle ?? input.taskId;
+        const markdown = formatReportMarkdown(explored.value, scoped.value, { taskId: input.taskId, title, kind, filesConsulted: pack.files, ...(explored.degraded ? { note: "The exploration answer was not in the expected format; the report is incomplete." } : {}) });
+        report = { title, markdown };
+        if (workspace !== input.projectRoot) artifactRefs.push(await writeDocument({ worktree: workspace, dir: input.documentsDir ?? (kind === "architecture" ? "docs/architecture" : "docs/research"), name: input.taskId, markdown }));
+        else warnings.push({ stage: "report", message: "no isolated worktree, so the report was not committed; it is only in the issue comment" });
+      }
     } catch (error) {
       if (isCancellation(error)) throw error;
       stopReason = "exploration_failed";

@@ -1,6 +1,6 @@
 # ADR 0032: Existing projects (maintain, refactor, migrate, audit) and the survey stage
 
-Status: Proposed (2026-11-02). B-107 first slice implemented (folder checks, mode option); the rest is design. Extends ADR 0009 (bootstrap), ADR 0008 (task types) and ADR 0017 (`onboard`).
+Status: Proposed (2026-11-02). B-107 first slice (folder checks, mode option) and B-108 (survey stage) implemented and tested with the fake provider; the rest is design. Extends ADR 0009 (bootstrap), ADR 0008 (task types) and ADR 0017 (`onboard`).
 
 ## Context
 - The bootstrap wizard only creates new projects. An existing repository can be registered with the `onboard` CLI (ADR 0017), but the wizard has no way to choose a folder, no notion of why the project is being adopted, and nothing that studies the code before tasks are planned.
