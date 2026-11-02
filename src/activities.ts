@@ -31,6 +31,7 @@ import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
 import { gateBatches } from "./gate-batches.js";
+import { CHANGED_TOKEN, commandHasChangedToken, expandChangedArgs } from "./affected-tests.js";
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { buildIntegrationBase, resolveRemoteBranch, runCommand } from "./workspaces.js";
@@ -252,6 +253,24 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       return { ok: false, summary: "quality gate failed: no deterministic quality commands are configured", findings: ["Configure at least one deterministic verification command."], artifactRefs: [], provider: "quality-gate", durationMs, metadata: { checks: [], passed: false, activityDurationMs: durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     }
     const results: NonNullable<typeof qualityChecks> = [];
+    let changedFiles: string[] | undefined;
+    const preparedChecks = async (batch: QualityCommand[]): Promise<QualityCommand[]> => {
+      if (!batch.some(check => commandHasChangedToken(check.args))) return batch;
+      if (!changedFiles) {
+        const status = await runCheck("git", ["status", "--porcelain", "-z", "--untracked-files=all"], input.projectRoot, 200_000);
+        if (status.code !== 0) throw new Error(`could not read changed files for {changed}: ${status.stderr || status.output}`);
+        changedFiles = changedPaths(status.output).filter(file => !file.deleted).map(file => file.file.replace(/\\/g, "/"));
+      }
+      const prepared: QualityCommand[] = [];
+      for (const check of batch) {
+        if (!commandHasChangedToken(check.args)) { prepared.push(check); continue; }
+        const expanded = expandChangedArgs(check.args, changedFiles);
+        if (expanded.skipped === "none-changed") qualityWarnings.push(`${check.executable} ${check.args.join(" ")}: skipped, no changed source files`);
+        else if (expanded.skipped === "too-many") qualityWarnings.push(`${check.executable} ${check.args.join(" ")}: skipped, more than 200 changed files; the milestone check runs the full suite`);
+        else prepared.push({ ...check, args: expanded.args });
+      }
+      return prepared;
+    };
     // The same commands on the same files gave a pass before (an activity retry, a resumed run, a repair round that changed nothing): the verdict is reused instead of running the suite again. Failures are never reused.
     const reuseKey = qualityKey(checks);
     const fingerprintBefore = checks.length && qualityReuseEnabled() ? await treeFingerprint(input.projectRoot) : undefined;
@@ -304,8 +323,10 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
       return { check, result, entry: { executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) } };
     };
     for (const batch of reusable ? [] : gateBatches(checks)) {
+      const runnable = await preparedChecks(batch);
+      if (!runnable.length) continue;
       // Results are recorded in the configured order, so the first failing command decides the verdict whether the batch ran in parallel or not.
-      const ran = batch.length > 1 ? await Promise.all(batch.map(item => runOne(item, false))) : [await runOne(batch[0]!, true)];
+      const ran = runnable.length > 1 ? await Promise.all(runnable.map(item => runOne(item, false))) : [await runOne(runnable[0]!, true)];
       for (const { check, result, entry } of ran) {
       results.push(entry);
       if (result.code !== 0 && check.severity === "warn") {
@@ -323,7 +344,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     if (!reusable && fingerprintBefore) {
       // The checks may create files (Unity writes .meta files), so the tree after the run counts too: the next verify of an untouched tree then matches.
       const fingerprintAfter = await treeFingerprint(input.projectRoot);
-      await writePass(artifactsDir, { key: reuseKey, fingerprints: [...new Set([fingerprintBefore, ...(fingerprintAfter ? [fingerprintAfter] : [])])], attempt: input.attempt, checks: results, warnings: qualityWarnings.filter(warning => warning.includes("non-blocking by configuration")) }).catch(() => undefined);
+      await writePass(artifactsDir, { key: reuseKey, fingerprints: [...new Set([fingerprintBefore, ...(fingerprintAfter ? [fingerprintAfter] : [])])], attempt: input.attempt, checks: results, warnings: qualityWarnings.filter(warning => warning.includes("non-blocking by configuration") || warning.includes(": skipped,")) }).catch(() => undefined);
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {
@@ -491,12 +512,12 @@ export const buildSurveyContext = heartbeating(timedActivity("buildSurveyContext
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 
 /** Paths in `git status --porcelain -z` output; a rename or copy entry is followed by its source path, which is skipped. */
-export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean }> {
-  const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean }> = [];
+export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean; deleted: boolean }> {
+  const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean; deleted: boolean }> = [];
   for (let index = 0; index < parts.length; index++) {
     const entry = parts[index]!;
     if (entry.length < 4) continue;
-    changed.push({ file: entry.slice(3), untracked: entry.startsWith("??") });
+    changed.push({ file: entry.slice(3), untracked: entry.startsWith("??"), deleted: entry[0] === "D" || entry[1] === "D" });
     if (/^[RC]/.test(entry) || entry[1] === "R" || entry[1] === "C") index++;
   }
   return changed;

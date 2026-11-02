@@ -5,6 +5,7 @@
 **Add a workflow profile (shape):** add an entry to `src/profiles.ts` (stages, approval, gates); allow its id in `src/server.ts` profile check; add a manifest `qualityCommandsByProfile` entry. Workflow command-sequence changes must use `patched()` and a regenerated replay fixture (`UPDATE_REPLAY_FIXTURE=1 npx vitest run test/replay.test.ts`).
 
 **Add a quality gate:** deterministic gates are manifest `qualityCommands` (executables limited to node/npm/pnpm/yarn in `src/contracts.ts`; widen that enum deliberately). They run in `executeStage` (`stage === "verify"`) with a scrubbed environment (`src/env.ts`).
+An args element exactly equal to `{changed}` expands to changed source paths in the task worktree.
 
 **Add a publish check:** extend `SENSITIVE_PATH` / `SECRET_CONTENT` in `src/publish-guard.ts` and add a case to `test/publish-guard.test.ts`.
 
