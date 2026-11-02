@@ -30,7 +30,7 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   lines.forEach((line, index) => {
     const laneLine = /^\s*Lane\s*:\s*(light|standard|heavy)\s*$/i.exec(line);
     if (laneLine) { removed.add(index); lanes.add(laneLine[1]!.toLowerCase()); return; }
-    const typed = /^\s*(?:Task\s+)?Type\s*:\s*(bug|defect|task|feature|research|explore|spike|architecture|adr)\s*$/i.exec(line);
+    const typed = /^\s*(?:Task\s+)?Type\s*:\s*(bug|defect|task|feature|research|explore|spike|architecture|adr|survey|audit|codebase-survey)\s*$/i.exec(line);
     if (typed) { removed.add(index); types.add(typed[1]!.toLowerCase()); return; }
     const match = /^\s*(OpenSpec|Analysis)\s*:\s*(on|off)\s*$/i.exec(line);
     if (!match) return;

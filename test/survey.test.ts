@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { deterministicSurvey, formatSurveyMarkdown, surveyModeFromText, surveyPrompt, validateSurvey } from "../src/survey.js";
 import { buildSurveyInventory } from "../src/survey-inventory.js";
+import { parseTaskDirectives } from "../src/openspec-policy.js";
 import { resolveTaskType } from "../src/task-types.js";
 
 const item = (over: Record<string, unknown> = {}) => ({ id: "R1", title: "Offline page", kind: "route", old_paths: ["pages/no-internet/index.vue"], target: "A page component", tests: ["parity"], size: "S", depends_on: [], changes_behaviour: false, ...over });
@@ -42,6 +43,10 @@ describe("mode and task type", () => {
     expect(surveyModeFromText("intro\n  mode : Refactor")).toBe("refactor");
     expect(surveyModeFromText("Mode: delete everything")).toBe("audit");
     expect(surveyModeFromText("no mode")).toBe("audit");
+  });
+  it("starts a survey from a 'Type:' line in the task text, which is how the command-line path selects the type", () => {
+    for (const name of ["survey", "audit", "Survey", "codebase-survey"]) expect(parseTaskDirectives(`Type: ${name}\nMode: migrate\nSurvey the app`).taskType).toBe(name.toLowerCase());
+    expect(parseTaskDirectives("Type: survey\nMode: migrate\nSurvey the app").prompt).toBe("Mode: migrate\nSurvey the app");
   });
   it("resolves survey and audit labels to the survey type", () => {
     expect(resolveTaskType({ labels: ["type:survey"] }).type).toBe("survey");
