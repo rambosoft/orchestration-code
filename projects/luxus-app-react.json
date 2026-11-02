@@ -121,7 +121,10 @@
     {
       "executable": "npm",
       "args": [
-        "test"
+        "run",
+        "test:related",
+        "--",
+        "{changed}"
       ]
     },
     {
@@ -130,6 +133,13 @@
         "run",
         "build"
       ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "test"
+      ],
+      "scope": "milestone"
     }
   ],
   "uiUx": {
@@ -142,5 +152,9 @@
     "maxReviewRounds": 1,
     "maxParallelism": 1,
     "requireApprovalBeforeMerge": false
+  },
+  "reference": {
+    "root": "luxus-app",
+    "label": "legacy Nuxt 2 app (read-only)"
   }
 }

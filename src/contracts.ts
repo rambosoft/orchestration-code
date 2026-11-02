@@ -9,6 +9,13 @@ export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "
 export type StageName = z.infer<typeof StageNameSchema>;
 export const ProviderIdSchema = z.enum(["fake", "claude", "codex", "gemini", "openrouter"]);
 const RouteBaseSchema = z.object({ provider: ProviderIdSchema, model: z.string().min(1).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional() });
+const StageRoutingSchema = RouteBaseSchema.extend({ fallback: z.array(RouteBaseSchema).max(3).optional() });
+const ProviderRoutingSchema = z.partialRecord(StageNameSchema, StageRoutingSchema).default({}).superRefine((routes, ctx) => {
+  for (const [stage, route] of Object.entries(routes)) {
+    if (route.provider === "openrouter" && !route.model) ctx.addIssue({ code: "custom", path: [stage, "model"], message: "OpenRouter routes require a model ID" });
+    route.fallback?.forEach((item, index) => { if (item.provider === "openrouter" && !item.model) ctx.addIssue({ code: "custom", path: [stage, "fallback", index, "model"], message: "OpenRouter routes require a model ID" }); });
+  }
+});
 export const UiUxSkillIdSchema = z.enum(["ui-ux-pro-max", "frontend-design", "vercel-composition-patterns", "vercel-react-native-skills"]);
 export type UiUxSkillId = z.infer<typeof UiUxSkillIdSchema>;
 export const UiUxConfigSchema = z.object({
@@ -83,12 +90,8 @@ export const ProjectManifestSchema = z.object({
   containerRoot: z.string().min(1).optional(),
   defaultProfile: z.string().min(1),
   providers: z.object({ default: ProviderIdSchema.optional() }).default({}),
-  providerRouting: z.partialRecord(StageNameSchema, RouteBaseSchema.extend({ fallback: z.array(RouteBaseSchema).max(3).optional() })).default({}).superRefine((routes, ctx) => {
-    for (const [stage, route] of Object.entries(routes)) {
-      if (route.provider === "openrouter" && !route.model) ctx.addIssue({ code: "custom", path: [stage, "model"], message: "OpenRouter routes require a model ID" });
-      route.fallback?.forEach((item, index) => { if (item.provider === "openrouter" && !item.model) ctx.addIssue({ code: "custom", path: [stage, "fallback", index, "model"], message: "OpenRouter routes require a model ID" }); });
-    }
-  }),
+  providerRouting: ProviderRoutingSchema,
+  areaRouting: z.record(z.string(), ProviderRoutingSchema).optional(),
   providerTimeouts: z.partialRecord(StageNameSchema, z.number().int().positive().max(14_400_000)).default({}),
   /** Per-task token budget in input-token equivalents (src/usage.ts costUnits): a warning at `warnAt` of it, a hard stop (TokenBudgetExceeded) at the limit. Absent: no budget. */
   budget: z.object({ maxCostUnits: z.number().int().positive(), warnAt: z.number().min(0.1).max(1).default(0.8) }).optional(),

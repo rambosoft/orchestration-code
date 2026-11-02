@@ -33,10 +33,23 @@ describe("survey backlog planning", () => {
     expect(first.prompt).toContain("pages/");
     expect(first.prompt).toContain("Target:");
     expect(first.prompt).toContain("CRITICAL AREA");
+    expect(first.prompt.startsWith("Area: ")).toBe(true);
+    expect(first.prompt.indexOf("Goal:")).toBeGreaterThan(first.prompt.indexOf("Area: "));
+    expect(first.prompt).toContain("Critical: yes");
     expect(first.prompt.length).toBeLessThan(3500);
     expect(result.spec.tasks.every(task => Object.keys(task).sort().join(",") === "prompt,taskId,title")).toBe(true);
     expect(result.spec.projectId).toBe("luxus");
     expect(result.spec.tasks.find(task => task.taskId === "LUX-R3")!.prompt).toContain("pending a decision");
+  });
+
+  it("infers fixture areas and writes task directives", async () => {
+    const markdown = await readFile(new URL("./fixtures/survey-luxus-app.md", import.meta.url), "utf8");
+    const result = planFromBacklog(parseSurveyBacklog(markdown), { projectId: "luxus", prefix: "LUX" });
+    const prompt = (id: string) => result.spec.tasks.find(task => task.taskId === `LUX-${id}`)!.prompt;
+    expect(prompt("R4")).toMatch(/^Area: xtream-fetch\nCritical: yes\nGoal:/);
+    expect(prompt("R8")).toMatch(/^Area: carousel\nCritical: yes\nGoal:/);
+    expect(prompt("R3")).toMatch(/^Area: shell-auth\nGoal:/);
+    expect(prompt("R3")).not.toContain("Critical: yes");
   });
 
   it("reports cycles and unknown dependencies with involved ids", () => {
