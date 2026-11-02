@@ -57,23 +57,7 @@
   "stack": {
     "profile": "node-web"
   },
-  "qualityCommands": [
-    {
-      "executable": "npm",
-      "args": [
-        "run",
-        "lint"
-      ],
-      "severity": "warn"
-    },
-    {
-      "executable": "npm",
-      "args": [
-        "run",
-        "build"
-      ]
-    }
-  ],
+  "qualityCommands": [],
   "uiUx": {
     "enabled": false,
     "autoSelect": true,

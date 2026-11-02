@@ -50,3 +50,6 @@ Status: Proposed (2026-11-02). B-107 first slice (folder checks, mode option) an
 - The bridge container mounts only `ORCHESTRATOR_PROJECTS_ROOT` (`C:\workspace\orchestration-projects`), and manifest roots must stay inside it. The first addendum's "local sibling folder `C:\workspace\luxus-app-react`" is therefore corrected: the survey source is a clone at `orchestration-projects\luxus-app` and the new app is `orchestration-projects\luxus-app-react`, local only until the pilot is judged good. The allow-listed browse roots for existing-project intake default to that folder.
 - Pilot scope fixed: pages `no-internet` and `blocked`, components `SettingsChevronRow`, `SettingsTextDisplay`, `SettingsSectionHeader`, `OverlayCloseButton`, `ProgressBarComponent`. Pass thresholds are relative to the first batch. See the roadmap, section 10, and `docs/engineering/runbooks/pilot-via-cli.md`.
 
+## Addendum 3 (2026-11-02): one contract per app
+The Chrome 53 floor applies to the new app only. `luxus-app` keeps its Chrome 38 contract and its own build; the two apps are not unified. The quality-gate workflows of `luxus-app` are disabled and its manifest carries no quality commands (roadmap section 12), so the old repository is a read-only reference and fallback for the pilot.
+

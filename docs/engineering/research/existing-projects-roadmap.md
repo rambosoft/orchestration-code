@@ -123,3 +123,10 @@ Open questions raised for the operator (recommendations first):
 | OQ-F | Push `luxus-app` `main` (the `858b4c22` commit)? | Your call; not needed if OQ-A uses the reset option |
 | OQ-G | Renumber `docs/engineering/research/android-support.md` (it plans ADR 0031 and B-106..B-115, now taken) and commit it? | Yes, renumber to ADR 0037 and B-149 onward |
 
+## 12. Decisions of 2026-11-02 (evening)
+- **Chrome 53 is the floor of the NEW app** (legacy bundle for Chrome 53 and up). **`luxus-app` stays exactly as it is**, including its Chrome 38 support contract; it is the reference and the fallback for older devices. The survey's conflict between the two contracts is resolved this way: two apps, two contracts.
+- **PR #333 (the survey) is approved** by the operator. It is not merged (merging is a separate action and `main` may feed release automation; asked in chat).
+- **Quality gates of `luxus-app` are stopped, now and for the future**: GitHub workflows `Quality Gates` and `Quality Gates Legacy (Nightly)` (the only scheduled one) are disabled; the in-progress runs on PR #333 were cancelled; the release workflows (`docker-nuxt`, `auto-tag-on-release`, `build-branch`) are untouched; `projects/luxus-app.json` has no quality commands, so a code task on `luxus-app` is refused by the bridge and only read-only types (survey, research, architecture) run. Undo with `gh workflow enable` and by restoring the manifest commands.
+- **Tests:** documentation-only changes are committed without running the test suite (a control-character check still runs); code changes keep their targeted tests. The new project's gates are not affected.
+- Phase 1 approved by the operator ("go").
+
