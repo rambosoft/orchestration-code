@@ -77,6 +77,8 @@ export const ProjectManifestSchema = z.object({
   aliases: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/)).default([]),
   name: z.string().min(1),
   root: z.string().min(1),
+  /** Read-only source repository available to migration task prompts. */
+  reference: z.object({ root: RelativeDirSchema, label: z.string().trim().min(1).max(80).default("reference repository") }).optional(),
   rootEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
   containerRoot: z.string().min(1).optional(),
   defaultProfile: z.string().min(1),
