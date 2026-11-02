@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 consumption highlight (B-146) and a clone finding (B-148)
+- `timing` now prints a Heavy tasks section: tasks whose busy time is at least 3x the median of the same kind of task (project and dominant activity) in their project, with at least 4 tasks and 10 busy minutes, naming the heaviest activity. Found while testing it on the real log: comparing against the whole project's median flagged ordinary implementation runs at 40x because quick checks pulled the median down, so the group is project plus dominant activity. Also: a fresh Windows clone of luxus-app shows 37 media files as modified because of its `* text eol=lf` attributes (B-148).
+
 ## 2026-11-02 roadmap questions answered; survey selectable from a task prompt (B-146, B-147)
 - The `Type:` directive of a task prompt did not list survey, audit or codebase-survey, so the command-line path could not start a survey; found while writing the pilot runbook, reproduced by a failing test in test/survey.test.ts, fixed in src/openspec-policy.ts. Roadmap answers recorded, ADR 0032 location corrected to the projects root, pilot runbook added, B-146 and B-147 added.
 

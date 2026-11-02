@@ -101,6 +101,31 @@ export function summarizeTiming(all: TimingEvent[], options: SummaryOptions = {}
 
 const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
 
+export type HeavyTask = { key: string; project: string; busyMs: number; medianMs: number; ratio: number; heaviest: { name: string; ms: number } };
+/**
+ * Tasks whose busy time is far above the median of the same kind of task in their own project (B-146; kind = the activity that took most of the time, so implementation runs are not compared with quick checks). Subscriptions hide money cost, so a runaway task shows up as time: flagged at `factor` times the median,
+ * only with at least `minTasks` tasks in the project and at least `minBusyMs` busy, so small samples and short tasks never raise noise. The heaviest activity says where to optimise.
+ */
+export function flagHeavyTasks(tasks: TaskTiming[], options: { factor?: number; minTasks?: number; minBusyMs?: number } = {}): HeavyTask[] {
+  const factor = options.factor ?? 3; const minTasks = options.minTasks ?? 4; const minBusyMs = options.minBusyMs ?? 10 * 60_000;
+  const byProject = new Map<string, TaskTiming[]>();
+  const kindOf = (task: TaskTiming): string => Object.entries(task.byName).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
+  for (const task of tasks) { const key = `${task.project}\u0000${kindOf(task)}`; byProject.set(key, [...(byProject.get(key) ?? []), task]); }
+  const heavy: HeavyTask[] = [];
+  for (const group of byProject.values()) {
+    if (group.length < minTasks) continue;
+    const project = group[0]!.project;
+    const median = percentile(group.map(task => task.busyMs).sort((a, b) => a - b), 0.5);
+    if (median <= 0) continue;
+    for (const task of group) {
+      if (task.busyMs < minBusyMs || task.busyMs < factor * median) continue;
+      const [name, ms] = Object.entries(task.byName).sort((a, b) => b[1] - a[1])[0] ?? ["other", 0];
+      heavy.push({ key: task.key, project, busyMs: task.busyMs, medianMs: median, ratio: task.busyMs / median, heaviest: { name, ms } });
+    }
+  }
+  return heavy.sort((a, b) => b.ratio - a.ratio);
+}
+
 export function formatTiming(summary: TimingSummary, topTasks = 15): string {
   const lines = [`Activity time by stage (${summary.events} events${summary.withoutTimestamps ? `; ${summary.withoutTimestamps} older events have no timestamp and are left out of the task view` : ""})`, "stage / activity".padEnd(34) + "count  median  p90    total   fail  cost$"];
   for (const stage of summary.stages) lines.push(stage.name.padEnd(34) + `${String(stage.count).padEnd(7)}${minutes(stage.medianMs).padEnd(8)}${minutes(stage.p90Ms).padEnd(7)}${minutes(stage.totalMs).padEnd(8)}${String(stage.failures).padEnd(6)}${stage.costUsd ? stage.costUsd.toFixed(2) : "-"}`);
@@ -109,6 +134,11 @@ export function formatTiming(summary: TimingSummary, topTasks = 15): string {
   for (const task of summary.tasks.slice(0, topTasks)) {
     const top = Object.entries(task.byName).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, ms]) => `${name} ${minutes(ms)}`).join(", ");
     lines.push(`  ${(task.project.slice(0, 8) || "-").padEnd(9)}${task.key.slice(-26).padEnd(28)}wall ${minutes(task.wallMs).padEnd(6)}busy ${minutes(task.busyMs).padEnd(6)}idle ${minutes(task.idleMs).padEnd(6)}${top}`);
+  }
+  const heavy = flagHeavyTasks(summary.tasks);
+  if (heavy.length) {
+    lines.push("", "Heavy tasks: busy time at least 3x the median of the same kind of task in their project (look here first when optimising)");
+    for (const task of heavy.slice(0, topTasks)) lines.push(`  ${(task.project.slice(0, 8) || "-").padEnd(9)}${task.key.slice(-26).padEnd(28)}busy ${minutes(task.busyMs).padEnd(6)}median ${minutes(task.medianMs).padEnd(6)}${task.ratio.toFixed(1)}x  ${task.heaviest.name} ${minutes(task.heaviest.ms)}`);
   }
   return lines.join("\n");
 }

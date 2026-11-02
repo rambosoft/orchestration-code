@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTiming, parseEvents, summarizeTiming, timedActivity, type TimingEvent } from "../src/timing.js";
+import { flagHeavyTasks, formatTiming, parseEvents, summarizeTiming, timedActivity, type TaskTiming, type TimingEvent } from "../src/timing.js";
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 9, minute)).toISOString();
 const done = (stage: string, minute: number, ms: number, extra: TimingEvent = {}): TimingEvent => ({ event: "activity.complete", at: at(minute), workflowId: "wf-1", runId: "run-1", projectId: "project-a", stage, provider: "claude", ok: true, activityDurationMs: ms, ...extra });
@@ -68,5 +68,37 @@ describe("summarizeTiming", () => {
     const text = formatTiming(summarizeTiming([done("plan", 1, 1000, { provider: "codex" }), done("implement", 12, 600_000)]));
     expect(text.indexOf("implement/claude")).toBeLessThan(text.indexOf("plan/codex"));
     expect(text).toContain("Slowest tasks");
+  });
+});
+
+describe("flagHeavyTasks (B-146)", () => {
+  const task = (key: string, project: string, busyMin: number, byName: Record<string, number> = { "implement/claude": busyMin * 60_000 }): TaskTiming => ({ key, project, wallMs: busyMin * 60_000, busyMs: busyMin * 60_000, idleMs: 0, byName });
+  const group = (project: string, minutes: number[]) => minutes.map((busy, index) => task(`${project}-${index}`, project, busy));
+  it("flags a task at three times the median of its project and names its heaviest activity", () => {
+    const tasks = [...group("app", [10, 12, 11, 9]), task("app-heavy", "app", 60, { "implement/claude": 50 * 60_000, verify: 5 * 60_000 })];
+    const [heavy, ...rest] = flagHeavyTasks(tasks);
+    expect(rest).toEqual([]);
+    expect(heavy).toMatchObject({ key: "app-heavy", project: "app", busyMs: 60 * 60_000, medianMs: 11 * 60_000, heaviest: { name: "implement/claude", ms: 50 * 60_000 } });
+    expect(heavy!.ratio).toBeCloseTo(60 / 11, 1);
+  });
+  it("flags nothing for an ordinary spread, a short task, or a project with fewer than four tasks", () => {
+    expect(flagHeavyTasks(group("app", [10, 12, 11, 20, 25]))).toEqual([]);
+    expect(flagHeavyTasks([...group("app", [1, 1, 1, 1]), task("quick", "app", 6)])).toEqual([]);
+    expect(flagHeavyTasks([...group("app", [10, 10]), task("alone", "app", 90)])).toEqual([]);
+  });
+  it("compares inside a project, not across projects, and lists the heaviest first", () => {
+    const tasks = [...group("small", [5, 6, 5, 6]), ...group("big", [60, 62, 61, 63]), task("big-ok", "big", 70), task("small-heavy", "small", 40), task("big-heavy", "big", 600)];
+    expect(flagHeavyTasks(tasks).map(item => item.key)).toEqual(["big-heavy", "small-heavy"]);
+  });
+  it("compares like with like: a long implementation is not measured against quick checks of the same project", () => {
+    const quick = group("app", [1, 1, 2, 1, 2]).map(item => ({ ...item, byName: { verify: item.busyMs } }));
+    expect(flagHeavyTasks([...quick, task("impl", "app", 45)])).toEqual([]);
+  });
+  it("is printed by formatTiming only when something is flagged", () => {
+    const events: TimingEvent[] = [{ event: "activity.complete", workflowId: "w", stage: "plan", provider: "codex", activityDurationMs: 1000, at: "2026-11-01T10:00:00Z" }];
+    expect(formatTiming(summarizeTiming(events))).not.toContain("Heavy tasks");
+    const summary = { ...summarizeTiming(events), tasks: [...group("app", [10, 12, 11, 9]), task("app-heavy", "app", 60, { "implement/claude": 50 * 60_000 })] };
+    const text = formatTiming(summary);
+    for (const expected of ["Heavy tasks", "app-heavy", "implement/claude 50.0"]) expect(text).toContain(expected);
   });
 });
