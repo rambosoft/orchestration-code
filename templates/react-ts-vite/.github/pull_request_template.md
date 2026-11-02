@@ -3,6 +3,7 @@
 
 ## Evidence
 - [ ] `npm run verify` is green
+- [ ] `npm run depcruise` is green
 - [ ] Page document (docs/pages/) updated if behaviour, actions or inputs changed; every case id has a test
 - [ ] No rule in AGENTS.md is broken; any exception is a ledger row (docs/technical-debt/LEDGER.md)
 - [ ] Anything not done is in docs/migration/todo.md; anything that would change architecture or behaviour is in docs/migration/findings.md

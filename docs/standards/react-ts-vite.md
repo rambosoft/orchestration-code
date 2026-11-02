@@ -20,7 +20,7 @@ Gate column: **G** = enforced by an automated check, **R** = enforced in review 
 ## 2. Components
 - Extract a component when it is reused, has its own behaviour, needs separate tests or is a meaningful UI boundary. Do not extract every repeated fragment. (R)
 - Components have a clear responsibility, typed and documented props, sensible defaults, and documented variants instead of one-off overrides. (R)
-- Logic that is not view code moves to hooks or utilities; shared UI lives in one shared folder. (R, boundaries G with `dependency-cruiser`)
+- Logic that is not view code moves to hooks or utilities; shared UI lives in one shared folder. (R-021; boundaries G with `dependency-cruiser`: `no-circular`, `components-not-import-pages`, `hooks-not-import-pages`, `services-not-import-ui`, `storage-through-index`, `input-through-index`, `no-prod-imports-test-files`, `not-to-unresolvable`)
 - Custom CSS is the exception: use design tokens and variants. (G: lint forbids raw colours, raw pixel sizes and raw `vh` values outside the token files)
 
 ## 3. Dependencies

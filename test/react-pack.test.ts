@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { createRequire } from "node:module";
 
 const run = promisify(execFile);
 const scripts = path.resolve("templates/react-ts-vite/scripts");
@@ -107,7 +108,7 @@ describe("apply-react-pack", () => {
     expect(stdout).toContain("pack react-ts-vite");
     const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(manifest.scripts.test).toBe("vitest run");
-    for (const script of ["verify", "typecheck", "lint", "knip", "jscpd", "check:ai", "check:debt", "check:pages", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
+    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("# Demo App: agent rules");
     expect(await readFile(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8")).toContain("Engineering standards: React + TypeScript + Vite");
     expect((await readFile(path.join(root, "src/main.tsx"), "utf8")).startsWith("import \"./styles/tokens.css\";")).toBe(true);
@@ -129,5 +130,15 @@ describe("apply-react-pack", () => {
   });
   it("refuses a folder that is not a project", async () => {
     await expect(apply(await project({ "readme.txt": "x" }))).rejects.toMatchObject({ code: 2 });
+  });
+});
+
+describe("dependency-cruiser config", () => {
+  it("loads as CommonJS and declares every forbidden boundary as an error", async () => {
+    const require = createRequire(import.meta.url);
+    const config = require(path.resolve("templates/react-ts-vite/.dependency-cruiser.cjs")) as { forbidden: Array<{ name: string; severity: string }>; options: Record<string, unknown> };
+    const names = ["no-circular", "components-not-import-pages", "hooks-not-import-pages", "services-not-import-ui", "storage-through-index", "input-through-index", "no-prod-imports-test-files", "not-to-unresolvable"];
+    expect(config.forbidden.map(rule => rule.name)).toEqual(names);
+    expect(config.forbidden.every(rule => rule.severity === "error")).toBe(true);
   });
 });

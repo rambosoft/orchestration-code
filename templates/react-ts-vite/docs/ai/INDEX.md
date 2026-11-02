@@ -8,4 +8,4 @@ An index into the real documents, not a copy. Keep it short; update it when a mo
 - Decisions: `docs/decisions/`
 - Technical debt: `docs/technical-debt/LEDGER.md`
 - Migration notes: `docs/migration/findings.md` (changes that would alter architecture or behaviour, for a decision), `docs/migration/todo.md` (work not done), `docs/migration/map.md` (old file -> new file -> status -> tests)
-- Commands: `npm run verify` (everything), `npm run test:related -- <files>` (while working), `npm run lint`, `npm run knip`, `npm run jscpd`, `npm run check:ai`, `npm run check:debt`, `npm run check:pages`
+- Commands: `npm run verify` (everything), `npm run test:related -- <files>` (while working), `npm run lint`, `npm run knip`, `npm run depcruise`, `npm run jscpd`, `npm run check:ai`, `npm run check:debt`, `npm run check:pages`

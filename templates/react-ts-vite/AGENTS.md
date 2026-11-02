@@ -31,6 +31,7 @@ Stack: React + TypeScript + Vite, client-side only (no SSR). Legacy bundle floor
 - R-018 No heavy data transformation on the main thread. Use a worker. Do not hold a full large list in memory or in the DOM: page it and virtualise it.
 - R-019 Backward compatibility is part of done: the legacy bundle targets Chrome 53; use no API without a fallback or a documented check; state the memory and CPU effect of a feature.
 - R-020 Prefer one job per function and clear names. No abstraction without a second real use. Keep functions short enough to read at once.
+- R-021 Respect module boundaries: pages -> components/hooks/services; components never import pages; services never import UI; src/storage and src/input are imported only through their index.
 
 ## Layout
 src/pages (routes) · src/components (shared UI) · src/hooks · src/services (data, domain) · src/storage · src/input · src/styles (tokens) · docs/pages · docs/ai · docs/migration · docs/technical-debt · docs/decisions

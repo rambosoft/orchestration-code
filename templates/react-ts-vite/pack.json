@@ -14,7 +14,8 @@
     "src/styles/tokens.css",
     "scripts/check-ai-files.mjs",
     "scripts/check-debt-ledger.mjs",
-    "scripts/check-page-docs.mjs"
+    "scripts/check-page-docs.mjs",
+    ".dependency-cruiser.cjs"
   ],
   "render": ["AGENTS.md", "docs/ai/INDEX.md"],
   "standards": { "from": "docs/standards/react-ts-vite.md", "to": "ENGINEERING_STANDARDS.md" },
@@ -34,12 +35,13 @@
     "test:services": "vitest run src/services --passWithNoTests",
     "test:pages": "vitest run src/pages --passWithNoTests",
     "knip": "knip",
+    "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "jscpd": "jscpd src --min-lines 10 --threshold 5 --reporters console --silent",
     "check:ai": "node scripts/check-ai-files.mjs",
     "check:debt": "node scripts/check-debt-ledger.mjs",
     "check:pages": "node scripts/check-page-docs.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages"
   },
-  "devDependencies": ["eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-react-hooks", "eslint-plugin-jsx-a11y", "eslint-plugin-jsdoc", "globals", "knip", "jscpd"],
+  "devDependencies": ["eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-react-hooks", "eslint-plugin-jsx-a11y", "eslint-plugin-jsdoc", "globals", "knip", "dependency-cruiser", "jscpd"],
   "mainImports": ["./styles/tokens.css"]
 }

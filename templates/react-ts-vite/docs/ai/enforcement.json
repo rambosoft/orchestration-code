@@ -18,5 +18,6 @@
   { "id": "R-017", "gate": "prose" },
   { "id": "R-018", "gate": "prose" },
   { "id": "R-019", "gate": "prose" },
-  { "id": "R-020", "gate": "prose" }
+  { "id": "R-020", "gate": "prose" },
+  { "id": "R-021", "gate": "depcruise" }
 ]

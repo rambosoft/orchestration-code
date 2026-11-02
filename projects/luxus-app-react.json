@@ -31,13 +31,18 @@
       "provider": "codex"
     },
     "review": {
-      "provider": "codex"
+      "provider": "claude"
     },
     "verify": {
       "provider": "codex"
     },
     "implement": {
-      "provider": "claude"
+      "provider": "codex",
+      "fallback": [
+        {
+          "provider": "claude"
+        }
+      ]
     },
     "analyze": {
       "provider": "codex"
