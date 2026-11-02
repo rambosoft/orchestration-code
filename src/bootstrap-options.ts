@@ -15,6 +15,10 @@ export const GROUPS: Array<{ id: OptionGroupId; label: string }> = [
 ];
 
 export const OPTION_CATALOG: OptionDefinition[] = [
+  { id: "project_mode", group: "product", label: "New or existing project?", help: "New creates a project from scratch. For an existing repository choose what to do with it: maintain (fixes and features), refactor (clean up, same stack), migrate (change framework or stack) or audit (a report only, no code changes).", kind: "select", default: "new", advanced: false, choices: [
+    choice("new", "New project"), choice("maintain", "Existing: maintain", "Bug fixes and features in the repository itself"), choice("refactor", "Existing: refactor", "Clean up and restructure into a new repository, same stack"),
+    choice("migrate", "Existing: migrate or upgrade", "Rebuild on another framework or stack in a new repository"), choice("audit", "Existing: audit only", "A survey report, no code changes")] },
+  { id: "existing_folder", group: "product", label: "Existing project folder", help: "Existing projects only. The repository's root folder on the worker machine; it must be a clean git repository with an origin remote, inside an allowed root.", kind: "text", default: "", advanced: false },
   { id: "platform", group: "product", label: "Platform", help: "What the product runs on. It decides the stack candidates and which gates can apply.", kind: "select", default: "web", advanced: false, choices: [
     choice("web", "Web application", "Runs in the browser"), choice("mobile_android", "Android app"), choice("mobile_ios", "iPhone / iPad app"), choice("mobile_cross", "Cross-platform mobile", "One codebase for Android and iOS"),
     choice("desktop", "Desktop application"), choice("cli", "Command-line tool"), choice("api_backend", "API / backend service")] },
@@ -108,6 +112,9 @@ export function resolveOptions(explicit: Record<string, unknown> = {}): Resolved
     set("architecture", "frontend_only", "a game runs on the device");
     if (values.test_depth === "none" || values.test_depth === "smoke") set("test_depth", "unit", "game rules need tests");
   }
+  // An existing project is adopted from a folder (ADR 0032). The folder itself is checked on the worker (inspectExistingFolder); here it only has to be named.
+  if (values.project_mode !== "new" && !String(values.existing_folder).trim()) errors.push("choose the existing project's folder");
+  if (values.project_mode === "new" && String(values.existing_folder).trim()) warnings.push("a folder was given but the project is new; it was ignored");
   const platform = String(values.platform);
   if (platform !== "web" && !(values.product_kind === "game" && values.engine === "unity")) set("visual_verification", false, "visual checks only work for web projects");
   if (platform === "cli" || platform === "api_backend") set("ui_ux", false, "this platform has no user interface");

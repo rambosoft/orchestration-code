@@ -1,6 +1,6 @@
 # ADR 0032: Existing projects (maintain, refactor, migrate, audit) and the survey stage
 
-Status: Proposed (2026-11-02). Design only: no code yet. Extends ADR 0009 (bootstrap), ADR 0008 (task types) and ADR 0017 (`onboard`).
+Status: Proposed (2026-11-02). B-107 first slice implemented (folder checks, mode option); the rest is design. Extends ADR 0009 (bootstrap), ADR 0008 (task types) and ADR 0017 (`onboard`).
 
 ## Context
 - The bootstrap wizard only creates new projects. An existing repository can be registered with the `onboard` CLI (ADR 0017), but the wizard has no way to choose a folder, no notion of why the project is being adopted, and nothing that studies the code before tasks are planned.
@@ -37,3 +37,11 @@ Status: Proposed (2026-11-02). Design only: no code yet. Extends ADR 0009 (boots
 - The exact survey report schema and the per-stack extractors (Vue 2/Nuxt 2 first) are designed in phase 2, with a real run on `luxus-app` as the first evidence.
 - Whether `characterize` is its own typed flow or a prelude inside the implement stage is decided in phase 3 from timing data.
 - The device tier cutoff stays a project option until real device-version data (the app already collects versions) says which tiers can be dropped.
+
+## Addendum (2026-11-02): operator requirements for the migration
+- **Pilot:** one simple page first, `pages/no-internet` of luxus-app (103 lines), into a local sibling folder `C:workspaceluxus-app-react` (no GitHub repository until the pilot is judged good). luxus-app must be clean first (it has uncommitted changes).
+- **Rethink, do not transliterate.** The old code is messy, so the survey and the tasks reconsider structure instead of assuming it follows best practice: extract components where it makes sense, move logic to hooks and utilities, one clear place for each thing.
+- **Findings are written down.** Survey and implement stages record findings and TODOs they could not finish in the target repo (`docs/migration/findings.md`, `docs/migration/todo.md`), with file references. Changes that would alter architecture or behaviour are NOT made silently: migrate with the least change, point it out, and document it for a decision.
+- **Production ready, simplest, cleanest**, React and stack best practices, all screen sizes, and the tiered devices agreed earlier (modern + legacy Chrome 53+).
+- **Sizing:** one root scale token (a single unit derived from `vh` with a `vh` fallback; sizes in `rem`/`em` from it) so one file retunes every screen size. Raw `vh` values are not repeated across components. Legacy tier needs Chrome 49+ for CSS variables, which the Chrome 53+ floor satisfies.
+- **Speed and cost:** many tasks are expected. Survey (analysis) runs once per milestone or domain, not per page. Every task runs the cheap deterministic gates (types, lint, unit tests, parity spec, duplication and dead-code checks); the model review runs once per milestone, like the prototype lane (ADR 0029, 0031). Cheaper providers for survey and characterize are allowed through the routing.

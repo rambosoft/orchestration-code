@@ -16,6 +16,7 @@ import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { onboardManifest } from "./stack-packs.js";
+import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
 import { TIERS, type Tier } from "./lanes.js";
 import { STACK_PROFILE_IDS, type StackProfileId } from "./stack-profiles.js";
 import { access, writeFile } from "node:fs/promises";
@@ -130,6 +131,15 @@ async function main() {
     const [worktree, childBranch, parentPrUrl, targetBranch, remote = "origin"] = args;
     if (!worktree || !childBranch || !parentPrUrl || !targetBranch) throw new Error("usage: dev sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
+  }
+  if (command === "inspect-folder") {
+    // Admission check for an existing project (ADR 0032): dev inspect-folder <folder>, or --list [folder] to browse the allowed roots (ORCHESTRATOR_BROWSE_ROOTS).
+    if (args[0] === "--list") return console.log(JSON.stringify(await listFolders(args[1], browseRoots()), null, 2));
+    if (!args[0]) throw new Error("usage: dev inspect-folder <folder> | dev inspect-folder --list [folder]");
+    const check = await inspectExistingFolder(args[0]);
+    console.log(JSON.stringify(check, null, 2));
+    if (!check.ok) process.exitCode = 1;
+    return;
   }
   if (command === "onboard") {
     // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--remote origin] [--branch main] [--write]
