@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-02 Designed existing-project support (ADR 0032, B-107..B-115, all todo): New/Existing wizard step, modes maintain|refactor|migrate|audit, a read-only `survey` stage, refactor/migrate gates, AI docs, and a Vue 2/Nuxt 2 to React pack tiered for TV devices (modern + Chrome 53+ legacy). Design only, no code. Pilot target: luxus-app. Note: docs/engineering/research/android-support.md (untracked) planned ADR 0031 and B-106..B-115; those numbers are taken, renumber it when it is committed.
 - Branch `mission/hardening` is aligned with `origin/main` through PR #11. Recent development includes multi-project live runs and broad hardening through B-086; see `knowledge/git-history.md` for the audited change map and evidence.
 - 2026-10-31 Ninth finding fixed (ADR 0028, B-101): LOC-138 stopped on a device-only criterion (mid-range Android profile) after two reviews; a prototype now finishes with the finding on the PR. To be deployed at the next gap, LOC-138 then resumed.
 - 2026-10-31 Root cause of the repeated manual recoveries fixed (ADR 0027, B-100): recovery ladder. LOC-135 done; LOC-137 running; ladder to be deployed at the next gap.

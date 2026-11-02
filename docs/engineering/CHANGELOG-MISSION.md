@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 existing-project design (ADR 0032, B-107..B-115)
+- Design only. A project can be adopted as maintain, refactor, migrate or audit; a read-only survey stage produces a sized refactor backlog that feeds the blueprint; refactor and migrate add characterization tests, a parity check, a migration-map ledger and refactor-not-copy gates; the first pack is Vue 2/Nuxt 2 to React with a tiered device matrix. Nothing implemented or verified yet.
+
 ## 2026-10-31 Unity scratch scene no longer published (B-103)
 - LOC-141's pull request (#27) carried `Assets/InitTestScene<guid>.unity`, a scene the Unity test runner writes for a run and leaves behind when the run is cut short; the project's main already holds three. It is now in the Unity generated-output list, so `excludeGeneratedPaths` drops a newly added one before the commit. Regression test in `test/publish-guard.test.ts` (fails without the pattern). Existing copies on the project's main are untouched.
 
