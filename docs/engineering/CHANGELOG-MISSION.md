@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 luxus-app-react on GitHub; the idiom map (B-114 partly)
+- Created the private repository rambosoft/luxus-app-react and pushed main. The idiom map (counts per idiom, a high-risk list, a migration order and contradicted assumptions such as this.$store in 80 files versus 2 files using Vuex helpers, and localStorage in 33 files) was produced by Codex through the pinned CLI; the global codex alpha exits when a configured MCP server fails authentication, and a background run needs its prompt on stdin from a file.
+
 ## 2026-11-02 react-ts-vite standards pack and the luxus-app-react repository (B-121..B-124, B-132, B-133, B-147)
 - templates/react-ts-vite (AGENTS.md rules R-001..R-020, enforcement manifest, ESLint rules, check scripts for AI files, debt ledger and page documents, tokens.css as the single root scale unit, Renovate and PR template) and scripts/apply-react-pack.mjs, covered by test/react-pack.test.ts (15 tests). Applied to the new repository luxus-app-react where npm run verify passes. Handled on the way: TypeScript 7 and oxlint from the scaffold conflict with typescript-eslint and the custom rules (pinned TypeScript 6.0 and ESLint 9, recorded), solution-style tsconfig made tsc --noEmit a no-op (gate is tsc -b).
 
