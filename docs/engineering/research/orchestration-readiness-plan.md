@@ -10,7 +10,13 @@ Purpose: keep the orchestration work aligned with the migration milestones. Noth
 5. **Workflow changes** that alter the command sequence need `patched()` and a regenerated replay fixture (`docs/engineering/EXTENDING.md`).
 
 ## Gate G0: pilot go/no-go (Phase 3)
-Pilot tasks PILOT-1B to 5B finish; gates green; at most two repair rounds on average; page documents with cases cited by tests; the second batch measurably faster than the first; the operator reads the PRs and says go. Findings from the pilot (for example whether Codex can read the reference repository) adjust the G1 list below.
+Pilot tasks PILOT-1B to 5B finish and their gates are green. **Go** when a simple run in a browser works: the app opens, both pages and the shared components render in place, nothing is broken, and the layout stays proper when the screen size changes (phone, laptop, TV widths), with focus visible. Page documents with cases cited by tests, repair rounds and the second batch's speed are recorded as evidence, not as blockers. Findings from the pilot (for example whether Codex can read the reference repository) adjust the G1 list below.
+
+## Gate GM1: Milestone 1 go/no-go (after its first real page)
+After Milestone 1 starts and one real page with a few components is refactored in `luxus-app-react`, validate everything together in the real project, not the pilot: the orchestration changes, the tools and libraries (toggle modes), the standards pack, the new project's gates, the page and its components in a browser. Only then does Milestone 1 continue at full speed.
+
+## Working loop and recovery
+Each item is built, tested and committed on its own (Codex drafts code or analysis; the diff is reviewed and the tests run before the commit). `STATUS.md` always names the next step, so work can resume from any commit. Work is never left half-done at a stop: if the Claude usage limit is near, finish the current item to a committed, green state and write the next step down.
 
 ## Gate G1: orchestration ready for Milestone 1 (build and test, before any M1 task)
 | Item | Why Milestone 1 needs it | Done when |
