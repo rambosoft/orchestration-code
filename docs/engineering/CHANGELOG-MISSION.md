@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 readiness plan with gates; intelligence registry (B-167, B-168)
+- Documentation only. Every open item is assigned to a gate before Milestone 1, at the start of Milestone 1, before Milestone 2 or later; an integration rehearsal and a live canary prove the items work together; code-intelligence tools are registered capabilities with off, advisory and gate modes and a kill switch.
+
 ## 2026-11-02 facts-first code intelligence (ADR 0038, B-162..B-166)
 - Design only. Assessment of Graphify, Serena, dependency-cruiser, Knip, Context7, ts-morph, ast-grep, Aider's repo map, CodeQL and SCIP against what the orchestrator already does: deterministic activities with provenance, a preparation package per task, dependency-cruiser as a pack gate, a Graphify spike and a Context7 cache; MCP-based tools stay out of unattended runs because of their per-turn token cost. Several claims in the source text (versions, Vue support) are unverified.
 

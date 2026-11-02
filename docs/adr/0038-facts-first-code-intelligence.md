@@ -28,3 +28,11 @@ Status: Proposed (2026-11-02). Design only: no code yet. Extends ADR 0035 (decis
 ## Open points
 - Whether Graphify and Serena support `.vue` single-file components (needed for the old app).
 - How much of Context7's output is stable enough to cache and review.
+
+## Addendum (2026-11-02): optional by design, the intelligence registry
+The mechanism already exists: the manifest `plugins` array (`id`, `version`, `enabled`, `required`, `config`) and the capability registry in `src/plugins.ts`, used today by the RTK hook. Each code-intelligence or context tool is registered the same way and gets a **mode**:
+- **off**: never runs.
+- **advisory**: runs in an activity before the stage; its bounded, provenance-checked facts go into the prompt; any failure, timeout or stale fact is dropped and recorded as a warning, never failing the task.
+- **gate**: its verdict can fail the task (dependency-cruiser, knip, jscpd, the pack checks).
+Rules: a pinned version and a size budget per tool; a timeout; results cached by commit; a project's manifest overrides the pack's default; one environment switch (`ORCHESTRATOR_INTELLIGENCE=off`) turns every advisory tool off at once; a tool becomes default-on only after its token and time effect has been measured against the baseline (`npm run usage`, `timing`). Registering a new tool is a new entry and an adapter, not a change to the workflow. Tracked as B-167; proved together by the integration rehearsal B-168 (`docs/engineering/research/orchestration-readiness-plan.md`).
+
