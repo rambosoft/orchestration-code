@@ -102,3 +102,24 @@ Answer Q1, Q2, Q6 and Q16 to start Phase 0; Q5 and Q14 to start Phase 1; Q3 befo
 
 Phase 0 may start on the operator's go. New backlog items from these answers: B-146 (consumption highlight) and B-147 (pilot setup).
 
+## 11. Progress while the operator was away (2026-11-02, Phase 0 done, Phase 1 started)
+Done and verified:
+- Phase 0 exit test met: the worker was restarted with the drain-aware script (nothing in flight) and the bridge container rebuilt; `doctor` passes every check (only a warning for 40 old task worktrees); `dist` is up to date; full suite 961 tests green; `luxus-app` committed locally (`858b4c22`).
+- Fixed: the `Type:` line now accepts survey, audit and codebase-survey (test first). Built: B-146, the Heavy tasks section of `timing` (on the real log it flags two implementation runs at 3.1x and 3.2x). Found: B-148, `luxus-app/.gitattributes` corrupts media files in a fresh Windows clone.
+- Pilot clone ready at `orchestration-projectsluxus-app` (clean with a local attributes override, one commit ahead of GitHub); manifest `projects/luxus-app.json` written (untracked) with a Codex route for the survey stage; the bridge loaded it.
+
+Not done, and why:
+- The live survey did not run: the bridge only accepts a GitHub `origin`, and a survey ends in a draft pull request on `rambosoft/luxus-app` (a pushed branch that would carry the unpushed local commit). That is an outward-facing action, so it waits for the operator (see OQ-A).
+- B-131 (parallel gates): the verify loop in `src/activities.ts` is about 90 lines of sequential logic (Unity healing, early return on the first failure, warn-only severity, result order, a shared working tree); it needs a careful extraction, not an unattended edit (OQ-D).
+
+Open questions raised for the operator (recommendations first):
+| ID | Question | Recommendation |
+|---|---|---|
+| OQ-A | How to run the live survey, given it publishes a draft PR to GitHub? | Reset the pilot clone to GitHub `main` (survey without `858b4c22`) and allow the draft PR on `rambosoft/luxus-app`; alternatives: push `main` yourself first, or build a local-only survey mode (no PR) in the orchestrator |
+| OQ-B | Fix `luxus-app/.gitattributes` (add binary rules for media) in the real repository (B-148)? | Yes, one small commit by you or by me with your go |
+| OQ-C | Commit `projects/luxus-app.json` to this repository like the other manifests? | Yes |
+| OQ-D | Parallel gates (B-131): opt-in per command group, or automatic for commands that declare no shared output? | Opt-in groups first; I extract the per-check runner with tests before parallelising |
+| OQ-E | Run `dev cleanup --days 7` for the 40 old task worktrees? | Yes (branches are never deleted) |
+| OQ-F | Push `luxus-app` `main` (the `858b4c22` commit)? | Your call; not needed if OQ-A uses the reset option |
+| OQ-G | Renumber `docs/engineering/research/android-support.md` (it plans ADR 0031 and B-106..B-115, now taken) and commit it? | Yes, renumber to ADR 0037 and B-149 onward |
+
