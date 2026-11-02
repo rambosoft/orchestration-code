@@ -92,7 +92,7 @@ describe("reproduction", () => {
     expect(validateReport(JSON.stringify(report), "research").recommendation).toBeUndefined();
   });
   it("parses git porcelain output including renames", () => {
-    expect(changedPaths(" M src/a.ts\0?? test/new.test.ts\0R  src/b.ts\0src/old.ts\0A  c.md\0")).toEqual([{ file: "src/a.ts", untracked: false }, { file: "test/new.test.ts", untracked: true }, { file: "src/b.ts", untracked: false }, { file: "c.md", untracked: false }]);
+    expect(changedPaths(" M src/a.ts\0?? test/new.test.ts\0R  src/b.ts\0src/old.ts\0A  c.md\0 D src/gone.ts\0")).toEqual([{ file: "src/a.ts", untracked: false, deleted: false }, { file: "test/new.test.ts", untracked: true, deleted: false }, { file: "src/b.ts", untracked: false, deleted: false }, { file: "c.md", untracked: false, deleted: false }, { file: "src/gone.ts", untracked: false, deleted: true }]);
   });
 });
 

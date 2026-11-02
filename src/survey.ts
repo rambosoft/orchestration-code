@@ -13,7 +13,7 @@ export type SurveyMode = (typeof SURVEY_MODES)[number];
 
 const ModuleSchema = z.object({ name: text(80), paths: strings(6, 160, 1), purpose: text(200), size: level(["small", "medium", "large"], "medium"), complexity: level(["low", "medium", "high"], "medium") });
 const HotspotSchema = z.object({ path: text(160), problem: text(240), evidence: strings(3, 160) });
-const BacklogItemSchema = z.object({
+export const BacklogItemSchema = z.object({
   id: z.preprocess(value => typeof value === "string" ? value.trim().slice(0, 24) : value, z.string().min(1)),
   title: text(120),
   kind: level(["component", "logic", "state", "route", "style", "data", "test", "infra", "other"], "other"),
@@ -25,6 +25,8 @@ const BacklogItemSchema = z.object({
   depends_on: strings(6, 24),
   /** True when doing it would change architecture or behaviour: it is then documented for a decision, not decided silently. */
   changes_behaviour: z.preprocess(value => value === true || value === "true", z.boolean()),
+  area: z.preprocess(value => typeof value === "string" ? (value.trim().toLowerCase().replace(/\s+/g, "-") || "general") : value, z.string().min(1).max(40).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).default("general")),
+  critical: z.preprocess(value => value === true || value === "true", z.boolean()).default(false),
   notes: optionalText(240),
 });
 const hasEvidence = (item: unknown): boolean => {
@@ -47,7 +49,7 @@ export const SurveySchema = z.object({
   todos: strings(12, 200),
 });
 export type Survey = z.infer<typeof SurveySchema>;
-const SURVEY_HINT = `{"summary":"string","stack":"string","architecture":["string"],"modules":[{"name":"string","paths":["relative/path"],"purpose":"string","size":"small|medium|large","complexity":"low|medium|high"}],"hotspots":[{"path":"string","problem":"string","evidence":["path:line"]}],"duplicated_logic":["string"],"constraints":["string found in the repository's own docs"],"risks":["string"],"test_coverage":"string","refactor_backlog":[{"id":"R1","title":"string","kind":"component|logic|state|route|style|data|test|infra|other","old_paths":["relative/path"],"target":"string","tests":["string"],"size":"S|M|L","depends_on":["R0"],"changes_behaviour":false,"notes":"string"}],"open_questions":["string"],"todos":["string"]}`;
+const SURVEY_HINT = `{"summary":"string","stack":"string","architecture":["string"],"modules":[{"name":"string","paths":["relative/path"],"purpose":"string","size":"small|medium|large","complexity":"low|medium|high"}],"hotspots":[{"path":"string","problem":"string","evidence":["path:line"]}],"duplicated_logic":["string"],"constraints":["string found in the repository's own docs"],"risks":["string"],"test_coverage":"string","refactor_backlog":[{"id":"R1","title":"string","kind":"component|logic|state|route|style|data|test|infra|other","old_paths":["relative/path"],"target":"string","tests":["string"],"size":"S|M|L","depends_on":["R0"],"changes_behaviour":false,"area":"cache-storage|player-native|carousel|search-sort|xtream-fetch|input|shell-auth|settings-profiles|live-guide|catalog|shared-ui|build-release|new-slug","critical":false,"notes":"string"}],"open_questions":["string"],"todos":["string"]}`;
 
 const MODE_GUIDANCE: Record<SurveyMode, string> = {
   audit: "AUDIT: report only. The backlog lists what you would recommend; nothing will be changed.",
@@ -69,6 +71,7 @@ SURVEY stage. Read-only: you may open further files in this worktree, but only t
 - Do not assume the existing code follows good practice. For each area decide what a clean implementation would be: components worth extracting, logic that belongs in hooks or utilities, state that belongs in one store, duplicated code that becomes one shared piece.
 - Group the inventory into modules (a page with its components and store, or a domain). The refactor_backlog is a list of vertical slices: each item names the OLD files (old_paths, required; an item without them is dropped), the target shape, the tests that prove equal behaviour, a size (S under an hour of work, M a few hours, L more) and its dependencies by id. Order dependencies so that shared pieces come first.
 - Set changes_behaviour to true for anything that would change architecture, data flow or visible behaviour, and say why in notes. Everything else must keep today's behaviour; do not "improve" it silently.
+- Set area to one of cache-storage, player-native, carousel, search-sort, xtream-fetch, input, shell-auth, settings-profiles, live-guide, catalog, shared-ui, build-release; use a new lower-case slug only when none fits. Set critical true only for cache-storage, player-native, carousel, search-sort, xtream-fetch and input.
 - Take constraints from the repository's own documents (supported devices, browsers, budgets, rules) and list them under constraints.
 - Anything you could not settle goes in open_questions; work you did not finish or that should be done later goes in todos. Do not guess to fill a gap.
 - Ground every claim in a path (path/to/file:LINE). Never paste long code or any secret, token or credential.
@@ -113,16 +116,17 @@ export function deterministicSurvey(inventory: Inventory, note: string): Survey 
     hotspots: [], duplicated_logic: [], constraints: [],
     risks: ["The model's survey could not be read; this backlog is only the route list and has no analysis of shared code, state or duplication."],
     test_coverage: undefined,
-    refactor_backlog: routes.map((route, index) => ({ id: `R${index + 1}`, title: `Rebuild ${route.file}`, kind: "route" as const, old_paths: [route.file], target: "A page component with logic moved to hooks and shared UI extracted", tests: [], size: sizeOf(route.lines), depends_on: [], changes_behaviour: false, notes: undefined })),
+    refactor_backlog: routes.map((route, index) => ({ id: `R${index + 1}`, title: `Rebuild ${route.file}`, kind: "route" as const, old_paths: [route.file], target: "A page component with logic moved to hooks and shared UI extracted", tests: [], size: sizeOf(route.lines), depends_on: [], changes_behaviour: false, area: "general", critical: false, notes: undefined })),
     open_questions: ["Re-run the survey to get the analysis."], todos: ["Analyse shared components, store modules and duplicated logic."],
   };
 }
 
 export function formatSurveyMarkdown(survey: Survey, meta: { project: string; mode: SurveyMode; filesConsulted: string[]; note?: string }): string {
+  const validatedBacklog = SurveySchema.parse(survey).refactor_backlog;
   const list = (items: string[]) => items.length ? items.map(item => `- ${item}`).join("\n") : "- none";
   const modules = survey.modules.map(item => `- **${item.name}** (${item.size}, ${item.complexity}): ${item.purpose} [${item.paths.join(", ")}]`).join("\n") || "- none";
   const hotspots = survey.hotspots.map(item => `- ${item.path}: ${item.problem}${item.evidence.length ? ` (${item.evidence.join("; ")})` : ""}`).join("\n") || "- none";
-  const backlog = survey.refactor_backlog.map(item => `| ${item.id} | ${item.title} | ${item.kind} | ${item.size} | ${item.old_paths.join("<br>")} | ${item.target} | ${item.depends_on.join(", ") || "-"} | ${item.changes_behaviour ? "**yes**" : "no"} |`).join("\n");
+  const backlog = validatedBacklog.map(item => `| ${item.id} | ${item.title} | ${item.kind} | ${item.size} | ${item.old_paths.join("<br>")} | ${item.target} | ${item.depends_on.join(", ") || "-"} | ${item.changes_behaviour ? "**yes**" : "no"} | ${item.area} | ${item.critical ? "yes" : "no"} |`).join("\n");
   const flagged = survey.refactor_backlog.filter(item => item.changes_behaviour).map(item => `${item.id} ${item.title}: ${item.notes ?? "changes architecture or behaviour; needs a decision"}`);
   return `${redactSecrets([
     `# Survey: ${meta.project}`,
@@ -131,9 +135,10 @@ export function formatSurveyMarkdown(survey: Survey, meta: { project: string; mo
     `## Modules\n${modules}`, `## Hotspots\n${hotspots}`, `## Duplicated logic\n${list(survey.duplicated_logic)}`,
     `## Constraints found in the repository's documents\n${list(survey.constraints)}`, `## Risks\n${list(survey.risks)}`,
     survey.test_coverage ? `## Test coverage\n${survey.test_coverage}` : "",
-    backlog ? `## Refactor backlog\n| id | title | kind | size | old paths | target | depends on | changes behaviour |\n|---|---|---|---|---|---|---|---|\n${backlog}` : "## Refactor backlog\n- none",
+    backlog ? `## Refactor backlog\n| id | title | kind | size | old paths | target | depends on | changes behaviour | area | critical |\n|---|---|---|---|---|---|---|---|---|---|\n${backlog}` : "## Refactor backlog\n- none",
     `## Needs a decision (architecture or behaviour would change)\n${list(flagged)}`,
     `## Open questions\n${list(survey.open_questions)}`, `## TODO (not done)\n${list(survey.todos)}`,
     meta.filesConsulted.length ? `## Context consulted\n${list(meta.filesConsulted.slice(0, 30))}` : "",
+    `## Machine-readable backlog\n\n\`\`\`json\n${JSON.stringify({ version: 1, backlog: validatedBacklog }, null, 2)}\n\`\`\``,
   ].filter(Boolean).join("\n\n"))}\n`;
 }
