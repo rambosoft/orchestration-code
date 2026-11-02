@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 skill catalog design (ADR 0033, B-116..B-120)
+- Design only. Operator plugins are switched off in orchestrated runs and Codex has none, so stack standards become versioned data: a catalog and resolver, digests in every stage prompt plus standards files in the target repository, curated pinned import from installed plugins, stack packs that own their skills, a learning loop and a rejection-rate measure. Nothing implemented.
+
 ## 2026-11-02 survey stage (ADR 0032, B-108)
 - New read-only task type `survey`: `buildSurveyContext` (inventory of routes, store modules, dependencies and guidance documents, plus the repository's AGENTS.md/CLAUDE.md/docs) then one structured `survey` stage whose report holds modules, hotspots, duplicated logic, constraints, risks and a sized refactor backlog (items without old file paths are dropped; items that would change behaviour are listed under "Needs a decision"). Unreadable answers fall back to one backlog item per route. A bug found by the tests: the shared `level()` helper lowercases its input, so the S/M/L sizes never matched; sizes are now lowercase in the schema and upper-cased after parsing. Workflow: new branch selected by `taskType === "survey"`, existing runs unchanged. Fake provider only.
 
