@@ -33,3 +33,9 @@ Status: Proposed (2026-11-02). Design only: no code yet. Builds on ADR 0032 to 0
 - Which TV models and firmware versions accept the https site (device test).
 - Where the emulators and the webOS SDK are installed (to confirm before writing the harness).
 - Which host script is the source of truth for Tizen (`tizen/Tizen-Luxus-App`) and webOS (`webos-luxus`), and their release process.
+
+## Addendum (2026-11-02): answers
+- Android `minSdk` is 23 (`viseo-android/app/build.gradle.kts`). The origin-restricted web message listener depends on the installed WebView, so the shell feature-detects it at run time and keeps the restricted interface as the fallback.
+- webOS device validation is skipped in the pilot; the `ares` CLI is installed for a real TV later and no webOS simulator was found. Tizen Studio (emulator tools) and the Android emulator exist.
+- https on devices is verified in Phase 4, before the redirect is removed. Secrets in `viseo-deployment` and the signing certificate are handled by the operator; agents only list locations. The 2022 Tizen copy is archived after its git status is checked.
+

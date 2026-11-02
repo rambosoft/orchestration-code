@@ -79,3 +79,26 @@ Orchestration defects on a project type not run live for two weeks; model cost a
 
 ## 9. Approval checklist
 Answer Q1, Q2, Q6 and Q16 to start Phase 0; Q5 and Q14 to start Phase 1; Q3 before Phase 2 ends; the rest can be answered when their blocker is reached.
+
+## 10. Answers recorded 2026-11-02 (all questions cleared)
+| ID | Answer |
+|---|---|
+| Q1 | Cost visibility only (subscriptions). No hard ceiling. Highlight a task whose consumption is far above its kind so it can be optimised: B-146. Manual procedure meanwhile in the runbook |
+| Q2 | Yes: pilot from the command line with hand-written tasks. How and when: `docs/engineering/runbooks/pilot-via-cli.md`. Found and fixed while writing it: the `Type:` line in a task prompt did not accept `survey`/`audit` |
+| Q3 | Relative thresholds: gates green, parity pass, at most two repair rounds on average; the second batch at least 30% lower in busy time than the first |
+| Q4 | Verify https on the devices in Phase 4 before removing the redirect to http; the http exception stays until then |
+| Q5 | webOS device validation is skipped in the pilot (host simulator and pinned Chromium only). Present on this machine: Tizen Studio with emulator tools, the Android emulator and AVDs, the `ares` CLI (npm) for a real LG TV later; no webOS TV simulator found |
+| Q6 | Done: `luxus-app` committed locally as `858b4c22` on `main` (not pushed; the operator pushes if the survey PR should include it) and the tree is clean |
+| Q7 | Unchanged: the GitHub repository is created after the pilot is judged good. **Location corrected**: both repositories live under `C:\workspace\orchestration-projects` (the only folder the bridge mounts): a clone `luxus-app` for the survey and the new `luxus-app-react` |
+| Q8 | Role aliases in the manifest (critical-implement, implement, analysis, review) mapped to the current Opus, Sonnet and Codex models; ids and subscription limits confirmed when B-135 is built |
+| Q9 | The operator exports the device-version data before Phase 4; the legacy floor is decided from it (Chrome 53 and up until then) |
+| Q10 | `tizen/Tizen-Luxus-App`, `webos-luxus`, `viseo-android` are the sources of truth; the 2022 copy `C:\workspace\Tizen-Luxus-App` is archived after its git status is checked for unpushed work |
+| Q11 | Android `minSdk` is 23. The origin-restricted web message listener is feature-detected at run time (WebView feature, not OS version) with the restricted-interface fallback |
+| Q12 | First task of Phase 4, read-only: can `luxus-service` index and page the provider catalog; no million-item promise before the report |
+| Q13 | The operator handles credentials in `viseo-deployment` and `author.p12`; an agent only lists locations without opening values |
+| Q14 | Pages `no-internet` and `blocked`; components `SettingsChevronRow`, `SettingsTextDisplay`, `SettingsSectionHeader`, `OverlayCloseButton`, `ProgressBarComponent` |
+| Q15 | No old-app Playwright reference run for the pilot; revisit for cache, player and carousel in Phase 4 |
+| Q16 | Each phase ends with an exit report (exit test result, metrics, issues, next scope); the operator replies go or what to change |
+
+Phase 0 may start on the operator's go. New backlog items from these answers: B-146 (consumption highlight) and B-147 (pilot setup).
+

@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 roadmap questions answered; survey selectable from a task prompt (B-146, B-147)
+- The `Type:` directive of a task prompt did not list survey, audit or codebase-survey, so the command-line path could not start a survey; found while writing the pilot runbook, reproduced by a failing test in test/survey.test.ts, fixed in src/openspec-policy.ts. Roadmap answers recorded, ADR 0032 location corrected to the projects root, pilot runbook added, B-146 and B-147 added.
+
 ## 2026-11-02 testing, AI files, review, model routing and the native bridge (ADR 0035, 0036, B-130..B-145)
 - Design only. ADR 0035: four test layers with a case matrix, canonical AGENTS.md with rule ids and an enforcement manifest, rule-aware risk-based review, per-area model routing (Opus for critical implementation), area-parallel scheduling, recipes and metrics, deterministic Vue extraction. ADR 0036: a versioned native bridge protocol with a handshake and origin allow-list, Android hardening, native-mediated http provider access, an https site with a temporary http exception, a host simulator, secrets hygiene. Roadmap with phases, readiness and 16 open questions added.
 
