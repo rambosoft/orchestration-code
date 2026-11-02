@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 facts-first code intelligence (ADR 0038, B-162..B-166)
+- Design only. Assessment of Graphify, Serena, dependency-cruiser, Knip, Context7, ts-morph, ast-grep, Aider's repo map, CodeQL and SCIP against what the orchestrator already does: deterministic activities with provenance, a preparation package per task, dependency-cruiser as a pack gate, a Graphify spike and a Context7 cache; MCP-based tools stay out of unattended runs because of their per-turn token cost. Several claims in the source text (versions, Vue support) are unverified.
+
 ## 2026-11-02 luxus-app-react on GitHub; the idiom map (B-114 partly)
 - Created the private repository rambosoft/luxus-app-react and pushed main. The idiom map (counts per idiom, a high-risk list, a migration order and contradicted assumptions such as this.$store in 80 files versus 2 files using Vuex helpers, and localStorage in 33 files) was produced by Codex through the pinned CLI; the global codex alpha exits when a configured MCP server fails authentication, and a background run needs its prompt on stdin from a file.
 

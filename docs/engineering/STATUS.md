@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-02 Designed facts-first code intelligence (ADR 0038, B-162..B-166, design only): tools run in orchestrator activities and inject bounded, provenance-checked facts, not MCP servers in runs; dependency-cruiser now, Graphify spike on Codex, Context7 pre-fetch with a repo cache, Serena and CodeQL deferred. The pilot chain (PILOT-1..5) is running on luxus-app-react with Codex implementing.
 - 2026-11-02 Private GitHub repository rambosoft/luxus-app-react created and pushed (2 commits, verify green); the bridge loaded its manifest (19 projects). Nuxt 2 to React idiom map written by Codex (docs/standards/nuxt2-to-react-idioms.md). The operator's Claude limit is tight: analysis jobs go to Codex (the codex.js pinned in node_modules, prompt on stdin, -o for the result).
 - 2026-11-02 Phase 1 exit report in the roadmap section 13: standards pack built and applied; luxus-app-react created (verify green, local only); manifest written. Open: GitHub repository, legacy bundle, host simulator, characterize/parity, enforced affected tests.
 - 2026-11-02 Operator decisions: Chrome 53 is the floor of the NEW app only (luxus-app keeps Chrome 38); PR 333 approved (not merged); luxus-app quality-gate workflows disabled (incl. the nightly schedule), its manifest has no quality commands; doc-only commits skip the test suite; Phase 1 started.
