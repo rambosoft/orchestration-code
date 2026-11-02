@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-02 engineering constitution design (ADR 0034, B-121..B-129)
+- Design only. The operator's React/TypeScript/Vite rules and the TV/media platform demands become pack content with gates: a generic pack, a media-tv-app pack, an Xtream provider skill; page-behaviour docs with an AI map and a drift check; a tech-debt ledger; a unified input layer; a four-level storage contract; a large-catalogue plan that states its provider limit. Source: the operator's rules plus a secondary analysis whose library and standards claims are to be verified at scaffold time. Nothing implemented.
+
 ## 2026-11-02 skill catalog design (ADR 0033, B-116..B-120)
 - Design only. Operator plugins are switched off in orchestrated runs and Codex has none, so stack standards become versioned data: a catalog and resolver, digests in every stage prompt plus standards files in the target repository, curated pinned import from installed plugins, stack packs that own their skills, a learning loop and a rejection-rate measure. Nothing implemented.
 
