@@ -110,6 +110,16 @@ describe("check-parity migration map", () => {
     const missing = await parity(await project(withMap(rows.replace("src/pages/offline/index.tsx", "src/pages/offline/gone.tsx"))));
     expect(missing.out).toContain("'src/pages/offline/gone.tsx' does not exist");
   });
+  it("fails a verified page without a characterization, and accepts the same row once a case characterizes the page, while a ported row may wait", async () => {
+    const row = "| pages/offline.vue | src/pages/offline/offline.ts | verified | src/pages/offline/index.test.tsx |\n";
+    const without: Record<string, string> = { ...withMap(row) };
+    delete without["docs/characterization/offline.json"];
+    const failing = await parity(await project(without));
+    expect(failing.code).toBe(1);
+    expect(failing.out).toContain("is verified but page 'offline' has no characterization");
+    expect((await parity(await project(withMap(row)))).code).toBe(0);
+    expect((await parity(await project({ ...without, "docs/migration/map.md": map(row.replace("verified", "ported")) }))).code).toBe(0);
+  });
   it("with REFERENCE_ROOT, fails an old file that does not exist in the reference", async () => {
     const reference = await project({ "pages/offline.vue": "x\n" });
     const result = await parity(await project(withMap("| pages/gone.vue | - | planned | - |\n")), { REFERENCE_ROOT: reference });

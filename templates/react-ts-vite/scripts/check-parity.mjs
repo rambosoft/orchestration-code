@@ -32,6 +32,7 @@ const pageCases = page => {
   return isFile(file) ? new Set(read(file).split(/^##\s+Cases\s*$/mi)[1]?.match(/\bC-\d{3}\b/g) ?? []) : undefined;
 };
 
+const characterizedPages = new Set();
 const dir = path.join(root, "docs/characterization");
 const artifacts = existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(".json")).sort() : [];
 for (const name of artifacts) {
@@ -51,6 +52,7 @@ for (const name of artifacts) {
     if (seen.has(key)) problems.push(`${label}: duplicate case for page '${item.page}'`);
     seen.add(key);
     for (const field of ["page", "behaviour", "expected"]) if (!text(item[field])) problems.push(`${label}: '${field}' is required`);
+    if (text(item.page)) characterizedPages.add(item.page);
     if (item.basis !== "static" && item.basis !== "observed") problems.push(`${label}: basis must be 'static' (read from legacy code) or 'observed' (captured from the running legacy app)`);
     if (item.basis === "observed" && !text(item.observation)) problems.push(`${label}: an observed case needs 'observation' (the fixture or capture it came from)`);
     if (!Array.isArray(item.sources) || item.sources.length === 0 || !item.sources.every(text)) problems.push(`${label}: sources must list at least one legacy path (path or path:line-line)`);
@@ -79,6 +81,11 @@ if (isFile(mapFile)) for (const line of read(mapFile).split("\n")) {
   // A cell may name several files separated by commas, and the old-file cell may carry a note after the path ("store/x.js history action").
   const oldPath = oldFile.split(/\s+/)[0];
   if (reference && oldPath && !/^(?:-|n\/a|none)$/i.test(oldPath) && !isFile(path.join(reference, oldPath))) problems.push(`docs/migration/map.md: old file '${oldPath}' does not exist under REFERENCE_ROOT`);
+  // `verified` claims parity was proven, which needs a characterization of the page the new file belongs to (a `ported` row may still be waiting for it).
+  if (status === "verified") for (const file of newFile.split(/[,;]/).map(item => item.trim().split(/\s+/)[0])) {
+    const page = file.match(/^src\/pages\/([^/]+)\//)?.[1];
+    if (page && !characterizedPages.has(page)) problems.push(`docs/migration/map.md: '${oldFile}' is verified but page '${page}' has no characterization (a docs/characterization/*.json case with "page": "${page}")`);
+  }
   if (status === "ported" || status === "verified") {
     for (const file of newFile.split(/[,;]/).map(item => item.trim().split(/\s+/)[0]).filter(item => item && !/^(?:-|n\/a|none)$/i.test(item))) if (!isFile(path.join(root, file))) problems.push(`docs/migration/map.md: '${oldFile}' is ${status} but '${file}' does not exist`);
     const cited = testCell.split(/[,;]/).map(item => item.trim()).filter(item => item && !/^(?:-|n\/a|none)$/i.test(item));
