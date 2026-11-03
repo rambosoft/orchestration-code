@@ -1,0 +1,35 @@
+# Scheduled drift report (B-123, ADR 0034 decision 8). Reports only: it never edits behaviour text, it opens or updates one issue when the living documents drifted from the code.
+name: drift
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check the living documents
+        id: drift
+        run: |
+          if npm run check:pages > drift.log 2>&1 && npm run check:index >> drift.log 2>&1 && npm run check:ai >> drift.log 2>&1 && npm run check:debt >> drift.log 2>&1; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or update the drift issue
+        if: steps.drift.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "The scheduled drift check found documents out of date with the code. Output:"; echo; echo '```'; tail -n 60 drift.log; echo '```'; echo; echo "Fix the page document or run npm run ai:index. Do not change behaviour text without a task."; } > body.md
+          existing=$(gh issue list --label drift --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body-file body.md; else gh label create drift --color BFD4F2 2>/dev/null || true; gh issue create --title "Documentation drift" --label drift --body-file body.md; fi

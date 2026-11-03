@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-123 DONE (route coverage, generated AI index + drift check, drift workflow template). NEXT: B-132, B-110, B-114, B-112/B-161, B-168; luxus re-apply batched after B-132.
 - 2026-11-03 B-122 DONE (check:styles, R-015 now gated, template tokens floors). Luxus needs the pack re-applied (batched after B-132). NEXT: B-123, B-132, B-110, B-114, B-112/B-161, B-168 (operator order: run all, commit and push each).
 - 2026-11-03 B-121 onboard --pack DONE (Codex draft; Claude fixed the dist path bug and the toolchain pins found by a live fresh-project run; suite 1044 green). Needs `npm run build` (done) and worker restart for nothing else: CLI only. FOLLOW-UP: re-apply the pack to luxus-app-react (adds depcruise) as a task, then add the depcruise gate to its manifest. Gemini CLI installed but its login is discontinued (Antigravity); treat as unavailable. NEXT: B-122 style-token lint, B-123, B-132, B-110, B-114, B-112/B-161, B-168.
 - 2026-11-03 B-117 standards files DONE (Codex draft, Claude fixed two defects: the catalog import pulled node:fs into the workflow bundle, and no profile wrote every standard into non-React projects; suite 1038 green). Needs `npm run build` and a worker restart for scaffold output. NEXT: B-121 onboard --pack react-ts-vite, B-122 style-token lint, B-123, B-132, B-110, B-114, B-112/B-161, B-168.

@@ -35,5 +35,24 @@ for (const page of pages) {
 }
 for (const doc of docs) if (!pages.includes(doc.replace(/\.md$/, ""))) problems.push(`docs/pages/${doc} describes a page folder that does not exist`);
 
+// Route coverage (B-123): when src/router exists, every route declared there as an object key ("/path": ...) has a page document with a `Route: /path` line, and every
+// `Route:` line names a declared route. `Route: none` marks a page that has no route of its own.
+const routerDir = path.join(root, "src/router");
+if (existsSync(routerDir)) {
+  const declared = new Set();
+  for (const name of readdirSync(routerDir)) {
+    if (!/\.[jt]sx?$/.test(name) || /\.(?:test|spec)\./.test(name)) continue;
+    for (const match of readFileSync(path.join(routerDir, name), "utf8").matchAll(/["'`](\/[^"'`\s]*)["'`]\s*:/g)) declared.add(match[1]);
+  }
+  const documented = new Map();
+  for (const doc of docs) {
+    const line = readFileSync(path.join(docsDir, doc), "utf8").match(/^Route:\s*(.+)$/m)?.[1];
+    if (line === undefined) { problems.push(`docs/pages/${doc} has no 'Route:' line (write 'Route: /path', or 'Route: none' for a page without a route)`); continue; }
+    for (const route of line.split(",").map(item => item.trim()).filter(item => item && item !== "none")) documented.set(route, doc);
+  }
+  for (const route of declared) if (!documented.has(route)) problems.push(`route '${route}' in src/router has no page document with 'Route: ${route}'`);
+  for (const [route, doc] of documented) if (!declared.has(route)) problems.push(`docs/pages/${doc} declares 'Route: ${route}', which is not declared in src/router`);
+}
+
 if (problems.length) { console.error(`check:pages found ${problems.length} problem(s):\n- ${problems.join("\n- ")}`); process.exit(1); }
 console.log(`check:pages ok (${pages.length} page(s))`);

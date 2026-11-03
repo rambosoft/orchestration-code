@@ -1,5 +1,7 @@
 # <Page name>
 
+Route: /path (comma separated for several; write `Route: none` for a page without a route of its own)
+
 Short, human-readable, kept true in the same change as the behaviour. Copy this file to `docs/pages/<page-folder-name>.md`.
 
 ## Purpose

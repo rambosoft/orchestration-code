@@ -47,10 +47,10 @@ describe("onboardManifest", () => {
   it("uses the React standards pack gates in order and validates the manifest", async () => {
     const root = await repo({ "package.json": pkg({ react: "19" }, {}) });
     const { manifest } = onboardManifest({ root, ...base, pack: "react-ts-vite" });
-    expect(commands(manifest)).toEqual(["npm run typecheck", "npm run lint", "npm run knip", "npm run depcruise", "npm run jscpd", "npm run check:ai", "npm run check:debt", "npm run check:pages", "npm run check:styles", "npm run test:related -- {changed}", "npm run build", "npm test"]);
+    expect(commands(manifest)).toEqual(["npm run typecheck", "npm run lint", "npm run knip", "npm run depcruise", "npm run jscpd", "npm run check:ai", "npm run check:debt", "npm run check:pages", "npm run check:styles", "npm run check:index", "npm run test:related -- {changed}", "npm run build", "npm test"]);
     const gates = manifest.qualityCommands as Array<{ parallel?: boolean; scope?: string }>;
-    expect(gates.slice(0, 9).every(gate => gate.parallel)).toBe(true);
-    expect(gates[11]!.scope).toBe("milestone");
+    expect(gates.slice(0, 10).every(gate => gate.parallel)).toBe(true);
+    expect(gates[12]!.scope).toBe("milestone");
     expect(ProjectManifestSchema.safeParse(manifest).success).toBe(true);
   });
   it("finds the orchestrator root from src/ and from the built dist/src/ folder", () => {
