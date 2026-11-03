@@ -21,7 +21,7 @@ export function parseOpenSpecTaskPrompt(prompt: string): { prompt: string; overr
  * Task-level switches written as their own line in the task text: "OpenSpec: on|off" and "Analysis: on|off".
  * Directive lines are removed from the prompt; conflicting repeats of one directive are an error.
  */
-export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; lane?: "light" | "standard" | "heavy"; area?: string; critical?: boolean; error?: string } {
+export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; lane?: "light" | "standard" | "heavy"; area?: string; critical?: boolean; design?: string; error?: string } {
   const lines = prompt.split(/\r?\n/);
   const found = new Map<string, Set<boolean>>();
   const removed = new Set<number>();
@@ -29,6 +29,7 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   const lanes = new Set<string>();
   const areas = new Set<string>();
   const criticals = new Set<boolean>();
+  const designs = new Set<string>();
   let invalidArea = false;
   lines.forEach((line, index) => {
     const laneLine = /^\s*Lane\s*:\s*(light|standard|heavy)\s*$/i.exec(line);
@@ -37,6 +38,8 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
     if (typed) { removed.add(index); types.add(typed[1]!.toLowerCase()); return; }
     const areaLine = /^\s*Area\s*:\s*(.*?)\s*$/i.exec(line);
     if (areaLine) { removed.add(index); if (/^[a-z0-9-]{1,40}$/.test(areaLine[1]!)) areas.add(areaLine[1]!); else invalidArea = true; return; }
+    const designLine = /^\s*Design\s*:\s*(\S+)\s*$/i.exec(line);
+    if (designLine) { removed.add(index); designs.add(designLine[1]!); return; }
     const criticalLine = /^\s*Critical\s*:\s*(yes|no)\s*$/i.exec(line);
     if (criticalLine) { removed.add(index); criticals.add(criticalLine[1]!.toLowerCase() === "yes"); return; }
     const match = /^\s*(OpenSpec|Analysis)\s*:\s*(on|off)\s*$/i.exec(line);
@@ -50,10 +53,11 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   if (types.size > 1) return { prompt, error: `task contains conflicting Type directives (${[...types].join(", ")})` };
   if (invalidArea) return { prompt, error: "task contains an invalid Area directive (expected a lowercase slug of at most 40 characters)" };
   if (areas.size > 1) return { prompt, error: `task contains conflicting Area directives (${[...areas].join(", ")})` };
+  if (designs.size > 1) return { prompt, error: "task contains conflicting Design directives" };
   if (criticals.size > 1) return { prompt, error: "task contains conflicting Critical yes/no directives" };
   const clean = lines.filter((_line, index) => !removed.has(index)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const flag = (key: string) => found.has(key) ? { [key === "openspec" ? "openSpec" : "analysis"]: [...found.get(key)!][0]! } : {};
-  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}), ...(lanes.size ? { lane: [...lanes][0]! as "light" | "standard" | "heavy" } : {}), ...(areas.size ? { area: [...areas][0]! } : {}), ...(criticals.size ? { critical: [...criticals][0]! } : {}) };
+  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}), ...(lanes.size ? { lane: [...lanes][0]! as "light" | "standard" | "heavy" } : {}), ...(areas.size ? { area: [...areas][0]! } : {}), ...(criticals.size ? { critical: [...criticals][0]! } : {}), ...(designs.size ? { design: [...designs][0]! } : {}) };
 }
 
 export function openSpecProposalPrompt(input: { taskPrompt: string; changeId: string }): string {

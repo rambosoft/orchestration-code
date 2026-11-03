@@ -229,7 +229,9 @@ async function runProject(input: RunInput): Promise<RunResult> {
   let optimizedOpenSpec = "";
   let planningTaskGoal = "";
   let analysis: Analysis | undefined;
-  let analysisDecisions = "";
+  // The approved design of a critical task (B-159, src/design-gate.ts) travels with the analysis decisions: the plan, implement and review prompts already carry them.
+  const designContext = input.design ?? "";
+  let analysisDecisions = designContext;
   let analysisNote: string | undefined;
   let plan: Plan | undefined;
   let executionBrief: ExecutionBrief | undefined;
@@ -417,7 +419,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
       if (!defectFound() && !isReproduced()) { stopReason = "bug_needs_info"; return finish("needs_info", needsInfoMessage(bugOutcome)); }
       if (!isReproduced()) warnings.push({ stage: "reproduce", message: "the bug could not be reproduced; the fix rests on code analysis and must add its own regression test" });
       if (!defectFound()) warnings.push({ stage: "diagnose", message: "code analysis found no defect; the fix rests on the reproduction alone" });
-      analysisDecisions = diagnosisBlock(bugOutcome);
+      analysisDecisions = [designContext, diagnosisBlock(bugOutcome)].filter(Boolean).join("\n\n");
       investigationConstraints = diagnosisConstraints(bugOutcome);
       const gate = regressionGate(bugOutcome);
       if (gate) gateCommands = [...gateCommands, gate];
@@ -448,7 +450,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
         analysis = analysisResult.value;
         if (analysisResult.degraded) analysisNote = "The analysis answer did not fully match the expected format; the usable parts were kept (some sections may be missing).";
         analysisResult.output.metadata = { ...analysisResult.output.metadata, analysisValidated: !analysisResult.degraded, chosenApproach: analysis.chosen.name, candidateCount: analysis.candidates.length };
-        analysisDecisions = analysisBlock(analysis);
+        analysisDecisions = [designContext, analysisBlock(analysis)].filter(Boolean).join("\n\n");
         completedStages.push("analyze");
       } else warnings.push({ stage: "analyze", message: "the analysis stage produced nothing usable, so planning and implementation ran without analysis decisions" });
     } catch (error) {

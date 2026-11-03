@@ -298,5 +298,16 @@
         "focus": "Playback code owns media resources: check that every media element, listener and request has an owner and a cleanup, that errors surface to the user, and that devices on the Chrome 53 tier still work."
       }
     ]
+  },
+  "designGate": {
+    "enabled": true,
+    "dir": "docs/design",
+    "areas": [
+      "cache-storage",
+      "input",
+      "xtream-fetch",
+      "carousel",
+      "player-native"
+    ]
   }
 }

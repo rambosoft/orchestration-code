@@ -215,6 +215,14 @@ describe("workflow lanes", () => {
     const untouched = await run({ tier: "mvp", lane: "standard", specialists }, { changes: { files: ["src/pages/home/index.tsx"], lines: 12, deletedFiles: [] } });
     expect(untouched.calls.find(call => call.stage === "review")!.prompt).not.toContain("SPECIALIST REVIEW");
   }, 120_000);
+  it("carries the approved design of a critical task into the plan, implement and review prompts (B-159)", async () => {
+    const design = "APPROVED DESIGN (docs/design/storage.md, area storage; protected):\nProtected constraints:\n- D-001 Catalogue data goes through the storage interface.";
+    const { result, calls } = await run({ tier: "mvp", lane: "standard", design });
+    expect(result.status, result.message).toBe("completed");
+    for (const stage of ["plan", "implement", "review"]) expect(calls.find(call => call.stage === stage)!.prompt, stage).toContain("D-001 Catalogue data goes through the storage interface.");
+    const without = await run({ tier: "mvp", lane: "standard" });
+    for (const stage of ["plan", "implement", "review"]) expect(without.calls.find(call => call.stage === stage)!.prompt, stage).not.toContain("APPROVED DESIGN");
+  }, 120_000);
   it("never escalates a prototype task to a review, however large or risky its result (ADR 0031)", async () => {
     const huge = { files: Array.from({ length: 40 }, (_, i) => `Assets/UI/Screen${i}.uxml`), lines: 5000, deletedFiles: ["Assets/Tests/EditMode/OldTests.cs"] };
     for (const [changes, summary] of [[huge, "Done."], [{ files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] }, "Done."], [{ files: ["src/a.ts"], lines: 5, deletedFiles: [] }, "Done.\n\nUNMET_ACCEPTANCE:\n- The button shows a percentage."]] as Array<[ChangeStats, string]>) {

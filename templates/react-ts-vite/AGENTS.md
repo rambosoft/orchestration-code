@@ -36,6 +36,7 @@ Area standards live in `docs/ai/standards/`; read the relevant area standards be
 - R-021 Respect module boundaries: pages -> components/hooks/services; components never import pages; services never import UI; src/storage and src/input are imported only through their index.
 - R-022 Every module under src (not pages, styles, assets) has a README.md contract: one purpose line and `## Interface`, `## Invariants`, `## Side Effects` (`npm run check:contracts`, template in docs/ai/MODULE_README_TEMPLATE.md). Change the contract in the same change as the module.
 - R-023 Migration slices are characterized before they are ported: docs/characterization/<slice>.json records what the legacy code does (format in docs/characterization/README.md), every case is a page-document case cited by a test, and docs/migration/map.md is kept true (`npm run check:parity`).
+- R-024 Critical areas (storage, input, carousel, playback, the Xtream adapter) are designed before they are built: docs/design/<area>.md from the template, reviewed from a fresh context by another model and approved. Implement tasks carry `Design: docs/design/<area>.md` and build inside its protected constraints (`npm run check:design`).
 
 ## Layout
 src/pages (routes) · src/components (shared UI) · src/hooks · src/services (data, domain) · src/storage · src/input · src/styles (tokens) · docs/pages · docs/ai · docs/migration · docs/technical-debt · docs/decisions
