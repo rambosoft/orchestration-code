@@ -12,7 +12,7 @@
   { "id": "R-011", "gate": "check:debt" },
   { "id": "R-012", "gate": "check:pages" },
   { "id": "R-013", "gate": "check:ai" },
-  { "id": "R-014", "gate": "prose" },
+  { "id": "R-014", "gate": "check:deps" },
   { "id": "R-015", "gate": "check:styles" },
   { "id": "R-016", "gate": "prose" },
   { "id": "R-017", "gate": "prose" },

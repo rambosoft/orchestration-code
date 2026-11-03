@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-113 DONE (dependency allow-list gate, pack references). NEXT: B-138 Vue extraction (code written, tests pending), B-137, B-165, B-125, B-164, B-172/B-173, then Paperclip project.
 - 2026-11-03 B-159 DONE (design gate). NEXT: B-113 allow-list, B-138, B-137, B-165, B-125, B-164, B-172/B-173, then Paperclip project.
 - 2026-11-03 B-129 done (see B-134).
 - 2026-11-03 B-134 DONE (rule-aware review) and B-129 DONE (specialist review: manifest review.specialists, data-gated workflow, luxus lists storage, input, xtream, carousel, player; replay unchanged). NEXT: B-159 design gate, B-113, B-138, B-137, B-165, B-125, B-164, B-172/B-173.

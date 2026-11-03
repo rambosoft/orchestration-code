@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "note": "Packages the pack and a Vite React TypeScript project use without a further decision (R-014, npm run check:deps). Anything else needs docs/decisions/<n>-<name>.md with 'Dependency: <name>' and 'Reason: <why>': bundle size, memory, device support, maintenance, licence.",
+  "allow": [
+    { "name": "react", "reason": "UI library of the stack" },
+    { "name": "react-dom", "reason": "UI renderer of the stack" },
+    { "name": "vite", "reason": "build tool of the stack" },
+    { "name": "@vitejs/plugin-react", "reason": "React support in Vite" },
+    { "name": "@vitejs/plugin-legacy", "reason": "Chrome 53 legacy bundle (device tiers)" },
+    { "name": "typescript", "reason": "strict TypeScript (R-001)" },
+    { "name": "@types/react", "reason": "types for react" },
+    { "name": "@types/react-dom", "reason": "types for react-dom" },
+    { "name": "@types/node", "reason": "types for the build and test tooling" },
+    { "name": "vitest", "reason": "test runner (R-010)" },
+    { "name": "jsdom", "reason": "DOM environment for component tests" },
+    { "name": "@testing-library/react", "reason": "component tests" },
+    { "name": "@testing-library/jest-dom", "reason": "DOM matchers for component tests" },
+    { "name": "eslint", "reason": "lint gate" },
+    { "name": "@eslint/js", "reason": "ESLint base rules" },
+    { "name": "typescript-eslint", "reason": "TypeScript lint rules" },
+    { "name": "eslint-plugin-react-hooks", "reason": "Rules of Hooks (R-003)" },
+    { "name": "eslint-plugin-react-refresh", "reason": "Vite React refresh lint rule (Vite starter)" },
+    { "name": "eslint-plugin-jsx-a11y", "reason": "accessibility lint rules (R-004)" },
+    { "name": "eslint-plugin-jsdoc", "reason": "service doc comments (R-002)" },
+    { "name": "globals", "reason": "ESLint environment globals" },
+    { "name": "knip", "reason": "dead code gate (R-008)" },
+    { "name": "dependency-cruiser", "reason": "module boundary gate (R-021)" },
+    { "name": "jscpd", "reason": "duplicate code gate (R-009)" },
+    { "name": "acorn", "reason": "parses the legacy bundle (check:legacy-syntax)" }
+  ]
+}

@@ -54,3 +54,8 @@ Status: Proposed (2026-11-02). B-107 first slice (folder checks, mode option) an
 ## Addendum 3 (2026-11-02): one contract per app
 The Chrome 53 floor applies to the new app only. `luxus-app` keeps its Chrome 38 contract and its own build; the two apps are not unified. The quality-gate workflows of `luxus-app` are disabled and its manifest carries no quality commands (roadmap section 12), so the old repository is a read-only reference and fallback for the pilot.
 
+
+## Addendum (2026-11-03): reuse over invention is built (B-113)
+- The react-ts-vite pack gains `references` in `pack.json` (the approved catalog skills and the libraries the stage prompts prefer, plus the allow-list path), the allow-list `docs/ai/dependency-allowlist.json` (each entry with a reason), and the gate `npm run check:deps` (`scripts/check-deps.mjs`, rule R-014 now mapped to it instead of prose). A dependency that is neither on the allow-list nor in a `docs/decisions/*.md` note with a `Dependency: <name>` line followed by a `Reason: <why>` line fails the gate; `test/pack-deps.test.ts` proves it, and checks that every tool the pack installs is allow-listed and every reference resolves.
+- The prompts name the preferred libraries through the `react-ts-vite-app` skill digest ("prefer the libraries in docs/ai/dependency-allowlist.json; a new one needs a decision note"), which reaches Codex and Claude alike. The allow-list stays small on purpose: the router, query, state and spatial-navigation libraries are decided in the M1 design notes (B-172, B-173) and enter through decision notes, so the choice is recorded where it was made.
+- luxus-app-react receives the allow-list and the script the next time the pack is re-applied (its 24 dependencies pass against it today).
