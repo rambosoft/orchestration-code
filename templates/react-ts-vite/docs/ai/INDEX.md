@@ -5,6 +5,7 @@ An index into the real documents, not a copy. Keep it short; update it when a mo
 - Rules: `AGENTS.md` (canonical) · `docs/ai/enforcement.json` (which rule is a gate) · `ENGINEERING_STANDARDS.md` (detail)
 - Pages: `docs/pages/<page>.md` (one per `src/pages/<page>/`)
 - Modules: list each feature module here with a one-line purpose and its contract (Interface, Invariants, Side Effects).
+- Recipes: `docs/ai/recipes/` (page, component, service) · patterns later tasks should reuse: `docs/ai/PATTERNS.md`
 - Decisions: `docs/decisions/`
 - Technical debt: `docs/technical-debt/LEDGER.md`
 - Migration notes: `docs/migration/findings.md` (changes that would alter architecture or behaviour, for a decision), `docs/migration/todo.md` (work not done), `docs/migration/map.md` (old file -> new file -> status -> tests)

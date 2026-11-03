@@ -7,6 +7,7 @@ Area standards live in `docs/ai/standards/`; read the relevant area standards be
 ## Working agreement
 - Read docs/ai/INDEX.md and the page document in docs/pages/ before changing a page. Change the document in the same change as the behaviour.
 - While working run only affected tests: `npm run test:related -- <changed files>` or `npm run test:<domain>`. Before finishing run `npm run verify`.
+- Start from the recipe for the kind of change (docs/ai/recipes/page.md, component.md, service.md). Reuse what exists before writing new code; record a pattern later tasks should follow in docs/ai/PATTERNS.md.
 - One task, one concern. Port behaviour, not code: restructure, extract, simplify. Do not copy old structure.
 - If a change would alter architecture or visible behaviour, do not do it silently: keep the old behaviour, record the finding in docs/migration/findings.md, add a TODO in docs/migration/todo.md.
 - Anything left undone: write it down (todo.md or a debt ledger row). Never leave silent gaps.

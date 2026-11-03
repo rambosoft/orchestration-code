@@ -111,6 +111,58 @@ const pkgDeps: IntelligenceAdapter = {
   },
 };
 
+const EXPORT = /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|enum|interface|type)\s+([A-Za-z_$][\w$]*)/;
+const SHARED = /^src\/(?:components|hooks|services|utils|lib)\//;
+const clip = (text: string, max: number): string => text.length > max ? `${text.slice(0, max - 1)}…` : text;
+/** The first sentence of the doc comment right above line `index` (0-based), or undefined. */
+function docAbove(lines: string[], index: number): string | undefined {
+  let end = index - 1;
+  while (end >= 0 && lines[end]!.trim() === "") end--;
+  if (end < 0 || !lines[end]!.trim().endsWith("*/")) return undefined;
+  let start = end;
+  while (start > 0 && !lines[start]!.includes("/**")) start--;
+  const text = lines.slice(start, end + 1).map(line => line.replace(/^\s*\/?\*+\/?\s?/, "").replace(/\*\/\s*$/, "").trim()).filter(line => line && !line.startsWith("@")).join(" ");
+  return text ? clip(text.split(/(?<=[.!?])\s/)[0]!, 100) : undefined;
+}
+/** Existing shared code (components, hooks, services, utils) with a one-line purpose, so a task reuses before it reinvents (B-137, R-009). Closest to the files the task touches first. Limits: export lines only, three per file, thirty in all. */
+const reuseIndex: IntelligenceAdapter = {
+  id: "reuse-index", version: "1.0.0", defaultMode: "off", timeoutMs: 10_000, sizeBudgetChars: 14_000,
+  async run(context) {
+    const known = new Set(context.files);
+    const near = new Set(context.affectedFiles.map(file => file.split("/").slice(0, 2).join("/")));
+    const candidates = context.files.filter(file => SHARED.test(file) && SOURCE.test(file) && !TEST.test(file) && !/\.d\.ts$/.test(file) && !/(?:^|\/)index\.[jt]sx?$/.test(file)).slice(0, 600)
+      .sort((a, b) => Number(near.has(b.split("/").slice(0, 2).join("/"))) - Number(near.has(a.split("/").slice(0, 2).join("/"))) || a.localeCompare(b));
+    const purposeOfFolder = async (file: string): Promise<string | undefined> => {
+      for (let dir = path.posix.dirname(file); dir.startsWith("src/") && dir.includes("/"); dir = path.posix.dirname(dir)) {
+        const readme = `${dir}/README.md`;
+        if (!known.has(readme)) continue;
+        const line = (await readFile(path.join(context.worktree, readme), "utf8").catch(() => "")).split(/\r?\n/).find(item => item.trim() && !item.startsWith("#"));
+        if (line) return clip(line.trim(), 100);
+      }
+      return undefined;
+    };
+    const facts: Fact[] = [];
+    for (const file of candidates) {
+      if (context.signal.aborted) throw new Error("aborted");
+      if (facts.length >= 30) break;
+      const full = path.join(context.worktree, file);
+      const info = await stat(full).catch(() => undefined);
+      if (!info?.isFile() || info.size > MAX_FILE_BYTES) continue;
+      const text = (await readFile(full, "utf8").catch(() => "")).replace(/\r\n/g, "\n");
+      const lines = text.split("\n");
+      let taken = 0;
+      for (let index = 0; index < lines.length && taken < 3 && facts.length < 30; index++) {
+        const name = EXPORT.exec(lines[index]!)?.[1];
+        if (!name) continue;
+        const purpose = docAbove(lines, index) ?? await purposeOfFolder(file);
+        facts.push(mk("reuse-index", "1.0.0", context, { file, startLine: index + 1, endLine: index + 1, relationship: "exports", target: clip(`${name}${purpose ? ` — ${purpose}` : ""}`, 220), confidence: "verified", text }));
+        taken++;
+      }
+    }
+    return facts;
+  },
+};
+
 /** dependency-cruiser as a gate: the project's own `depcruise` script (B-162) runs in verify. It states no facts; the verdict is the value. */
 const depcruise: IntelligenceAdapter = {
   id: "depcruise", version: "1.0.0", defaultMode: "off", timeoutMs: 1_000, sizeBudgetChars: 1_000,
@@ -121,4 +173,4 @@ const depcruise: IntelligenceAdapter = {
   },
 };
 
-for (const adapter of [tsImports, affectedTests, pkgDeps, depcruise]) if (!intelligenceRegistry.get(adapter.id)) intelligenceRegistry.register(adapter);
+for (const adapter of [tsImports, affectedTests, pkgDeps, reuseIndex, depcruise]) if (!intelligenceRegistry.get(adapter.id)) intelligenceRegistry.register(adapter);

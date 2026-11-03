@@ -117,8 +117,8 @@ describe("prepareStageIntelligence", () => {
 });
 
 describe("the built-in registry", () => {
-  it("registers the four first tools, all off until a project turns them on", () => {
-    expect(intelligenceRegistry.list().map(adapter => [adapter.id, adapter.defaultMode])).toEqual([["ts-imports", "off"], ["affected-tests", "off"], ["pkg-deps", "off"], ["depcruise", "off"]]);
+  it("registers the five first tools, all off until a project turns them on", () => {
+    expect(intelligenceRegistry.list().map(adapter => [adapter.id, adapter.defaultMode])).toEqual([["ts-imports", "off"], ["affected-tests", "off"], ["pkg-deps", "off"], ["reuse-index", "off"], ["depcruise", "off"]]);
   });
   it("adds the depcruise gate when the project asks for it and has the script, without duplicating a command the manifest already holds", async () => {
     const root = await repo(FILES);
@@ -144,7 +144,7 @@ describe("manifest intelligence block", () => {
   });
   it("is carried by a project manifest", async () => {
     const manifest = JSON.parse(await readFile("projects/luxus-app-react.json", "utf8"));
-    expect(Object.keys(ProjectManifestSchema.parse(manifest).intelligence?.tools ?? {}).sort()).toEqual(["affected-tests", "pkg-deps", "ts-imports"]);
+    expect(Object.keys(ProjectManifestSchema.parse(manifest).intelligence?.tools ?? {}).sort()).toEqual(["affected-tests", "pkg-deps", "reuse-index", "ts-imports"]);
     expect(ProjectManifestSchema.parse({ ...manifest, intelligence: undefined }).intelligence).toBeUndefined();
     expect(ProjectManifestSchema.parse({ ...manifest, intelligence: { tools: { "ts-imports": { mode: "advisory" } } } }).intelligence?.tools["ts-imports"]?.mode).toBe("advisory");
   });

@@ -7,7 +7,7 @@ import { cancelRun, inspectRun, listRuns, signalApproval, resumeRun, startRun } 
 import { syncMergedStack } from "./workspaces.js";
 import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
-import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
+import { batchTrend, formatBatchTrend, formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
 import { paperclipClient, startReconcileService } from "./reconcile-service.js";
 import { stackPr } from "./stack-pr.js";
@@ -157,6 +157,13 @@ async function main() {
     const fileIndex = args.indexOf("--file");
     const file = fileIndex >= 0 ? args[fileIndex + 1]! : path.join(data, "logs", "worker-activity-events.jsonl");
     const summary = summarizeTiming(parseEvents(await readFile(file, "utf8")), { includeFake: args.includes("--include-fake"), ...(sinceIndex >= 0 ? { since: args[sinceIndex + 1]! } : {}) });
+    const batchIndex = args.indexOf("--batch"); const projectIndex = args.indexOf("--project");
+    if (batchIndex >= 0) {
+      const size = Number(args[batchIndex + 1] ?? 5) || 5;
+      const batches = batchTrend(summary.tasks, { size, ...(projectIndex >= 0 ? { project: args[projectIndex + 1]! } : {}) });
+      console.log(args.includes("--json") ? JSON.stringify(batches, null, 2) : formatBatchTrend(batches, size));
+      return;
+    }
     console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatTiming(summary));
     return;
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flagHeavyTasks, formatTiming, parseEvents, summarizeTiming, timedActivity, type TaskTiming, type TimingEvent } from "../src/timing.js";
+import { batchTrend, flagHeavyTasks, formatBatchTrend, formatTiming, parseEvents, summarizeTiming, timedActivity, type TaskTiming, type TimingEvent } from "../src/timing.js";
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 9, minute)).toISOString();
 const done = (stage: string, minute: number, ms: number, extra: TimingEvent = {}): TimingEvent => ({ event: "activity.complete", at: at(minute), workflowId: "wf-1", runId: "run-1", projectId: "project-a", stage, provider: "claude", ok: true, activityDurationMs: ms, ...extra });
@@ -72,7 +72,7 @@ describe("summarizeTiming", () => {
 });
 
 describe("flagHeavyTasks (B-146)", () => {
-  const task = (key: string, project: string, busyMin: number, byName: Record<string, number> = { "implement/claude": busyMin * 60_000 }): TaskTiming => ({ key, project, wallMs: busyMin * 60_000, busyMs: busyMin * 60_000, idleMs: 0, byName });
+  const task = (key: string, project: string, busyMin: number, byName: Record<string, number> = { "implement/claude": busyMin * 60_000 }): TaskTiming => ({ key, project, wallMs: busyMin * 60_000, busyMs: busyMin * 60_000, idleMs: 0, byName, endedAt: 0, repairs: 0, costUsd: 0 });
   const group = (project: string, minutes: number[]) => minutes.map((busy, index) => task(`${project}-${index}`, project, busy));
   it("flags a task at three times the median of its project and names its heaviest activity", () => {
     const tasks = [...group("app", [10, 12, 11, 9]), task("app-heavy", "app", 60, { "implement/claude": 50 * 60_000, verify: 5 * 60_000 })];
@@ -100,5 +100,40 @@ describe("flagHeavyTasks (B-146)", () => {
     const summary = { ...summarizeTiming(events), tasks: [...group("app", [10, 12, 11, 9]), task("app-heavy", "app", 60, { "implement/claude": 50 * 60_000 })] };
     const text = formatTiming(summary);
     for (const expected of ["Heavy tasks", "app-heavy", "implement/claude 50.0"]) expect(text).toContain(expected);
+  });
+});
+
+describe("batchTrend (B-137): is later work cheaper than the first?", () => {
+  /** A task that finishes at `end` minutes: an implement run per entry of `runs` (more than one is a repair), costing `cost` in total. */
+  const taskEvents = (id: string, start: number, runs: number[], cost: number): TimingEvent[] => {
+    let minute = start;
+    return runs.map((duration, index) => { const event = done("implement", minute + duration, duration * 60_000, { workflowId: id, runId: id, costUsd: index === 0 ? cost : 0 }); minute += duration; return event; });
+  };
+  const summary = () => summarizeTiming([
+    ...taskEvents("t1", 0, [10, 8], 3), ...taskEvents("t2", 20, [12, 9], 4), ...taskEvents("t3", 40, [6], 1), ...taskEvents("t4", 50, [5], 1), ...taskEvents("t5", 60, [4], 0.5),
+  ], { includeFake: true });
+  it("counts the repair rounds and the cost of each task, and orders tasks by when they finished", () => {
+    const tasks = summary().tasks.sort((a, b) => a.endedAt - b.endedAt);
+    expect(tasks.map(task => task.key)).toEqual(["t1", "t2", "t3", "t4", "t5"]);
+    expect(tasks.map(task => task.repairs)).toEqual([1, 1, 0, 0, 0]);
+    expect(tasks.map(task => task.costUsd)).toEqual([3, 4, 1, 1, 0.5]);
+  });
+  it("shows a falling line: the second batch is faster, needs fewer repairs and costs less", () => {
+    const batches = batchTrend(summary().tasks, { size: 2 });
+    expect(batches.map(batch => [batch.batch, batch.tasks])).toEqual([[1, 2], [2, 2], [3, 1]]);
+    expect(batches[0]!.repairsPerTask).toBe(1);
+    expect(batches[1]!.repairsPerTask).toBe(0);
+    expect(batches[1]!.medianBusyMs).toBeLessThan(batches[0]!.medianBusyMs);
+    expect(batches[1]!.costUsd).toBeLessThan(batches[0]!.costUsd);
+    const text = formatBatchTrend(batches, 2);
+    expect(text).toContain("batch 1");
+    expect(text).toContain("repairs 1.0");
+    expect(text).toContain("cost $7.00");
+  });
+  it("limits the view to one project and handles no tasks", () => {
+    const other = summarizeTiming([done("implement", 5, 300_000, { workflowId: "x", runId: "x", projectId: "project-b" })], { includeFake: true });
+    expect(batchTrend([...summary().tasks, ...other.tasks], { size: 5, project: "project-b" }).map(batch => batch.tasks)).toEqual([1]);
+    expect(batchTrend([], { size: 3 })).toEqual([]);
+    expect(formatBatchTrend([], 3)).toBe("No finished tasks to group into batches.");
   });
 });

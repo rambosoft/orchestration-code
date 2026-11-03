@@ -31,7 +31,6 @@ export async function prepareStageIntelligence(input: { stage: string; prompt: s
     const changed = [...lines(await git("diff", "--name-only", "HEAD")), ...lines(await git("ls-files", "--others", "--exclude-standard"))].filter(file => known.has(file));
     const named = (input.prompt.match(PATH_TOKEN) ?? []).map(token => token.replace(/^\.\//, "")).filter(token => known.has(token));
     const affectedFiles = [...new Set([...named, ...changed])].slice(0, MAX_AFFECTED);
-    if (!affectedFiles.length) return { block: "", warnings: [], metadata: { skipped: "no affected files yet", durationMs: Date.now() - started } };
     const untracked = await Promise.all(lines(await git("ls-files", "--others", "--exclude-standard")).slice(0, 200).map(async file => { const info = await stat(path.join(root, file)).catch(() => undefined); return `${file}:${info?.size}:${info?.mtimeMs}`; }));
     const fingerprint = createHash("sha256").update([commit, await git("diff", "HEAD"), ...untracked].join("\n")).digest("hex").slice(0, 24);
     const collected = await registry.collect({ worktree: root, taskId: input.taskId, commit, affectedFiles, files, runner }, input.intelligence, { fingerprint, env });
