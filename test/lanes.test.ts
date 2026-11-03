@@ -193,6 +193,28 @@ describe("workflow lanes", () => {
     expect([...stages].sort()).toEqual(["implement", "review", "verify"]);
     expect(result.message).toContain("review added");
   }, 60_000);
+  const specialists = [{ id: "storage", paths: ["src/storage/**"], focus: "Catalogue data goes through the storage interface; check batching, eviction and quota failures." }];
+  it("adds a focused review to a prototype task that touches a critical area, even though prototypes never escalate (B-129)", async () => {
+    const { result, stages, calls } = await run({ tier: "prototype", lane: "standard", specialists }, { changes: { files: ["src/storage/db.ts"], lines: 12, deletedFiles: [] } });
+    expect(result.status, result.message).toBe("completed");
+    expect([...stages].sort()).toEqual(["implement", "review", "verify"]);
+    expect(result.message).toContain("touches the storage area (src/storage/db.ts)");
+    const review = calls.find(call => call.stage === "review")!;
+    expect(review.prompt).toContain("SPECIALIST REVIEW");
+    expect(review.prompt).toContain("check batching, eviction and quota failures");
+  }, 60_000);
+  it("leaves a prototype page change without a review, and a task of a project with no critical areas as before (B-129)", async () => {
+    const page = await run({ tier: "prototype", lane: "standard", specialists }, { changes: { files: ["src/pages/home/index.tsx"], lines: 12, deletedFiles: [] } });
+    expect(page.stages).toEqual(["implement", "verify"]);
+    const none = await run({ tier: "prototype", lane: "standard" }, { changes: { files: ["src/storage/db.ts"], lines: 12, deletedFiles: [] } });
+    expect(none.stages).toEqual(["implement", "verify"]);
+  }, 60_000);
+  it("puts the area's focus in the review a lane already has, only when the change touches the area (B-129)", async () => {
+    const touched = await run({ tier: "mvp", lane: "standard", specialists }, { changes: { files: ["src/storage/db.ts"], lines: 12, deletedFiles: [] } });
+    expect(touched.calls.find(call => call.stage === "review")!.prompt).toContain("SPECIALIST REVIEW");
+    const untouched = await run({ tier: "mvp", lane: "standard", specialists }, { changes: { files: ["src/pages/home/index.tsx"], lines: 12, deletedFiles: [] } });
+    expect(untouched.calls.find(call => call.stage === "review")!.prompt).not.toContain("SPECIALIST REVIEW");
+  }, 120_000);
   it("never escalates a prototype task to a review, however large or risky its result (ADR 0031)", async () => {
     const huge = { files: Array.from({ length: 40 }, (_, i) => `Assets/UI/Screen${i}.uxml`), lines: 5000, deletedFiles: ["Assets/Tests/EditMode/OldTests.cs"] };
     for (const [changes, summary] of [[huge, "Done."], [{ files: ["src/auth/session.ts"], lines: 20, deletedFiles: [] }, "Done."], [{ files: ["src/a.ts"], lines: 5, deletedFiles: [] }, "Done.\n\nUNMET_ACCEPTANCE:\n- The button shows a percentage."]] as Array<[ChangeStats, string]>) {

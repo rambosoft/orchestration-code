@@ -7,6 +7,7 @@ import { renderSkillsBlock } from "./skills-text.js";
 import type { OpenSpecPrepared, OpenSpecContext, ProviderRoute, ReviewFinding, RunInput, RunResult, StageInput, StageName, StageOutput } from "./contracts.js";
 import { profiles, type WorkflowProfile } from "./profiles.js";
 import { LANE_PROFILES, MILESTONE_CHECK_PREFIX, escalationReasons, lanePlan } from "./lanes.js";
+import { matchSpecialists, specialistReasons, specialistReviewText } from "./review-policy.js";
 import { openSpecProposalPrompt, openSpecChecklistReconcilePrompt, openSpecRepairPrompt, shouldRunOpenSpec } from "./openspec-policy.js";
 import { SIMPLICITY_POLICY, SIMPLICITY_REVIEW_POLICY } from "./simplicity.js";
 import { deterministicBrief, deterministicDigest, deterministicPlan } from "./fallbacks.js";
@@ -109,7 +110,7 @@ ${REPORT_STYLE}`;
   return `${taskPrompt}${guidance}\n\n${deliveryContract}\n\nREPAIR: One bounded repair pass remains. Resolve each blocker below with the smallest complete fix; add or update a regression test. Run focused tests; the orchestration runs its quality gate before follow-up review. Report each resolution and any unresolved blocker with evidence.\n${repairList}`;
 }
 
-export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = "", analysisDecisions = "", contractContext = "", skillsContext = ""): string {
+export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], reviewNumber: number, repeatFailure = false, verificationPending = false, uiUxContext = "", analysisDecisions = "", contractContext = "", skillsContext = "", specialistContext = ""): string {
   let reviewChecklist = taskPrompt;
   try {
     const brief = JSON.parse(taskPrompt) as Partial<ExecutionBrief>;
@@ -146,7 +147,7 @@ export function reviewPrompt(taskPrompt: string, stageResults: StageOutput[], re
   const analysisReviewText = analysisDecisions ? `\n\n${analysisDecisions}\nReview against these analysis decisions: report a blocking finding if the implementation contradicts a chosen parameter or lacks a test for a validation property.` : "";
   const contractReviewText = contractContext ? `\n\n${digestContract(contractContext)}\nReview against the contract: report a blocking finding only when the diff adds scope that the contract's non-goals or boundaries exclude, or breaks a drift rule, and the acceptance checks do not require it. Give the concrete scenario.` : "";
   const skillsReviewText = skillsContext ? `\n\n${skillsContext}\nReview against these skills as guidance: a deviation is a blocking finding only when it causes a defect you can show with a concrete scenario; otherwise it is a note.` : "";
-  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}${contractReviewText}${skillsReviewText}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
+  const prompt = `${repeatFailure ? "[INJECT_REVIEW_FAILURE]\n" : ""}${reviewMode}${uiChecks}${analysisReviewText}${contractReviewText}${skillsReviewText}${specialistContext ? `\n\n${specialistContext}` : ""}\n\n${summaries ? `Implementation summary:\n${summaries}` : "No implementation summary is available."}\n\n${SIMPLICITY_REVIEW_POLICY}
 
 Return exactly one JSON object: {"verdict":"pass"|"needs_changes","findings":[{"severity":"critical"|"high"|"medium"|"low"|"info","category":"functional"|"acceptance"|"regression"|"security"|"accessibility"|"tests"|"environment"|"approval"|"polish"|"other","title":"short issue","evidence":"specific evidence","acceptanceCriterion":"optional","scenario":"a concrete input or state and the wrong result it produces","fixableInCode":true|false}],"notes":[same objects]}. Only critical/high code-fixable issues belong in findings; environment/approval blockers use fixableInCode=false. Evidence standard: every critical/high finding must carry a scenario (for a test finding: a real defect the test would let through). If you cannot state one, it is a note, not a finding; remarks that code or tests could be stricter, more thorough or differently structured are notes. Do not execute commands. ${checkStatus}`;
   return prompt;
@@ -604,8 +605,18 @@ ${formatBrief(brief)}` : formatBrief(brief);
   // ADR 0031: a prototype reviews once per milestone, in the check task; the size and path escalation (more than 15 files or 600 lines, risky paths) added a review to nearly every screen task. patched(): runs recorded before this kept the escalation.
   if (lane && input.tier === "prototype" && patched("prototype-no-escalation")) lane.escalation = false;
   const stageList: WorkflowProfile["stages"] = lane ? [...lane.stages] : [...profile.stages];
+  // Critical areas (B-129): the manifest lists paths whose change earns a focused review. Data on the run input, so a run without it takes exactly the path it always did.
+  let specialistContext = "";
+  const refreshSpecialists = async (): Promise<ReturnType<typeof matchSpecialists>> => {
+    if (!input.specialists?.length) return [];
+    const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
+    const matched = changes ? matchSpecialists(input.specialists, changes.files) : [];
+    specialistContext = specialistReviewText(matched);
+    return matched;
+  };
   for (const stage of stageList) {
     currentStage = stage;
+    if (stage === "review" && input.specialists?.length) await refreshSpecialists();
     // Without a plan and brief stage the brief comes from the task text: no model call, the acceptance criteria are already in it.
     if (lane && stage === "implement" && !executionBrief) {
       plan ??= { ...deterministicPlan({ taskPrompt: workflowPrompt }), hard_constraints: [...new Set([...extractHardConstraints(openSpecContext), ...extractTaskConstraints(workflowPrompt), ...(analysis ? analysisConstraints(analysis) : [])])] };
@@ -677,10 +688,10 @@ ${formatBrief(brief)}` : formatBrief(brief);
             stopReason = "verify_activity_failed";
             return finish("failed", `verify Activity failed before review: ${failureDetails(error)}`);
           }
-          output = await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review) });
+          output = await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review, specialistContext) });
         } else {
           const [review, verification] = await Promise.all([
-            execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext, skillsContext.review) }),
+            execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, round, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), true, uiUxContext, analysisDecisions, contractContext, skillsContext.review, specialistContext) }),
             execute("verify", { provider: "fake", verificationOnly: true }),
           ]);
           output = review;
@@ -698,7 +709,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
         if (!verification.ok) verification = await repairGate(verification);
         deterministicVerification = verification; output = verification;
       } else {
-        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review) })
+        output = stage === "review" ? await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review, specialistContext) })
           : await execute(stage);
       }
     }
@@ -757,7 +768,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
           deterministicVerification = verification;
           if (!verification.ok) { unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${verification.summary}`); }
         } catch (error) { if (isCancellation(error)) throw error; unresolvedFindings.push(...blocking); stopReason = "deterministic_checks_failed_after_repair"; return finish("failed", `deterministic checks failed after review repair: ${failureDetails(error)}`); }
-        try { output = await readable(await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review) })); }
+        try { output = await readable(await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review, specialistContext) })); }
         catch (error) { if (isCancellation(error)) throw error; stopReason = "follow_up_review_failed"; return finish("failed", `follow-up review failed: ${failureDetails(error)}`); }
         // A follow-up review may only keep blocking findings that restate a prior blocker or show a concrete scenario; the rest become notes.
         output = requireSubstantiatedBlockers(output, blocking);
@@ -771,9 +782,9 @@ ${formatBrief(brief)}` : formatBrief(brief);
     }
     if (!output.ok && !(stage === "review" && openFindings.length)) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
     // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons).
-    if (lane?.escalation && stage === "implement" && !stageList.includes("review")) {
+    if ((lane?.escalation || input.specialists?.length) && stage === "implement" && !stageList.includes("review")) {
       const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
-      const reasons = changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0) : [];
+      const reasons = [...(lane?.escalation && changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0) : []), ...(changes && input.specialists?.length ? specialistReasons(matchSpecialists(input.specialists, changes.files)) : [])];
       if (reasons.length) { stageList.splice(stageList.indexOf("verify"), 0, "review"); warnings.push({ stage: "review", message: `review added to this ${input.lane} task: ${reasons.join("; ")}` }); }
     }
     completedStages.push(stage);

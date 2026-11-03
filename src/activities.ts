@@ -25,7 +25,8 @@ import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerpr
 import { clearUnityEvidence, readUnityTestFiles, unityTestResultPath, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
 import { intelligenceGates, prepareStageIntelligence } from "./intelligence-stage.js";
-import { applyReviewAssessment } from "./review.js";
+import { applyReviewAssessment, requireRuleCitations } from "./review.js";
+import { readRuleContext, type RuleContext } from "./review-rules.js";
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
@@ -399,6 +400,9 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;
     if (coverage) stageInput.prompt += `\n\n${coverage}`;
   }
+  // Rule-aware review (ADR 0035, B-134): the project's rules in front of the reviewer, and a finding must cite one (requireRuleCitations below).
+  let ruleContext: RuleContext | undefined;
+  if (input.stage === "review") { ruleContext = await readRuleContext(input.projectRoot); if (ruleContext) stageInput.prompt += `\n\n${ruleContext.block}`; }
   // The preparation package (ADR 0038, B-163): deterministic facts, re-checked against the working tree, in front of the plan, implement and review prompts. It never fails a stage.
   let intelligenceMetadata: Record<string, unknown> | undefined;
   const intelligence = await prepareStageIntelligence({ stage: input.stage, prompt: input.prompt, projectRoot: input.projectRoot, taskId: input.taskId, intelligence: input.intelligence });
@@ -455,7 +459,7 @@ ${intelligence.block}`; }
   const parsed = StageOutputSchema.safeParse(result);
   if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
   // CLI reviewers (codex, claude) return prose or JSON text; without this the verdict was never enforced and blocking findings passed the gate.
-  const providerOutput = input.stage === "review" ? applyReviewAssessment(parsed.data) : parsed.data;
+  const providerOutput = input.stage === "review" ? (ruleContext ? requireRuleCitations(applyReviewAssessment(parsed.data), ruleContext.ids) : applyReviewAssessment(parsed.data)) : parsed.data;
   const out: StageOutput = input.stage === "verify" && input.provider !== "fake"
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };

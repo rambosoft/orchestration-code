@@ -16,6 +16,7 @@ function normalizeFinding(raw: unknown): ReviewFinding | undefined {
   const category = String(item.category ?? "other").toLowerCase();
   const criterion = asText(item.acceptanceCriterion);
   const scenario = asText(item.scenario) ?? asText(item.counterexample) ?? asText(item.failingScenario);
+  const rule = asText(item.rule) ?? asText(item.ruleId);
   return {
     severity: (SEVERITIES as readonly string[]).includes(severity) ? severity as ReviewFinding["severity"] : "medium",
     category: (CATEGORIES as readonly string[]).includes(category) ? category as ReviewFinding["category"] : "other",
@@ -23,6 +24,7 @@ function normalizeFinding(raw: unknown): ReviewFinding | undefined {
     evidence: asText(item.evidence) ?? asText(item.details) ?? asText(item.detail) ?? asText(item.reason) ?? title,
     ...(criterion ? { acceptanceCriterion: criterion } : {}),
     ...(scenario ? { scenario: scenario.slice(0, 600) } : {}),
+    ...(rule ? { rule: rule.slice(0, 40) } : {}),
     fixableInCode: typeof item.fixableInCode === "boolean" ? item.fixableInCode : true,
   };
 }
@@ -113,6 +115,25 @@ export function requireSubstantiatedBlockers(output: StageOutput, priorBlockers:
   const next: ReviewAssessment = { verdict: findings.some(isBlockingFinding) || findings.some(isExternalBlocker) ? "needs_changes" : "pass", findings, notes: [...review.notes, ...demoted] };
   const outcome = reviewOutcome(next);
   return { ...output, ok: outcome.ok, findings: outcome.findings, review: next, metadata: { ...output.metadata, demotedUnsubstantiated: demoted.map(finding => finding.title) } };
+}
+
+/**
+ * Rule-aware review (B-134): a finding stands only when it names a rule the project defines (`rule`, or an R-nnn in its title), a documented case id (C-nnn), or BUG with a concrete scenario.
+ * Any other finding moves to the notes, with its evidence, so a reviewer cannot block on a matter of taste the project never wrote down. Returns the output unchanged when nothing moved.
+ */
+export function requireRuleCitations(output: StageOutput, knownRules: ReadonlySet<string>): StageOutput {
+  const review = output.review;
+  if (!review) return output;
+  const cited = (finding: ReviewFinding): boolean => {
+    const rule = (finding.rule ?? /R-[0-9]{3}/.exec(finding.title)?.[0] ?? "").trim().toUpperCase();
+    return knownRules.has(rule) || /^C-[0-9]{3}$/.test(rule) || (rule === "BUG" && (finding.scenario?.length ?? 0) >= 25);
+  };
+  const moved = review.findings.filter(finding => !cited(finding));
+  if (!moved.length) return output;
+  const findings = review.findings.filter(cited);
+  const next: ReviewAssessment = { verdict: findings.some(isBlockingFinding) || findings.some(isExternalBlocker) ? "needs_changes" : "pass", findings, notes: [...review.notes, ...moved.map(finding => ({ ...finding, severity: finding.severity === "critical" || finding.severity === "high" ? "medium" as const : finding.severity }))] };
+  const outcome = reviewOutcome(next);
+  return { ...output, ok: outcome.ok, findings: outcome.findings, review: next, metadata: { ...output.metadata, movedForNoRule: moved.map(finding => finding.title) } };
 }
 
 /** The pull request comment that hands unresolved review findings to a human: fix them, or accept the change as it is. */
