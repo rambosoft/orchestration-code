@@ -41,12 +41,15 @@ for (const page of pages) {
   const scope = testsFor(page);
   for (const id of cases) if (!scope.includes(id)) problems.push(`${docFile}: case ${id} is not cited by a test in src/pages/${page}/ or a shared test (put the id in the test name)`);
 }
-const everyListed = new Set([...listed.values()].flatMap(set => [...set]));
+// Slices that are not pages (build, shell, storage, input) keep their cases in docs/areas/<name>.md; a shared test may cite them (R-023).
+const areasDir = path.join(root, "docs/areas");
+const areaCases = existsSync(areasDir) ? readdirSync(areasDir).filter(name => name.endsWith(".md")).flatMap(name => [...caseIds(readFileSync(path.join(areasDir, name), "utf8"))]) : [];
+const everyListed = new Set([...listed.values()].flatMap(set => [...set]).concat(areaCases));
 for (const test of tests) {
   const page = pageOf(test.file);
   const allowed = page === undefined ? everyListed : listed.get(page);
   if (page !== undefined && !listed.has(page)) continue;
-  for (const id of new Set(test.text.match(/\bC-\d{3}\b/g) ?? [])) if (!allowed.has(id)) problems.push(page === undefined ? `${test.file} cites ${id}, which no page document lists` : `${test.file} cites ${id}, which docs/pages/${page}.md does not list`);
+  for (const id of new Set(test.text.match(/\bC-\d{3}\b/g) ?? [])) if (!allowed.has(id)) problems.push(page === undefined ? `${test.file} cites ${id}, which no page or area document lists` : `${test.file} cites ${id}, which docs/pages/${page}.md does not list`);
 }
 for (const doc of docs) if (!pages.includes(doc.replace(/\.md$/, ""))) problems.push(`docs/pages/${doc} describes a page folder that does not exist`);
 

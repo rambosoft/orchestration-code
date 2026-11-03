@@ -31,6 +31,6 @@ Before a slice (a page, a store module, a service) is ported, record what the le
 
 Rules:
 - `basis: "static"` means the expectation is explicit in legacy code (routes, constants, mappings, pure functions). `basis: "observed"` means it depends on runtime behaviour and must name the capture or fixture in `observation`. Never invent an expected value the source cannot establish.
-- Every `id` is also listed under `## Cases` in `docs/pages/<page>.md` and cited in a test name in `src/pages/<page>/` or in a shared e2e test. A characterized case without a test is a failing gate.
+- Every `id` is also listed under `## Cases` in `docs/pages/<page>.md` (a slice that is not a route, such as the build, the shell, storage or input, uses `docs/areas/<name>.md` instead) and cited in a test name in `src/pages/<page>/` or in a shared e2e test. A characterized case without a test is a failing gate.
 - `docs/migration/map.md` is the ledger: `| old file | new file | status | tests |` with status `planned`, `characterized`, `ported`, `verified` or `deferred`. A `ported` or `verified` row needs an existing new file and existing tests.
 - Behaviour that would change visibly is not ported silently: record it in `docs/migration/findings.md`.

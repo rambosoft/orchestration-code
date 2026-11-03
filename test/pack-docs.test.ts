@@ -88,3 +88,15 @@ describe("pack wiring for living documentation", () => {
     expect(workflow).not.toMatch(/git (?:commit|push)/);
   });
 });
+
+describe("check-page-docs with a slice that is not a page", () => {
+  it("lets a shared test cite the cases of docs/areas/<name>.md, and still rejects an id no document lists", async () => {
+    const files = { ...page("offline"), ...router("/offline"), "docs/pages/offline.md": doc("/offline"), "docs/areas/build.md": "# Build\n\n## Cases\n- C-007 the build keeps a legacy entry\n" };
+    const ok = await script("check-page-docs.mjs", await project({ ...files, "tests/build.test.ts": "it('C-007 the build keeps a legacy entry', () => {});\n" }));
+    expect(ok.code, ok.out).toBe(0);
+    const bad = await script("check-page-docs.mjs", await project({ ...files, "tests/build.test.ts": "it('C-099 nothing lists this', () => {});\n" }));
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("C-099, which no page or area document lists");
+  });
+});
+

@@ -127,3 +127,18 @@ describe("check-parity migration map", () => {
     expect(result.out).toContain("old file 'pages/gone.vue' does not exist under REFERENCE_ROOT");
   });
 });
+
+describe("check-parity with a slice that is not a page", () => {
+  const area = { ...good, "docs/pages/offline.md": "", "docs/areas/offline.md": pageDoc(), "docs/characterization/offline.json": artifact() };
+  it("reads the document of a non-page slice from docs/areas, and names both places when neither exists", async () => {
+    const files: Record<string, string> = { ...area, "tests/offline.test.ts": "it('C-001 reconnect clears the cookie', () => {});\n" };
+    delete files["docs/pages/offline.md"]; delete files["src/pages/offline/index.test.tsx"];
+    const ok = await parity(await project(files));
+    expect(ok.code, ok.out).toBe(0);
+    delete files["docs/areas/offline.md"];
+    const missing = await parity(await project(files));
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain("a slice that is not a page uses docs/areas/offline.md");
+  });
+});
+

@@ -28,7 +28,8 @@ for (const dir of ["src", "e2e", "tests"]) if (existsSync(path.join(root, dir)))
 const pageOf = file => file.match(/^src\/pages\/([^/]+)\//)?.[1];
 const testsFor = page => tests.filter(test => pageOf(test.file) === page || pageOf(test.file) === undefined).map(test => test.text).join("\n");
 const pageCases = page => {
-  const file = path.join(root, "docs/pages", `${page}.md`);
+  // A slice that is not a route (build, shell, storage, input) keeps its document in docs/areas/<name>.md; a page keeps it in docs/pages/<name>.md.
+  const file = [path.join(root, "docs/pages", `${page}.md`), path.join(root, "docs/areas", `${page}.md`)].find(isFile) ?? path.join(root, "docs/pages", `${page}.md`);
   return isFile(file) ? new Set(read(file).split(/^##\s+Cases\s*$/mi)[1]?.match(/\bC-\d{3}\b/g) ?? []) : undefined;
 };
 
@@ -59,9 +60,9 @@ for (const name of artifacts) {
     else if (reference) for (const source of item.sources) if (!isFile(path.join(reference, source.replace(/:\d+(?:-\d+)?$/, "")))) problems.push(`${label}: legacy source '${source}' does not exist under REFERENCE_ROOT`);
     if (text(item.page)) {
       const cases = pageCases(item.page);
-      if (!cases) problems.push(`${label}: page '${item.page}' has no docs/pages/${item.page}.md`);
+      if (!cases) problems.push(`${label}: page '${item.page}' has no docs/pages/${item.page}.md (a slice that is not a page uses docs/areas/${item.page}.md)`);
       else {
-        if (!cases.has(item.id)) problems.push(`${label}: docs/pages/${item.page}.md does not list ${item.id} under Cases`);
+        if (!cases.has(item.id)) problems.push(`${label}: the document of '${item.page}' does not list ${item.id} under Cases`);
         if (!testsFor(item.page).includes(item.id)) problems.push(`${label}: no test in src/pages/${item.page}/ or a shared test cites ${item.id} (the parity test is missing)`);
       }
     }
