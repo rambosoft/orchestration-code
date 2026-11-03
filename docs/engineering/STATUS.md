@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 PAPERCLIP: project Luxus App React (3c3b35dc-f799-42fa-b834-900ac5fec94a, aliased in projects/luxus-app-react.json, bridge rebuilt) and the M1 chain LOC-170 R12 -> LOC-171 R3 -> LOC-172 R5 (design storage.md) -> LOC-173 INPUT (design input.md), blocker-chained, backlog, UNASSIGNED: assign LOC-170 to the Temporal Orchestrator to start. GitHub was not connected to the Paperclip project (OAuth not granted; the manifest holds the repo). Open: PR luxus-app-react #12 (server contract notes) to merge before R3 reads it; lists and sync architecture analysis (Codex) pending; local luxus-service DB errors on device registration (SQLGrammarException); R4 waits for the Xtream playlist from the operator and its own design. Graphify decided (B-164). Antigravity quota exhausted until about 2026-11-10.
 - 2026-11-03 B-164 DONE (Graphify: adopt, limited, later; see research/b164-graphify-spike.md). NEXT: server synthesis (Antigravity), create the Paperclip project and M1 issues (ask assigned or not), R4 design after Xtream playlist arrives.
 - 2026-11-03 B-173 done (see B-172).
 - 2026-11-03 B-172 DONE and B-173 DONE: storage and input designs approved (luxus-app-react PR 11 awaiting the operator's merge). NEXT: merge PR 11, deploy worker+bridge, B-164 (needs install approval), full-suite run, Paperclip project.
