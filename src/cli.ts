@@ -18,6 +18,7 @@ import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS } from "./stack-packs.js";
+import { defaultPluginsDir, findInstalledSkills, importCandidate, staleSkills, writeCandidate, type CatalogFile } from "./skills-sync.js";
 import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
 import { TIERS, type Tier } from "./lanes.js";
 import { STACK_PROFILE_IDS, type StackProfileId } from "./stack-profiles.js";
@@ -71,6 +72,26 @@ async function main() {
     const checks = await runDoctor(defaultDoctorDeps());
     console.log(formatDoctor(checks));
     if (checks.some(check => !check.ok && check.severity === "error")) process.exitCode = 1;
+    return;
+  }
+  if (command === "skills-sync") {
+    // dev skills-sync <plugin skill folder name> --id <catalog id> --area <profile> [--title T] [--plugins-dir D] [--write] | --check
+    const option = (name: string) => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
+    const catalogFile = path.join(findOrchestratorRoot(), "skills", "catalog.json");
+    const catalog = JSON.parse(await readFile(catalogFile, "utf8")) as CatalogFile;
+    const pluginsDir = option("plugins-dir") ?? defaultPluginsDir();
+    if (args.includes("--check")) { const stale = await staleSkills(catalog, pluginsDir); console.log(stale.length ? stale.join("\n") : "no imported skill changed at its source"); if (stale.length) process.exitCode = 1; return; }
+    const name = args[0]; const id = option("id"); const area = option("area");
+    if (!name || name.startsWith("--") || !id || !area) throw new Error("usage: dev skills-sync <plugin skill folder name> --id <catalog id> --area <stack profile> [--title T] [--plugins-dir D] [--write] | dev skills-sync --check");
+    const installed = await findInstalledSkills(name, pluginsDir);
+    if (!installed.length) throw new Error(`no installed plugin has skills/${name} (looked in ${pluginsDir})`);
+    if (installed.length > 1) console.log(`${installed.length} installed copies; using ${installed[0]!.plugin} ${installed[0]!.version}`);
+    const imported = await importCandidate(catalog, installed[0]!, { id, area, title: option("title") });
+    console.log(`candidate ${id}: ${imported.files.length} text file(s), sha256 ${imported.entry.source.sha256}${imported.skipped.length ? `; skipped ${imported.skipped.length}: ${imported.skipped.join(", ")}` : ""}`);
+    if (!args.includes("--write")) { console.log("dry run: pass --write to record the candidate and keep its text under skills/candidates/"); return; }
+    const kept = await writeCandidate(findOrchestratorRoot(), id, imported.files);
+    await writeFile(catalogFile, `${JSON.stringify(imported.catalog, null, 2)}\n`);
+    console.log(`recorded; review the text in ${kept}, write skills/${id}.md (at most 1400 characters) and set the status to approved`);
     return;
   }
   if (command === "drain") {
@@ -199,6 +220,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });
