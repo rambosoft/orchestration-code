@@ -170,6 +170,30 @@
       "executable": "npm",
       "args": [
         "run",
+        "check:design"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:deps"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:registry"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
         "check:device-tiers"
       ],
       "parallel": true
@@ -216,6 +240,14 @@
       "executable": "npm",
       "args": [
         "test"
+      ],
+      "scope": "milestone"
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "test:heap"
       ],
       "scope": "milestone"
     }
