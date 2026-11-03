@@ -24,6 +24,7 @@ import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, unityTestResultPath, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
+import { intelligenceGates, prepareStageIntelligence } from "./intelligence-stage.js";
 import { applyReviewAssessment } from "./review.js";
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
@@ -246,8 +247,9 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
   let qualityChecks: Array<{ executable: string; args: string[]; exitCode: number | null; durationMs: number; output: string; stderr: string }> | undefined;
   const qualityWarnings: string[] = []; const visualWarnings: string[] = []; const visualImages: string[] = [];
   if (input.stage === "verify") {
-    const checks = input.qualityCommands ?? [];
-    if (checks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
+    const configuredChecks = input.qualityCommands ?? [];
+    const checks = [...configuredChecks, ...await intelligenceGates(input.projectRoot, configuredChecks, input.intelligence)];
+    if (configuredChecks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
       const durationMs = Date.now() - activityStartedAt;
       await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "missing_quality_commands", providerDurationMs: 0, activityDurationMs: durationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1) }, "error");
       return { ok: false, summary: "quality gate failed: no deterministic quality commands are configured", findings: ["Configure at least one deterministic verification command."], artifactRefs: [], provider: "quality-gate", durationMs, metadata: { checks: [], passed: false, activityDurationMs: durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
@@ -397,6 +399,12 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;
     if (coverage) stageInput.prompt += `\n\n${coverage}`;
   }
+  // The preparation package (ADR 0038, B-163): deterministic facts, re-checked against the working tree, in front of the plan, implement and review prompts. It never fails a stage.
+  let intelligenceMetadata: Record<string, unknown> | undefined;
+  const intelligence = await prepareStageIntelligence({ stage: input.stage, prompt: input.prompt, projectRoot: input.projectRoot, taskId: input.taskId, intelligence: input.intelligence });
+  if (intelligence) { intelligenceMetadata = intelligence.metadata; visualWarnings.push(...intelligence.warnings); if (intelligence.block) stageInput.prompt += `
+
+${intelligence.block}`; }
   if (input.stage === "review" && input.visual?.enabled) {
     // Screenshots are evidence for the reviewer. Problems only warn unless the project requires visual verification.
     const shots = await captureScreenshots(input.visual, { cwd: input.projectRoot, outDir: path.join(artifactsDir, `visual-${input.attempt}`), signal: activitySignal() });
@@ -404,7 +412,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     if (shots.images.length) { stageInput.prompt += visualReviewSection(shots.images); stageInput.images = shots.images; }
     else if (input.visual.required) throw ApplicationFailure.nonRetryable(`visual verification is required but no screenshots were captured: ${shots.warnings.join("; ")}`, "VisualVerificationError");
   }
-  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
+  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(intelligenceMetadata ? { intelligence: intelligenceMetadata } : {}), ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
   // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
   const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
   const stageFile = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);

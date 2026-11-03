@@ -234,5 +234,18 @@
   "reference": {
     "root": "luxus-app",
     "label": "legacy Nuxt 2 app (read-only)"
+  },
+  "intelligence": {
+    "tools": {
+      "ts-imports": {
+        "mode": "advisory"
+      },
+      "affected-tests": {
+        "mode": "advisory"
+      },
+      "pkg-deps": {
+        "mode": "advisory"
+      }
+    }
   }
 }
