@@ -50,7 +50,8 @@ body {
   font-size: 1rem;
 }
 
-:focus-visible {
+/* A plain :focus rule, not :focus-visible (Chrome 86): on a TV with a remote the focus ring must always show, and old engines ignore the rule they do not know. */
+:focus {
   outline: var(--focus-ring);
   outline-offset: 0.15rem;
 }

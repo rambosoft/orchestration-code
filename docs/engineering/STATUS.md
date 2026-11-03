@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-114 DONE except the old-engine smoke (operator device check; see research/b114-legacy-bundle-design.md). Pack now has 12 gates; luxus-app-react needs the pack re-applied (next). NEXT: luxus re-apply (scripts, Route lines, READMEs, :focus fix, REFERENCE_ROOT), then B-168.
 - 2026-11-03 B-110 DONE (check:parity, characterization artifact, plan-from-survey --characterize, ADR 0032 decision). NEXT: B-114 (Codex design in progress), B-168; luxus pack re-apply, READMEs, Route lines, REFERENCE_ROOT wiring batched after B-114.
 - 2026-11-03 B-112 DONE with B-161.
 - 2026-11-03 B-161 DONE (check:contracts, R-022, module README template). B-112 is covered by the same pieces: AGENTS/CLAUDE, docs/ai/INDEX.md generated and drift-checked (B-123), per-module README contract (B-161); marking it done. NEXT: B-110 and B-114 from the Codex design notes, then B-168; luxus re-apply and READMEs batched after B-114.

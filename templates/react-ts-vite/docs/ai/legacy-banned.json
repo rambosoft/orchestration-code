@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "note": "Browser features the legacy tier's polyfills cannot supply (DOM APIs, CSS), with the Chrome version that introduced them. A rule applies when minChrome is above the legacy floor in device-tiers.json. Built-in JavaScript methods (Object.entries, Array.prototype.flat and so on) are covered by the legacy plugin's polyfills and are not listed. Tag a line with `legacy-ok: <reason>` to allow a use that has a documented fallback.",
+  "rules": [
+    { "id": "js-intersection-observer", "kind": "js", "pattern": "\\bIntersectionObserver\\b", "minChrome": 58, "hint": "use a scroll listener owned by src/input or a documented fallback" },
+    { "id": "js-resize-observer", "kind": "js", "pattern": "\\bResizeObserver\\b", "minChrome": 64, "hint": "use a window resize listener with a cleanup, or a documented fallback" },
+    { "id": "js-abort-controller", "kind": "js", "pattern": "\\bAbortController\\b", "minChrome": 66, "hint": "use a cancelled flag in the request wrapper" },
+    { "id": "js-clipboard", "kind": "js", "pattern": "\\bnavigator\\.clipboard\\b", "minChrome": 66, "hint": "TV shells have no clipboard; remove or gate it" },
+    { "id": "js-structured-clone", "kind": "js", "pattern": "\\bstructuredClone\\s*\\(", "minChrome": 98, "hint": "copy explicitly or with a small util" },
+    { "id": "js-global-this", "kind": "js", "pattern": "\\bglobalThis\\b", "minChrome": 71, "hint": "use window" },
+    { "id": "js-queue-microtask", "kind": "js", "pattern": "\\bqueueMicrotask\\s*\\(", "minChrome": 71, "hint": "use Promise.resolve().then" },
+    { "id": "css-grid", "kind": "css", "pattern": "display\\s*:\\s*(?:inline-)?grid\\b|grid-template|grid-area|grid-gap", "minChrome": 57, "hint": "use flexbox; CSS Grid does not exist before Chrome 57" },
+    { "id": "css-gap", "kind": "css", "pattern": "(?:^|[\\s;{])(?:row-|column-)?gap\\s*:", "minChrome": 84, "hint": "use margins on the children (flex gap is Chrome 84)" },
+    { "id": "css-sticky", "kind": "css", "pattern": "position\\s*:\\s*sticky", "minChrome": 56, "hint": "use a fixed header or a script-managed position" },
+    { "id": "css-focus-within", "kind": "css", "pattern": ":focus-within", "minChrome": 60, "hint": "set a class from the focus manager in src/input" },
+    { "id": "css-focus-visible", "kind": "css", "pattern": ":focus-visible", "minChrome": 86, "hint": "also write a plain :focus rule: remote users always need a visible focus" },
+    { "id": "css-aspect-ratio", "kind": "css", "pattern": "(?<![\\w-])aspect-ratio\\s*:", "minChrome": 88, "hint": "use the padding-top percentage technique" },
+    { "id": "css-inset", "kind": "css", "pattern": "(?:^|[\\s;{])inset\\s*:", "minChrome": 87, "hint": "write top, right, bottom and left" },
+    { "id": "css-selector-functions", "kind": "css", "pattern": ":(?:is|where|has)\\(", "minChrome": 88, "hint": "write the selectors out" },
+    { "id": "css-math-functions", "kind": "css", "pattern": "(?:^|[\\s:(,])(?:clamp|min|max)\\(", "minChrome": 79, "hint": "use media queries (see src/styles/tokens.css)" },
+    { "id": "css-dynamic-viewport", "kind": "css", "pattern": "\\d(?:dvh|svh|lvh|dvw|svw|lvw)\\b", "minChrome": 108, "hint": "use 100vh on min-height only" },
+    { "id": "css-container-queries", "kind": "css", "pattern": "@container\\b|container-type", "minChrome": 105, "hint": "use media queries" },
+    { "id": "css-color-mix", "kind": "css", "pattern": "color-mix\\(", "minChrome": 111, "hint": "write the colour as a token" },
+    { "id": "css-backdrop-filter", "kind": "css", "pattern": "backdrop-filter", "minChrome": 76, "hint": "use a solid translucent background" },
+    { "id": "css-place-shorthand", "kind": "css", "pattern": "place-(?:items|content|self)\\s*:", "minChrome": 59, "hint": "write align-* and justify-*" }
+  ]
+}

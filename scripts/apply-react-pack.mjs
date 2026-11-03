@@ -3,7 +3,7 @@
 // Usage: node scripts/apply-react-pack.mjs <project folder> --name "App name" [--force] [--install]
 // Existing files are never overwritten without --force; package.json scripts are added only when missing. Prints the dev dependencies to install, or installs them with --install.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,8 +63,47 @@ if (main) {
   if (missing.length) { writeFileSync(main, `${missing.map(entry => `import "${entry}";`).join("\n")}\n${text}`); written.push(`${path.relative(root, main).split(path.sep).join("/")} (imports tokens.css)`); }
 }
 
+// A pristine `npm create vite` react-ts starter (its counter demo is still in App.tsx) has raw colours and px in App.css and index.css, which R-015 forbids. Replace the demo
+// with a token-only shell, but only when the starter is untouched, so a real app is never rewritten.
+const appFile = path.join(root, "src/App.tsx");
+if (existsSync(appFile) && /count is|Get started/.test(readFileSync(appFile, "utf8")) && existsSync(path.join(root, "src/App.css")) && existsSync(path.join(root, "src/index.css"))) {
+  writeFileSync(appFile, `/** Application shell: replace with the router and the pages in src/pages. */\nexport default function App() {\n  return <main>New project</main>;\n}\n`);
+  writeFileSync(path.join(root, "src/index.css"), `/* Global rules use the tokens of ./styles/tokens.css (R-015). */\n#root {\n  min-height: 100vh;\n}\n`);
+  for (const file of ["src/App.css", "src/assets/hero.png", "src/assets/react.svg", "src/assets/vite.svg"]) rmSync(path.join(root, file), { force: true });
+  written.push("src/App.tsx, src/index.css (Vite starter replaced by a token-only shell)");
+  console.log("starter: the untouched Vite counter demo was replaced by a token-only shell (App.css and the starter assets removed)");
+}
+
+// The legacy tier (B-114): add the Vite legacy plugin with the targets of docs/ai/device-tiers.json to vite.config.* when it is not there. Only the common one-line
+// `plugins: [...]` form is patched; anything else is reported for a manual edit (check:device-tiers fails until it is done).
+const tiers = JSON.parse(readFileSync(path.join(packDir, "docs/ai/device-tiers.json"), "utf8"));
+const legacyTier = tiers.tiers.find(tier => tier.id === "legacy");
+const viteConfig = ["vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs"].map(file => path.join(root, file)).find(existsSync);
+const legacyNotes = [];
+if (viteConfig && legacyTier?.vite) {
+  const original = readFileSync(viteConfig, "utf8");
+  if (original.includes(legacyTier.vite.plugin)) legacyNotes.push("legacy plugin already configured");
+  else {
+    const call = `legacy({ targets: ${JSON.stringify(legacyTier.vite.targets).replace(/"/g, "'")} })`;
+    const plugins = /plugins\s*:\s*\[([^\]\n]*)\]/;
+    const imports = [...original.matchAll(/^import .*$/gm)];
+    if (!plugins.test(original) || imports.length === 0) legacyNotes.push(`could not patch ${path.basename(viteConfig)}: add \`import legacy from '${legacyTier.vite.plugin}'\` and ${call} to plugins by hand`);
+    else {
+      const last = imports[imports.length - 1];
+      const end = last.index + last[0].length;
+      const withImport = `${original.slice(0, end)}\nimport legacy from '${legacyTier.vite.plugin}'${original.slice(end)}`;
+      writeFileSync(viteConfig, withImport.replace(plugins, (_all, inner) => `plugins: [${inner.trim() ? `${inner.trim()}, ` : ""}${call}]`));
+      written.push(`${path.basename(viteConfig)} (legacy plugin, ${legacyTier.vite.targets.join(", ")})`);
+    }
+  }
+} else if (!viteConfig) legacyNotes.push("no vite.config.* found: add the legacy plugin by hand (docs/ai/device-tiers.json)");
+
 console.log(`pack ${pack.id}: wrote ${written.length}, kept ${skipped.length} existing file(s), added scripts: ${addedScripts.join(", ") || "none"}`);
 if (skipped.length) console.log(`kept (use --force to replace): ${skipped.join(", ")}`);
+for (const note of legacyNotes) console.log(`legacy tier: ${note}`);
+// The AI map's generated block (B-123) must exist and match the project, or check:index fails on a fresh project.
+const indexScript = path.join(root, "scripts/generate-ai-index.mjs");
+if (existsSync(indexScript)) spawnSync("node", [indexScript, root], { stdio: "inherit" });
 const install = ["install", "-D", ...pack.devDependencies];
 const removable = (pack.removeDevDependencies ?? []).filter(name => name in (manifest.devDependencies ?? {}));
 if (flag("install")) {

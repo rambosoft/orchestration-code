@@ -31,7 +31,7 @@ Area standards live in `docs/ai/standards/`; read the relevant area standards be
 - R-016 Every subscription, timer, observer, listener, request and media resource has an owner and a cleanup.
 - R-017 No unbounded cache, queue or prefetch. State the limit and the eviction.
 - R-018 No heavy data transformation on the main thread. Use a worker. Do not hold a full large list in memory or in the DOM: page it and virtualise it.
-- R-019 Backward compatibility is part of done: the legacy bundle targets Chrome 53; use no API without a fallback or a documented check; state the memory and CPU effect of a feature.
+- R-019 Backward compatibility is part of done: the legacy tier (docs/ai/device-tiers.json) is built for Chrome 53 with the legacy plugin; use no DOM or CSS feature newer than the floor without a documented fallback (`npm run check:legacy-apis`, tag `legacy-ok: <reason>`); the emitted legacy chunks must parse (`check:legacy-syntax`) and stay within the size budget (`check:legacy-budget`); state the memory and CPU effect of a feature. A real TV check stays a milestone acceptance step.
 - R-020 Prefer one job per function and clear names. No abstraction without a second real use. Keep functions short enough to read at once.
 - R-021 Respect module boundaries: pages -> components/hooks/services; components never import pages; services never import UI; src/storage and src/input are imported only through their index.
 - R-022 Every module under src (not pages, styles, assets) has a README.md contract: one purpose line and `## Interface`, `## Invariants`, `## Side Effects` (`npm run check:contracts`, template in docs/ai/MODULE_README_TEMPLATE.md). Change the contract in the same change as the module.

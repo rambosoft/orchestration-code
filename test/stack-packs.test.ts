@@ -47,10 +47,10 @@ describe("onboardManifest", () => {
   it("uses the React standards pack gates in order and validates the manifest", async () => {
     const root = await repo({ "package.json": pkg({ react: "19" }, {}) });
     const { manifest } = onboardManifest({ root, ...base, pack: "react-ts-vite" });
-    expect(commands(manifest)).toEqual(["npm run typecheck", "npm run lint", "npm run knip", "npm run depcruise", "npm run jscpd", "npm run check:ai", "npm run check:debt", "npm run check:pages", "npm run check:styles", "npm run check:index", "npm run check:journeys", "npm run check:contracts", "npm run check:parity", "npm run test:related -- {changed}", "npm run build", "npm test"]);
+    expect(commands(manifest)).toEqual(["npm run typecheck", "npm run lint", "npm run knip", "npm run depcruise", "npm run jscpd", "npm run check:ai", "npm run check:debt", "npm run check:pages", "npm run check:styles", "npm run check:index", "npm run check:journeys", "npm run check:contracts", "npm run check:parity", "npm run check:device-tiers", "npm run check:legacy-apis", "npm run test:related -- {changed}", "npm run build", "npm run check:legacy-syntax", "npm run check:legacy-budget", "npm test"]);
     const gates = manifest.qualityCommands as Array<{ parallel?: boolean; scope?: string }>;
-    expect(gates.slice(0, 13).every(gate => gate.parallel)).toBe(true);
-    expect(gates[15]!.scope).toBe("milestone");
+    expect(gates.slice(0, 15).every(gate => gate.parallel)).toBe(true);
+    expect(gates[19]!.scope).toBe("milestone");
     expect(ProjectManifestSchema.safeParse(manifest).success).toBe(true);
   });
   it("finds the orchestrator root from src/ and from the built dist/src/ folder", () => {
