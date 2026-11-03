@@ -12,6 +12,7 @@ import { blueprintPrompt, buildIssuePlan, buildManifest, DEFAULT_BOOTSTRAP_CONFI
 import { materializeIssuesImpl, prepareBootstrapSandboxImpl, scaffoldProjectImpl, type ScaffoldDeps } from "../src/bootstrap-activities.js";
 import { runCommand } from "../src/command.js";
 import { renderContract, renderDocs, renderPlanSummary } from "../src/bootstrap-docs.js";
+import { loadCatalog, renderStandardsFiles } from "../src/skills.js";
 import { embedBootstrapForm, extractBootstrapForm } from "../src/bootstrap-form.js";
 import { BootstrapFormSchema, catalogPayload, MATURITIES, OPTION_CATALOG, PLAN_LIMITS, PRESETS, projectSlug, resolveOptions } from "../src/bootstrap-options.js";
 import { prepareBootstrapRun } from "../src/bootstrap-start.js";
@@ -261,6 +262,14 @@ describe("documents", () => {
     expect(files["CLAUDE.md"]).toBe(files["AGENTS.md"]);
     expect(files["CLAUDE.md"]).toContain("npm test");
     expect(files["docs/PLAN.md"]).toContain("Depends on: T1");
+  });
+  it("writes matching standards and points to them only for a matching profile", () => {
+    const react = renderDocs({ ...docsInput, standards: renderStandardsFiles(loadCatalog(), "react-ts") });
+    expect(Object.keys(react).filter(file => file.startsWith("docs/ai/standards/"))).toHaveLength(3);
+    expect(react["CLAUDE.md"]).toContain("Area standards live in `docs/ai/standards/`");
+    const unrelated = renderDocs({ ...docsInput, standards: renderStandardsFiles(loadCatalog(), "spring-boot") });
+    expect(Object.keys(unrelated).some(file => file.startsWith("docs/ai/standards/"))).toBe(false);
+    expect(unrelated["CLAUDE.md"]).not.toContain("Area standards live in `docs/ai/standards/`");
   });
   it("redacts anything that looks like a secret", () => {
     const leaky = { ...docsInput, charter: { ...charter, constraints: ["password=hunter2hunter2"] } };

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectManifestSchema } from "../src/contracts.js";
-import { loadCatalog, selectSkills, skillGuidance, type Catalog, type Skill } from "../src/skills.js";
+import { loadCatalog, renderStandardsFiles, selectSkills, skillGuidance, type Catalog, type Skill } from "../src/skills.js";
 import { renderSkillsBlock } from "../src/skills-text.js";
 
 const root = process.cwd();
@@ -33,6 +33,18 @@ describe("skill catalog and selection", () => {
     ]);
     expect(selectSkills(skills, { profile: "react-ts", taskType: "task" }).map(skill => skill.id)).toEqual(["match"]);
     expect(selectSkills(skills, { profile: "unity-mobile", taskType: "research", include: ["included", "match"], exclude: ["included"] }).map(skill => skill.id)).toEqual(["match"]);
+  });
+  it("renders approved area standards in sorted deterministic files, independent of task type", () => {
+    const catalog = fixture([
+      { ...entry("z-last", { tasks: ["research"] }), text: "last" }, { ...entry("a-first"), text: "first" },
+      { ...entry("candidate", { status: "candidate" }), text: "draft" }, { ...entry("retired", { status: "retired" }), text: "old" },
+      { ...entry("other", { areas: ["spring-boot"] }), text: "other" },
+    ]);
+    const files = renderStandardsFiles(catalog, "react-ts");
+    expect(Object.keys(files)).toEqual(["docs/ai/standards/a-first.md", "docs/ai/standards/z-last.md"]);
+    expect(files["docs/ai/standards/a-first.md"]).toBe("# a-first\n\nfirst\n\nSource: test (catalog v1)\n");
+    expect(renderStandardsFiles(catalog, "react-ts")).toEqual(files);
+    expect(renderStandardsFiles(catalog)).toEqual({});
   });
   it("keeps whole skills in include then catalog order within configured and default budgets", () => {
     const skills = fixture([{ ...entry("a"), text: "a".repeat(400) }, { ...entry("b"), text: "b".repeat(200) }, { ...entry("c"), text: "c".repeat(200) }]);

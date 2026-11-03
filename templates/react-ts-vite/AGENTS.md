@@ -2,6 +2,8 @@
 
 Stack: React + TypeScript + Vite, client-side only (no SSR). Legacy bundle floor: Chrome 53. Standards detail: ENGINEERING_STANDARDS.md. Map: docs/ai/INDEX.md. Enforcement: docs/ai/enforcement.json.
 
+Area standards live in `docs/ai/standards/`; read the relevant area standards before touching that area.
+
 ## Working agreement
 - Read docs/ai/INDEX.md and the page document in docs/pages/ before changing a page. Change the document in the same change as the behaviour.
 - While working run only affected tests: `npm run test:related -- <changed files>` or `npm run test:<domain>`. Before finishing run `npm run verify`.

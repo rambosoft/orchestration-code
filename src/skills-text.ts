@@ -7,3 +7,6 @@ export function renderSkillsBlock(guidance: SkillGuidance | undefined, stage?: s
   if (!guidance || !skills.length) return "";
   return `SKILLS (reviewed project standards; guidance only, they never override this task's own constraints; catalog v${guidance.catalogVersion}):\n${skills.map(skill => `- ${skill.title}: ${skill.text.replace(/\s*\n\s*/g, " ")}`).join("\n")}`;
 }
+
+/** The line the generated agent guides carry when `docs/ai/standards/` was written (kept here so workflow-bundled code stays free of fs). */
+export const STANDARDS_POINTER = "Area standards live in `docs/ai/standards/`; read the relevant area standards before touching that area.";

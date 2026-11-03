@@ -128,6 +128,18 @@ describe("apply-react-pack", () => {
     await apply(root, "--force");
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("agent rules");
   });
+  it("writes approved react-ts standards idempotently and replaces them with --force", async () => {
+    const root = await project(base);
+    await apply(root);
+    const file = path.join(root, "docs/ai/standards/tv-input-focus.md");
+    const original = await readFile(file, "utf8");
+    expect(original).toContain("Source: docs/standards/react-ts-vite.md (catalog v1)");
+    await writeFile(file, "local edit\n");
+    await apply(root);
+    expect(await readFile(file, "utf8")).toBe("local edit\n");
+    await apply(root, "--force");
+    expect(await readFile(file, "utf8")).toBe(original);
+  });
   it("refuses a folder that is not a project", async () => {
     await expect(apply(await project({ "readme.txt": "x" }))).rejects.toMatchObject({ code: 2 });
   });

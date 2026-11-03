@@ -9,6 +9,8 @@ export const CatalogSchema = z.object({ version: z.number().int().positive(), sk
 export type Skill = z.infer<typeof CatalogSchema>["skills"][number] & { text: string };
 export type Catalog = { version: number; skills: Skill[] };
 
+export { STANDARDS_POINTER } from "./skills-text.js";
+
 /** Reads skills/catalog.json under `root`. Only approved entries need a digest (bounded, read now); candidate and retired entries stay listed for review but never reach a prompt. */
 export function loadCatalog(root = process.cwd()): Catalog {
   const file = path.join(root, "skills", "catalog.json");
@@ -44,6 +46,12 @@ export function selectSkills(catalog: Catalog, query: { profile?: string; taskTy
     result.push(skill); for (const stage of stages) totals.set(stage, (totals.get(stage) ?? 0) + skill.text.length);
   }
   return result;
+}
+
+/** Renders the approved area standards that match a stack profile, independent of task type; no profile, no files. */
+export function renderStandardsFiles(catalog: Catalog, profile?: string): Record<string, string> {
+  const skills = catalog.skills.filter(skill => skill.status === "approved" && profile !== undefined && (skill.areas.includes("any") || skill.areas.includes(profile))).sort((a, b) => a.id.localeCompare(b.id));
+  return Object.fromEntries(skills.map(skill => [`docs/ai/standards/${skill.id}.md`, `# ${skill.title}\n\n${skill.text}\n\nSource: ${skill.source.origin} (catalog v${catalog.version})\n`]));
 }
 
 /** The run-input form of the selection (data on existing steps, ADR 0033 point 8); undefined when nothing is selected or `ORCHESTRATOR_SKILLS=off`. */

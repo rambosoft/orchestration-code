@@ -35,6 +35,12 @@ for (const relative of pack.copy) {
   put(relative, text);
 }
 put(pack.standards.to, readFileSync(path.join(repoRoot, pack.standards.from), "utf8"));
+const catalog = JSON.parse(readFileSync(path.join(repoRoot, "skills", "catalog.json"), "utf8"));
+// Keep this pack's AGENTS.md and CLAUDE.md pointer in sync with STANDARDS_POINTER in src/skills.ts.
+for (const skill of catalog.skills.filter(skill => skill.status === "approved" && (skill.areas.includes("any") || skill.areas.includes("react-ts"))).sort((a, b) => a.id.localeCompare(b.id))) {
+  const digest = readFileSync(path.resolve(repoRoot, skill.digest), "utf8").trim();
+  put(`docs/ai/standards/${skill.id}.md`, `# ${skill.title}\n\n${digest}\n\nSource: ${skill.source.origin} (catalog v${catalog.version})\n`);
+}
 for (const [relative, text] of Object.entries(pack.seed)) put(relative, text);
 for (const directory of pack.directories) {
   const folder = path.join(root, directory);
