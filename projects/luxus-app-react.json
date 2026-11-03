@@ -90,6 +90,14 @@
       "executable": "npm",
       "args": [
         "run",
+        "depcruise"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
         "jscpd"
       ],
       "parallel": true
