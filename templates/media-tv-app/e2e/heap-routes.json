@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "note": "The routes the heap-growth test visits, in order, again and again without reloading the page (npm run test:heap). List the heaviest pages first. An empty list passes: add routes as the pages exist.",
+  "routes": []
+}

@@ -5,10 +5,11 @@ import { DEFAULT_DRIFT_RULES } from "./contract-text.js";
 import { renderDesignDirection } from "./design-direction.js";
 import { redactSecrets } from "./redact.js";
 import { renderGameDesign, renderRulesSpec, UNITY_PROJECT_RULES, type GameDesign } from "./game.js";
+import { STANDARDS_POINTER } from "./skills-text.js";
 
 // The documents a bootstrapped repository starts with: the contract that keeps the project on its idea, the AI-agent guides (Claude Code reads CLAUDE.md, Codex reads
 // AGENTS.md), the plan and the stack decision record. Pure string builders; the scaffold activity writes them.
-export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; /** The game design (game projects only). */ design?: GameDesign; repoUrl?: string; /** Global drift rules from bootstrap.global.json; the built-in rules when absent. */ driftRules?: string[] };
+export type DocsInput = { form: BootstrapForm; options: Record<string, OptionValue>; provenance: Record<string, string>; stack: StackDecision; /** Area standards files (docs/ai/standards/*) rendered by the scaffold activity; their presence adds the pointer to the guides. */ standards?: Record<string, string>; charter: Charter; blueprint: Blueprint; template?: ScaffoldTemplate; /** The game design (game projects only). */ design?: GameDesign; repoUrl?: string; /** Global drift rules from bootstrap.global.json; the built-in rules when absent. */ driftRules?: string[] };
 const list = (items: string[], empty = "- none stated") => items.length ? items.map(item => `- ${item}`).join("\n") : empty;
 const designed = (input: DocsInput) => renderDesignDirection(input.options, input.charter) !== null;
 const section = (title: string, items: string[], empty?: string) => `## ${title}\n${list(items, empty)}`;
@@ -57,7 +58,7 @@ ${configurationTable(input)}
 `;
 }
 
-export function renderAgentGuide(input: DocsInput): string {
+export function renderAgentGuide(input: DocsInput, includeStandards = false): string {
   const { form, stack, template } = input;
   const commands = template?.ecosystem === "unity"
     ? "- Tests: `unity test --mode EditMode --output Logs/editmode-results.xml` and `unity test --mode PlayMode --output Logs/playmode-results.xml` (a project open in an Editor cannot be tested; the exit code 8 means tests failed, 6 means no verdict: read the CS#### lines)\n- Hygiene: `node scripts/check-unity-hygiene.mjs`\n- Android build: `unity build --target Android --execute-method Builder.Android -o Builds/game.aab`\n- Prefer the `unity-cli` skill for any Unity command; never edit scene, prefab or .meta YAML by hand."
@@ -71,7 +72,7 @@ ${form.description.split(/\r?\n/).slice(0, 6).join(" ").slice(0, 600)} Stack: ${
 
 ## Read first
 - \`docs/PROJECT_CONTRACT.md\` is binding: goals, non-goals, boundaries, design rules and the definition of done.
-${designed(input) ? "- \`docs/DESIGN_DIRECTION.md\` is binding for every screen: the visual bar, design system and per-page direction. A screen with default or library-stock styling is not finished.\n" : ""}${input.design ? "- \`docs/GAME_DESIGN.md\` and \`docs/RULES_SPEC.md\` are binding: every rule has an id (R-001 ...), and a test that proves it says \`Covers: R-001\`.\n" : ""}- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
+${includeStandards ? `- ${STANDARDS_POINTER}\n` : ""}${designed(input) ? "- \`docs/DESIGN_DIRECTION.md\` is binding for every screen: the visual bar, design system and per-page direction. A screen with default or library-stock styling is not finished.\n" : ""}${input.design ? "- \`docs/GAME_DESIGN.md\` and \`docs/RULES_SPEC.md\` are binding: every rule has an id (R-001 ...), and a test that proves it says \`Covers: R-001\`.\n" : ""}- \`docs/PLAN.md\` lists milestones and tasks. \`docs/architecture/0001-stack.md\` records why this stack was chosen.
 
 ## Commands
 ${commands}
@@ -148,7 +149,8 @@ ${designed(input) ? "- [Design direction](docs/DESIGN_DIRECTION.md)\n" : ""}- [P
 }
 
 export function renderDocs(input: DocsInput): Record<string, string> {
-  const guide = renderAgentGuide(input);
+  const standards = input.standards ?? {};
+  const guide = renderAgentGuide(input, Object.keys(standards).length > 0);
   const files: Record<string, string> = {
     "README.md": renderReadme(input), "CLAUDE.md": guide, "AGENTS.md": guide,
     "docs/PROJECT_CONTRACT.md": renderContract(input), "docs/PLAN.md": renderPlan(input), "docs/architecture/0001-stack.md": renderStackAdr(input),
@@ -156,6 +158,7 @@ export function renderDocs(input: DocsInput): Record<string, string> {
   const design = renderDesignDirection(input.options, input.charter);
   if (design) files["docs/DESIGN_DIRECTION.md"] = design;
   if (input.design) { files["docs/GAME_DESIGN.md"] = renderGameDesign(input.form.name, input.design); files["docs/RULES_SPEC.md"] = renderRulesSpec(input.form.name, input.design); }
+  Object.assign(files, standards);
   return Object.fromEntries(Object.entries(files).map(([file, content]) => [file, redactSecrets(content)]));
 }
 

@@ -244,4 +244,19 @@ describe("workflow with an assembled base and a contract", () => {
     const plain = await run({}, undefined);
     expect(plain.state.calls.some(call => call.prompt.includes("PROJECT CONTRACT"))).toBe(false);
   }, 60_000);
+  it("puts the skill digests for each stage in the plan, implement and review prompts and records them in the result", async () => {
+    const skills = { catalogVersion: 7, skills: [{ id: "all", title: "All stages", stages: [], text: "SKILL-ALL-MARKER" }, { id: "impl", title: "Implement only", stages: ["implement"], text: "SKILL-IMPL-MARKER" }] };
+    const { result, state } = await run({ skills }, undefined);
+    expect(result.status).toBe("completed");
+    expect(result.skills).toEqual({ catalogVersion: 7, ids: ["all", "impl"] });
+    for (const stage of ["plan", "implement", "review"] as const) {
+      const calls = state.calls.filter(call => call.stage === stage);
+      expect(calls.length, stage).toBeGreaterThan(0);
+      expect(calls.every(call => call.prompt.includes("SKILL-ALL-MARKER") && call.prompt.includes("catalog v7")), stage).toBe(true);
+      expect(calls.every(call => call.prompt.includes("SKILL-IMPL-MARKER") === (stage === "implement")), stage).toBe(true);
+    }
+    const plain = await run({}, undefined);
+    expect(plain.result.skills).toBeUndefined();
+    expect(plain.state.calls.some(call => call.prompt.includes("SKILLS ("))).toBe(false);
+  }, 60_000);
 });

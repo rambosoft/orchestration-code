@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "note": "Device tiers of the NEW app (the legacy Vue app keeps its own Chrome 38 contract). The modern floor waits for the operator's device-version export (roadmap Q9).",
+  "tiers": [
+    { "id": "modern", "ship": true, "browserFloor": null, "status": "operator-data-pending", "bundle": "module" },
+    {
+      "id": "legacy",
+      "ship": true,
+      "browser": "Chromium",
+      "browserFloor": 53,
+      "devices": { "webOS": "4+", "Tizen": "4+" },
+      "bundle": "nomodule",
+      "vite": { "plugin": "@vitejs/plugin-legacy", "targets": ["Chrome >= 53"] },
+      "maxEcmaVersion": 2016
+    },
+    { "id": "below-legacy", "ship": false, "action": "keep the Vue 2 app or a light build; not served by this app" }
+  ],
+  "budget": { "totalGrowthPercent": 10, "largestFileGrowthPercent": 5 }
+}

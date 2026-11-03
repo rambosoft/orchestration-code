@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "measured": "2026-11-02T19:42:08.774Z",
+  "projectId": "luxus-app-react",
+  "outcomes": [
+    {
+      "taskId": "PILOT-1B",
+      "attempt": 1,
+      "workflowId": "pc-PILOT-1B-1-a1",
+      "status": "completed",
+      "message": "quality gates passed; draft PR published",
+      "publish": {
+        "branch": "codex/pilot-1b-1-a1",
+        "baseSha": "fecd973e91538ada79d69ff4322df541a9a3da21",
+        "headSha": "16a5a1a4b6a228d65018aeb72cb4ff8d7b574ad0",
+        "prUrl": "https://github.com/rambosoft/luxus-app-react/pull/2",
+        "prBaseBranch": "codex/pilot-1-1-a1"
+      },
+      "stages": [
+        {
+          "stage": "implement",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 254,
+          "inputTokens": 462147,
+          "outputTokens": 4740
+        },
+        {
+          "stage": "verify",
+          "provider": "quality-gate",
+          "ok": true,
+          "seconds": 110
+        }
+      ],
+      "totalSeconds": 870
+    },
+    {
+      "taskId": "PILOT-2B",
+      "attempt": 1,
+      "workflowId": "pc-PILOT-2B-1-a1",
+      "status": "completed",
+      "message": "quality gates passed; draft PR published",
+      "publish": {
+        "branch": "codex/pilot-2b-1-a1",
+        "baseSha": "16a5a1a4b6a228d65018aeb72cb4ff8d7b574ad0",
+        "headSha": "5e4cf08159dad9b4cfb00cea887309f755bbbefa",
+        "prUrl": "https://github.com/rambosoft/luxus-app-react/pull/3",
+        "prBaseBranch": "codex/pilot-1b-1-a1"
+      },
+      "stages": [
+        {
+          "stage": "implement",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 314,
+          "inputTokens": 634947,
+          "outputTokens": 7619
+        },
+        {
+          "stage": "verify",
+          "provider": "quality-gate",
+          "ok": true,
+          "seconds": 43
+        }
+      ],
+      "totalSeconds": 747
+    },
+    {
+      "taskId": "PILOT-3B",
+      "attempt": 1,
+      "workflowId": "pc-PILOT-3B-1-a1",
+      "status": "completed",
+      "message": "quality gates passed; draft PR published",
+      "publish": {
+        "branch": "codex/pilot-3b-1-a1",
+        "baseSha": "5e4cf08159dad9b4cfb00cea887309f755bbbefa",
+        "headSha": "6c64b26eff5fb1e33a5fff76d87d3590cb7ac930",
+        "prUrl": "https://github.com/rambosoft/luxus-app-react/pull/4",
+        "prBaseBranch": "codex/pilot-2b-1-a1"
+      },
+      "stages": [
+        {
+          "stage": "implement",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 472,
+          "inputTokens": 784364,
+          "outputTokens": 7098
+        },
+        {
+          "stage": "verify",
+          "provider": "quality-gate",
+          "ok": true,
+          "seconds": 60
+        }
+      ],
+      "totalSeconds": 1100
+    },
+    {
+      "taskId": "PILOT-4B",
+      "attempt": 1,
+      "workflowId": "pc-PILOT-4B-1-a1",
+      "status": "completed",
+      "message": "quality gates passed; draft PR published",
+      "publish": {
+        "branch": "codex/pilot-4b-1-a1",
+        "baseSha": "6c64b26eff5fb1e33a5fff76d87d3590cb7ac930",
+        "headSha": "f7982613012871320480c7c3f06d91c731b4beef",
+        "prUrl": "https://github.com/rambosoft/luxus-app-react/pull/5",
+        "prBaseBranch": "codex/pilot-3b-1-a1"
+      },
+      "stages": [
+        {
+          "stage": "implement",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 312,
+          "inputTokens": 470547,
+          "outputTokens": 4349
+        },
+        {
+          "stage": "verify",
+          "provider": "quality-gate",
+          "ok": true,
+          "seconds": 68
+        }
+      ],
+      "totalSeconds": 1754
+    },
+    {
+      "taskId": "PILOT-5B",
+      "attempt": 1,
+      "workflowId": "pc-PILOT-5B-1-a1",
+      "status": "completed",
+      "message": "quality gates passed; draft PR published",
+      "publish": {
+        "branch": "codex/pilot-5b-1-a1",
+        "baseSha": "f7982613012871320480c7c3f06d91c731b4beef",
+        "headSha": "ea6583e9221d1049937f48f054bdeeae0700d472",
+        "prUrl": "https://github.com/rambosoft/luxus-app-react/pull/6",
+        "prBaseBranch": "codex/pilot-4b-1-a1"
+      },
+      "stages": [
+        {
+          "stage": "implement",
+          "provider": "codex",
+          "ok": true,
+          "seconds": 692,
+          "inputTokens": 925606,
+          "outputTokens": 9329
+        },
+        {
+          "stage": "verify",
+          "provider": "quality-gate",
+          "ok": true,
+          "seconds": 205
+        }
+      ],
+      "totalSeconds": 1297
+    }
+  ],
+  "totals": {
+    "seconds": 2530,
+    "inputTokens": 3277611,
+    "outputTokens": 33135,
+    "byProvider": {
+      "codex": {
+        "seconds": 2044,
+        "inputTokens": 3277611,
+        "outputTokens": 33135
+      },
+      "quality-gate": {
+        "seconds": 486,
+        "inputTokens": 0,
+        "outputTokens": 0
+      }
+    }
+  }
+}

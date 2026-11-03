@@ -4,6 +4,7 @@
 // the issue (FM-054), and failures belong to the resume and reconcile path.
 import type { RunResult } from "./contracts.js";
 import { resultComment, statusFor, type ReconcileDeps } from "./reconcile.js";
+import { syncRunFailedLabel } from "./run-failed-label.js";
 
 export type ReportOutcome = { reported: boolean; reason: "reported" | "already_reported" | "no_status" | "bootstrap" | "not_configured" };
 const rows = <T>(value: unknown, key: string): T[] => Array.isArray(value) ? value as T[] : Array.isArray((value as Record<string, unknown> | null)?.[key]) ? (value as Record<string, T[]>)[key]! : [];
@@ -15,7 +16,8 @@ export async function reportResultTo(paperclip: ReconcileDeps["paperclip"] | und
   const status = statusFor(input.result);
   if (!status) return { reported: false, reason: "no_status" };
   const comments = rows<{ body?: string }>(await paperclip("GET", `/api/issues/${encodeURIComponent(input.issueId)}/comments?limit=100`), "comments");
-  if (comments.some(comment => String(comment.body ?? "").includes(`Temporal workflow \`${input.workflowId}\` finished`))) return { reported: true, reason: "already_reported" };
+  if (comments.some(comment => String(comment.body ?? "").includes(`Temporal workflow \`${input.workflowId}\` finished`))) { await syncRunFailedLabel(paperclip, input.issueId, false); return { reported: true, reason: "already_reported" }; }
   await paperclip("PATCH", `/api/issues/${encodeURIComponent(input.issueId)}`, { status, comment: resultComment(input.workflowId, input.result.status, input.result, "worker") });
+  await syncRunFailedLabel(paperclip, input.issueId, false);
   return { reported: true, reason: "reported" };
 }

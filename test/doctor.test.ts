@@ -175,4 +175,12 @@ describe("unity checks", () => {
     await writeFile(path.join(dir, "c.json"), "{ not json");
     expect(await manifestsWithUnity([dir])).toEqual(["unity-game"]);
   });
+  it("warns about imported skills whose source changed and passes when none did (B-118)", async () => {
+    const stale = (await runDoctor(deps({ staleSkills: async () => ["react-tips (candidate): the source in demo@market changed since it was imported; review it and re-import"] }))).find(check => check.name === "skills:sources");
+    expect(stale).toMatchObject({ ok: false, severity: "warn" });
+    expect(stale?.detail).toContain("react-tips");
+    expect((await runDoctor(deps({ staleSkills: async () => [] }))).find(check => check.name === "skills:sources")).toMatchObject({ ok: true });
+    expect((await runDoctor(deps({ staleSkills: async () => { throw new Error("no plugins folder"); } }))).find(check => check.name === "skills:sources")).toMatchObject({ ok: true });
+    expect((await runDoctor(deps())).some(check => check.name === "skills:sources")).toBe(false);
+  });
 });

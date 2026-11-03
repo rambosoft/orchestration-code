@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Task types are the user-facing concept (a Paperclip label, a "Type:" line); a profile is the delivery stage list a type reuses (src/profiles.ts).
 // A run with no taskType takes the original pipeline unchanged, which keeps in-flight Temporal runs replayable.
-export const TaskTypeIdSchema = z.enum(["task", "bug", "research", "architecture", "bootstrap"]);
+export const TaskTypeIdSchema = z.enum(["task", "bug", "research", "architecture", "bootstrap", "survey"]);
 export type TaskTypeId = z.infer<typeof TaskTypeIdSchema>;
 /** delivery: plan -> brief -> implement -> review -> verify. bug: investigate first, then delivery. investigation: read-only exploration that ends in a document. */
 export type TaskFlow = "delivery" | "bug" | "investigation" | "bootstrap";
@@ -22,6 +22,7 @@ export const taskTypes: Record<TaskTypeId, TaskTypeDefinition> = {
   research: { id: "research", label: "Research / exploration", profile: "investigation", flow: "investigation", delivers: "document", aliases: ["research", "explore", "exploration", "spike", "investigation"], phases: ["scope", "context", "explore", "report"] },
   architecture: { id: "architecture", label: "Architecture", profile: "investigation", flow: "investigation", delivers: "document", aliases: ["architecture", "arch", "design", "adr"], phases: ["scope", "context", "explore", "report"] },
   bootstrap: { id: "bootstrap", label: "Project bootstrap", profile: "bootstrap", flow: "bootstrap", delivers: "project", aliases: ["bootstrap", "new-project", "project-setup"], phases: ["stack", "charter", "blueprint", "approval", "scaffold", "issues"] },
+  survey: { id: "survey", label: "Repository survey", profile: "investigation", flow: "investigation", delivers: "document", aliases: ["survey", "audit", "codebase-survey"], phases: ["context", "survey", "report"] },
 };
 
 const lookup = new Map<string, TaskTypeId>(Object.values(taskTypes).flatMap(type => type.aliases.map(alias => [alias, type.id] as const)));

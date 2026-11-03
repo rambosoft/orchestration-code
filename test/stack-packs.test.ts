@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ProjectManifestSchema } from "../src/contracts.js";
-import { detectStackProfile, onboardManifest } from "../src/stack-packs.js";
+import { detectStackProfile, findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS } from "../src/stack-packs.js";
 import { STACK_PROFILE_IDS, allowedExecutables, stackCommandProblems } from "../src/stack-profiles.js";
 
 const dirs: string[] = [];
@@ -43,6 +43,25 @@ describe("onboardManifest", () => {
     expect(commands(mvp)).toEqual(["npm run lint (warn)", "npm test -- --run", "npm run build"]);
     expect(mvp).toMatchObject({ id: "my-app", tier: "mvp", stack: { profile: "react-ts" }, defaultProfile: "implementation", providerRouting: { implement: { provider: "claude" }, review: { provider: "codex" } } });
     expect(ProjectManifestSchema.safeParse(mvp).success).toBe(true);
+  });
+  it("uses the React standards pack gates in order and validates the manifest", async () => {
+    const root = await repo({ "package.json": pkg({ react: "19" }, {}) });
+    const { manifest } = onboardManifest({ root, ...base, pack: "react-ts-vite" });
+    expect(commands(manifest)).toEqual(["npm run typecheck", "npm run lint", "npm run knip", "npm run depcruise", "npm run jscpd", "npm run check:ai", "npm run check:debt", "npm run check:pages", "npm run check:styles", "npm run check:index", "npm run check:journeys", "npm run check:contracts", "npm run check:parity", "npm run check:design", "npm run check:deps", "npm run check:device-tiers", "npm run check:legacy-apis", "npm run test:related -- {changed}", "npm run build", "npm run check:legacy-syntax", "npm run check:legacy-budget", "npm test"]);
+    const gates = manifest.qualityCommands as Array<{ parallel?: boolean; scope?: string }>;
+    expect(gates.slice(0, 17).every(gate => gate.parallel)).toBe(true);
+    expect(gates[21]!.scope).toBe("milestone");
+    expect(ProjectManifestSchema.safeParse(manifest).success).toBe(true);
+  });
+  it("finds the orchestrator root from src/ and from the built dist/src/ folder", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    expect(findOrchestratorRoot(path.join(root, "src"))).toBe(root);
+    expect(findOrchestratorRoot(path.join(root, "dist", "src"))).toBe(root);
+    expect(() => findOrchestratorRoot(path.parse(root).root)).toThrow(/not found/);
+  });
+  it("rejects an unknown standards pack and lists valid ids", async () => {
+    const root = await repo({ "package.json": pkg({ react: "19" }, {}) });
+    expect(() => onboardManifest({ root, ...base, pack: "unknown" })).toThrow(new RegExp(`unknown pack 'unknown'; valid packs: ${ONBOARD_PACK_IDS.join(", ")}`));
   });
   it("makes an Angular test run once instead of watching, and uses the lock file's package manager", async () => {
     const root = await repo({ "angular.json": "{}", "pnpm-lock.yaml": "", "package.json": pkg({ "@angular/core": "20" }, { test: "ng test", build: "ng build" }) });

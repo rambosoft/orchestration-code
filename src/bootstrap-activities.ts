@@ -12,6 +12,7 @@ import { ProjectManifestSchema } from "./contracts.js";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
 import { isGame, type GameDesign } from "./game.js";
+import { loadCatalog, renderStandardsFiles } from "./skills.js";
 import { defaultUnityTools, scaffoldUnityProject, templateValues, type UnityTools } from "./unity-scaffold.js";
 
 // Host-side steps of a project bootstrap (ADR 0009). They run on the Windows worker, where the GitHub login lives; the bridge container never sees it.
@@ -90,7 +91,7 @@ export async function scaffoldProjectImpl(request: ScaffoldRequest, deps: Scaffo
   try {
     // Unity creates its own project folder; every other stack starts from an empty folder made here.
     if (!unityProject) await mkdir(root, { recursive: true });
-    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, charter: request.charter, blueprint: request.blueprint, driftRules: config.contract.rules, ...(request.design ? { design: request.design } : {}), ...(template ? { template } : {}) }) };
+    const files: Record<string, string> = { ...renderDocs({ form, options, provenance, stack: request.stack, standards: renderStandardsFiles(loadCatalog(), template?.id === "vite-react-ts" ? "react-ts" : undefined), charter: request.charter, blueprint: request.blueprint, driftRules: config.contract.rules, ...(request.design ? { design: request.design } : {}), ...(template ? { template } : {}) }) };
     if (unityProject) {
       if (options.ci === "basic") warnings.push("no CI workflow was added: a Unity build in GitHub Actions needs licence activation secrets");
     } else if (template) {

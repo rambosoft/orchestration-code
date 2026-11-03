@@ -41,6 +41,31 @@ async function recentRunCount(ctx, issueId) {
   return runs.filter(run => String(run.runId ?? run.id ?? "") !== String(ctx.runId) && Date.parse(String(run.startedAt ?? run.createdAt ?? "")) >= since).length;
 }
 
+// A failed run keeps returning exit code 0 (a failing code would put the agent into error status and can storm, B-097), so Paperclip lists it as succeeded. The `run-failed` label carries the truth
+// on the issue; src/run-failed-label.ts does the same for the worker reporter. The label is a hint: errors are swallowed.
+async function syncRunFailedLabel(ctx, issueId, failed) {
+  try {
+    const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
+    if (!token || !issueId) return;
+    const base = String(ctx.config.paperclipApiUrl ?? "http://paperclip:3100").replace(/\/$/, "");
+    const call = async (method, path, body) => {
+      const response = await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-paperclip-run-id": ctx.runId }, ...(body ? { body: JSON.stringify(body) } : {}), signal: ctx.signal });
+      if (!response.ok) throw new Error(`${method} ${path} ${response.status}`);
+      return response.json();
+    };
+    const issue = await call("GET", `/api/issues/${encodeURIComponent(issueId)}`);
+    if (!issue?.companyId) return;
+    const labelsResponse = await call("GET", `/api/companies/${issue.companyId}/labels`);
+    const labels = Array.isArray(labelsResponse) ? labelsResponse : (labelsResponse?.labels ?? []);
+    let label = labels.find(item => item.name === "run-failed");
+    if (!label && failed) label = await call("POST", `/api/companies/${issue.companyId}/labels`, { name: "run-failed", color: "#dc2626" });
+    if (!label?.id) return;
+    const current = issue.labelIds ?? (issue.labels ?? []).map(item => item.id).filter(Boolean);
+    if (current.includes(label.id) === failed) return;
+    await call("PATCH", `/api/issues/${encodeURIComponent(issueId)}`, { labelIds: failed ? [...current, label.id] : current.filter(id => id !== label.id) });
+  } catch { /* a label is a hint */ }
+}
+
 async function addIssueComment(ctx, issueId, body) {
   const token = String(ctx.authToken ?? ctx.config.paperclipApiToken ?? process.env.PAPERCLIP_API_TOKEN ?? "");
   if (!token || !issueId) {
@@ -389,7 +414,8 @@ Accept the PR as it is, or comment here with what to fix and re-run the task.` :
           } else {
             paperclipUpdateOk = await addIssueComment(ctx, issueId, report).catch(error => { ctx.onLog("stderr", `Could not post result comment: ${String(error)}\n`); return false; });
           }
-          return { exitCode: targetStatus && paperclipUpdateOk ? 0 : 1, signal: null, timedOut: false, summary: result?.message ?? state.status, ...(!paperclipUpdateOk ? { errorMessage: "Workflow result could not be recorded in Paperclip; task requires recovery" } : {}) };
+          if (!bootstrapRun) await syncRunFailedLabel(ctx, issueId, terminalFailure);
+          return { exitCode: targetStatus && paperclipUpdateOk ? 0 : 1, signal: null, timedOut: false, summary: `${terminalFailure && !bootstrapRun ? "FAILED: " : ""}${result?.message ?? state.status}`, ...(!paperclipUpdateOk ? { errorMessage: "Workflow result could not be recorded in Paperclip; task requires recovery" } : {}) };
         }
         await new Promise(resolve => setTimeout(resolve, pollMs));
       }

@@ -31,7 +31,7 @@ export function timedActivity<Args extends unknown[], Result>(name: string, fn: 
 }
 
 export type StageTiming = { name: string; count: number; medianMs: number; p90Ms: number; totalMs: number; failures: number; costUsd: number };
-export type TaskTiming = { key: string; project: string; wallMs: number; busyMs: number; idleMs: number; byName: Record<string, number> };
+export type TaskTiming = { key: string; project: string; wallMs: number; busyMs: number; idleMs: number; byName: Record<string, number>; /** When the last activity ended (ms since the epoch), for ordering tasks into batches (B-137). */ endedAt: number; /** Implement runs beyond the first: the repair rounds the task needed. */ repairs: number; costUsd: number };
 export type TimingSummary = { stages: StageTiming[]; tasks: TaskTiming[]; events: number; withoutTimestamps: number };
 export type SummaryOptions = { includeFake?: boolean; since?: string };
 
@@ -74,15 +74,17 @@ export function summarizeTiming(all: TimingEvent[], options: SummaryOptions = {}
   }).sort((a, b) => b.totalMs - a.totalMs);
 
   // Wall clock of a task: first activity start to last activity end. Activities run side by side (review with verify), so busy time is the union of the intervals.
-  const intervals = new Map<string, { project: string; list: Array<[number, number]>; byName: Record<string, number> }>();
+  const intervals = new Map<string, { project: string; list: Array<[number, number]>; byName: Record<string, number>; implementRuns: number; costUsd: number }>();
   let withoutTimestamps = 0;
   for (const event of finished) {
     const end = str(event.at) ? Date.parse(event.at as string) : NaN;
     if (!Number.isFinite(end)) { withoutTimestamps++; continue; }
     const key = str(event.workflowId) ?? str(event.runId); if (!key) continue;
     const duration = num(event.activityDurationMs)!;
-    const entry = intervals.get(key) ?? { project: str(event.projectId) ?? "", list: [], byName: {} };
+    const entry = intervals.get(key) ?? { project: str(event.projectId) ?? "", list: [], byName: {}, implementRuns: 0, costUsd: 0 };
     entry.list.push([end - duration, end]);
+    if (event.event !== "activity.timed" && str(event.stage) === "implement") entry.implementRuns += 1;
+    entry.costUsd += num(event.costUsd) ?? 0;
     const label = labelOf(event) ?? "other";
     entry.byName[label] = (entry.byName[label] ?? 0) + duration;
     if (!entry.project && str(event.projectId)) entry.project = str(event.projectId)!;
@@ -94,12 +96,58 @@ export function summarizeTiming(all: TimingEvent[], options: SummaryOptions = {}
     for (const [start, end] of list.slice(1)) { if (start <= to) to = Math.max(to, end); else { busy += to - from; from = start; to = end; } }
     busy += to - from;
     const wall = Math.max(...list.map(item => item[1])) - list[0]![0];
-    return { key, project: entry.project, wallMs: wall, busyMs: busy, idleMs: Math.max(0, wall - busy), byName: entry.byName };
+    return { key, project: entry.project, wallMs: wall, busyMs: busy, idleMs: Math.max(0, wall - busy), byName: entry.byName, endedAt: Math.max(...list.map(item => item[1])), repairs: Math.max(0, entry.implementRuns - 1), costUsd: entry.costUsd };
   }).sort((a, b) => b.wallMs - a.wallMs);
   return { stages, tasks, events: events.length, withoutTimestamps };
 }
 
 const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
+
+export type BatchTiming = { batch: number; tasks: number; medianBusyMs: number; medianWallMs: number; repairsPerTask: number; costUsd: number };
+/**
+ * Is later work cheaper than the first? Tasks in the order they finished, cut into batches of `size` (B-137): per batch the median busy and wall time, repair rounds per task and cost. The
+ * first batches pay for the learning; a falling line is the evidence that recipes, standards and the reuse index work. `project` limits the view to one project.
+ */
+export function batchTrend(tasks: TaskTiming[], options: { size?: number; project?: string } = {}): BatchTiming[] {
+  const size = Math.max(1, Math.floor(options.size ?? 5));
+  const ordered = tasks.filter(task => !options.project || task.project === options.project).sort((a, b) => a.endedAt - b.endedAt);
+  const batches: BatchTiming[] = [];
+  for (let from = 0; from < ordered.length; from += size) {
+    const group = ordered.slice(from, from + size);
+    const sorted = (pick: (task: TaskTiming) => number) => group.map(pick).sort((a, b) => a - b);
+    batches.push({ batch: batches.length + 1, tasks: group.length, medianBusyMs: percentile(sorted(task => task.busyMs), 0.5), medianWallMs: percentile(sorted(task => task.wallMs), 0.5), repairsPerTask: group.reduce((sum, task) => sum + task.repairs, 0) / group.length, costUsd: group.reduce((sum, task) => sum + task.costUsd, 0) });
+  }
+  return batches;
+}
+export function formatBatchTrend(batches: BatchTiming[], size: number): string {
+  if (!batches.length) return "No finished tasks to group into batches.";
+  return [`Batches of ${size} tasks in the order they finished: median busy and wall minutes, repair rounds per task, cost`, ...batches.map(batch => `  batch ${String(batch.batch).padEnd(4)}${String(batch.tasks).padEnd(3)}tasks  busy ${minutes(batch.medianBusyMs).padEnd(6)}wall ${minutes(batch.medianWallMs).padEnd(6)}repairs ${batch.repairsPerTask.toFixed(1).padEnd(5)}cost $${batch.costUsd.toFixed(2)}`)].join("\n");
+}
+
+export type HeavyTask = { key: string; project: string; busyMs: number; medianMs: number; ratio: number; heaviest: { name: string; ms: number } };
+/**
+ * Tasks whose busy time is far above the median of the same kind of task in their own project (B-146; kind = the activity that took most of the time, so implementation runs are not compared with quick checks). Subscriptions hide money cost, so a runaway task shows up as time: flagged at `factor` times the median,
+ * only with at least `minTasks` tasks in the project and at least `minBusyMs` busy, so small samples and short tasks never raise noise. The heaviest activity says where to optimise.
+ */
+export function flagHeavyTasks(tasks: TaskTiming[], options: { factor?: number; minTasks?: number; minBusyMs?: number } = {}): HeavyTask[] {
+  const factor = options.factor ?? 3; const minTasks = options.minTasks ?? 4; const minBusyMs = options.minBusyMs ?? 10 * 60_000;
+  const byProject = new Map<string, TaskTiming[]>();
+  const kindOf = (task: TaskTiming): string => Object.entries(task.byName).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
+  for (const task of tasks) { const key = `${task.project}\u0000${kindOf(task)}`; byProject.set(key, [...(byProject.get(key) ?? []), task]); }
+  const heavy: HeavyTask[] = [];
+  for (const group of byProject.values()) {
+    if (group.length < minTasks) continue;
+    const project = group[0]!.project;
+    const median = percentile(group.map(task => task.busyMs).sort((a, b) => a - b), 0.5);
+    if (median <= 0) continue;
+    for (const task of group) {
+      if (task.busyMs < minBusyMs || task.busyMs < factor * median) continue;
+      const [name, ms] = Object.entries(task.byName).sort((a, b) => b[1] - a[1])[0] ?? ["other", 0];
+      heavy.push({ key: task.key, project, busyMs: task.busyMs, medianMs: median, ratio: task.busyMs / median, heaviest: { name, ms } });
+    }
+  }
+  return heavy.sort((a, b) => b.ratio - a.ratio);
+}
 
 export function formatTiming(summary: TimingSummary, topTasks = 15): string {
   const lines = [`Activity time by stage (${summary.events} events${summary.withoutTimestamps ? `; ${summary.withoutTimestamps} older events have no timestamp and are left out of the task view` : ""})`, "stage / activity".padEnd(34) + "count  median  p90    total   fail  cost$"];
@@ -109,6 +157,11 @@ export function formatTiming(summary: TimingSummary, topTasks = 15): string {
   for (const task of summary.tasks.slice(0, topTasks)) {
     const top = Object.entries(task.byName).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, ms]) => `${name} ${minutes(ms)}`).join(", ");
     lines.push(`  ${(task.project.slice(0, 8) || "-").padEnd(9)}${task.key.slice(-26).padEnd(28)}wall ${minutes(task.wallMs).padEnd(6)}busy ${minutes(task.busyMs).padEnd(6)}idle ${minutes(task.idleMs).padEnd(6)}${top}`);
+  }
+  const heavy = flagHeavyTasks(summary.tasks);
+  if (heavy.length) {
+    lines.push("", "Heavy tasks: busy time at least 3x the median of the same kind of task in their project (look here first when optimising)");
+    for (const task of heavy.slice(0, topTasks)) lines.push(`  ${(task.project.slice(0, 8) || "-").padEnd(9)}${task.key.slice(-26).padEnd(28)}busy ${minutes(task.busyMs).padEnd(6)}median ${minutes(task.medianMs).padEnd(6)}${task.ratio.toFixed(1)}x  ${task.heaviest.name} ${minutes(task.heaviest.ms)}`);
   }
   return lines.join("\n");
 }

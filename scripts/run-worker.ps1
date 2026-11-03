@@ -23,7 +23,16 @@ if (-not (Test-Path $workerEntry)) {
   exit 1
 }
 # Resolve node once instead of going through npm, which is not always on PATH for scheduled or hidden launches.
-$node = (Get-Command node -ErrorAction Stop).Source
+# Prefer ORCHESTRATOR_NODE, then the first node on PATH that has npm beside it: another app's bundled node (the Codex desktop app puts its own first on PATH) has no npm, so every "npm ci" failed with "spawn npm ENOENT" (FM-059).
+$node = $null
+if ($env:ORCHESTRATOR_NODE -and (Test-Path $env:ORCHESTRATOR_NODE)) { $node = $env:ORCHESTRATOR_NODE }
+if (-not $node) {
+  foreach ($candidate in @(Get-Command node -All -ErrorAction Stop)) {
+    if (Test-Path (Join-Path (Split-Path -Parent $candidate.Source) 'node_modules\npm\bin\npm-cli.js')) { $node = $candidate.Source; break }
+  }
+}
+if (-not $node) { $node = (Get-Command node -ErrorAction Stop).Source }
+"Worker node: $node" | Out-File -FilePath $workerLog -Append -Encoding utf8
 # Windows PowerShell 5.1 turns the first stderr line of a redirected native command into a terminating error under 'Stop', which killed the worker on its first log line.
 $ErrorActionPreference = 'Continue'
 # Periodic reconcile lives in the worker process itself now (src/reconcile-service.ts, heartbeat in data/logs/reconcile-heartbeat.json, checked by doctor); the Start-Job that used to be here never ran.

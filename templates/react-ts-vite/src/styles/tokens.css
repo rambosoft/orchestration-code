@@ -1,0 +1,61 @@
+/*
+ * The single root scale unit (ADR 0032, rule R-015). Every size in the app is in rem, so changing the font-size here rescales the whole interface:
+ * a phone, a laptop and a 100-inch TV all use the same layout rules at different scales. Chrome 53 has CSS variables but not max(), min() or clamp(),
+ * so the limits are media queries. Retune here once, never per component.
+ */
+:root {
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --radius-1: 0.25rem;
+  --radius-2: 0.75rem;
+  --color-bg: #0b0b12;
+  --color-surface: #161622;
+  --color-text: #f2f2f7;
+  --color-text-muted: #a8a8bd;
+  --color-accent: #7235c7;
+  --color-focus: #ffffff;
+  --focus-ring: 0.2rem solid var(--color-focus);
+}
+
+html {
+  /* About 17px at 1080p, 34px at 4K: proportional to the screen height. */
+  font-size: 1.6vh;
+}
+
+/* Readable floors, media queries only (Chrome 53 has no max(), min() or clamp()). Full-height containers use min-height: 100vh, never a rem value. */
+@media (max-height: 750px) {
+  html { font-size: 12px; }
+}
+
+@media (max-aspect-ratio: 1/1) {
+  /* Portrait (phones): scale from the width instead. */
+  html { font-size: 2.4vw; }
+}
+
+@media (max-aspect-ratio: 1/1) and (max-width: 749px) {
+  html { font-size: 18px; }
+}
+
+@media (max-aspect-ratio: 1/1) and (max-width: 480px) {
+  html { font-size: 16px; }
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+/* A plain :focus rule, not :focus-visible (Chrome 86): on a TV with a remote the focus ring must always show, and old engines ignore the rule they do not know. */
+:focus {
+  outline: var(--focus-ring);
+  outline-offset: 0.15rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

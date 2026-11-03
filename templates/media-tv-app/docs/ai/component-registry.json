@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "note": "Components whose performance or correctness the whole app depends on. A protected component needs an approved design (docs/design/<name>.md, R-024) once its folder exists, and a change under its path gets a specialist review (manifest review.specialists). Add a row when a component becomes this critical.",
+  "components": [
+    {
+      "id": "carousel",
+      "path": "src/components/carousel",
+      "protected": true,
+      "design": "docs/design/carousel.md",
+      "reason": "Rows of hundreds of items on a TV with little memory: virtualised and paged, bounded memory while scrolling, predictable focus movement, every observer and timer cleaned up."
+    },
+    {
+      "id": "player",
+      "path": "src/components/player",
+      "protected": true,
+      "design": "docs/design/player.md",
+      "reason": "Owns media elements, listeners and requests; a leak or an unhandled error here ends the session on a TV."
+    }
+  ]
+}

@@ -124,8 +124,11 @@ describe("Paperclip adapter resilience", () => {
       result: { runId: "r", status: "failed", message: "Unity license prerequisite unavailable", stages: [], artifactRefs: [] },
     }));
     const result = await adapter.execute(ctx);
-    expect(result).toMatchObject({ exitCode: 0, signal: null, summary: "Unity license prerequisite unavailable" });
+    expect(result).toMatchObject({ exitCode: 0, signal: null, summary: "FAILED: Unity license prerequisite unavailable" });
     expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body).toMatchObject({ status: "in_review" });
+    // The run still returns 0 (a failing code would put the agent in error status), so the failure is carried by the run-failed label on the issue.
+    const patched = calls.findIndex(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"));
+    expect(calls.slice(patched + 1).some(call => call.method === "GET" && call.url.endsWith("/api/issues/ISSUE"))).toBe(true);
     expect(calls.some(call => call.method === "PATCH" && call.body?.status === "blocked")).toBe(false);
     expect(calls.find(call => call.method === "PATCH" && call.url.endsWith("/api/issues/ISSUE"))?.body?.comment).toContain("Unity license prerequisite unavailable");
   });

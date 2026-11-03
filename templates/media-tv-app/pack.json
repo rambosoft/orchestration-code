@@ -1,0 +1,27 @@
+{
+  "id": "media-tv-app",
+  "extends": "react-ts-vite",
+  "description": "Overlay for a media app that runs on low-memory smart TVs: performance budgets, a heap-growth test over repeated navigation, and a registry of protected components. Apply after react-ts-vite (the apply script does both).",
+  "render": [],
+  "copy": [
+    "docs/ai/performance-budgets.json",
+    "docs/ai/component-registry.json",
+    "docs/ai/TV_PERFORMANCE.md",
+    "scripts/check-registry.mjs",
+    "scripts/heap-growth.mjs",
+    "e2e/heap-routes.json"
+  ],
+  "scripts": {
+    "check:registry": "node scripts/check-registry.mjs",
+    "test:heap": "node scripts/heap-growth.mjs"
+  },
+  "devDependencies": ["playwright-core"],
+  "gates": [
+    { "script": "check:registry", "parallel": true },
+    { "script": "test:heap", "scope": "milestone" }
+  ],
+  "references": {
+    "skills": ["tv-input-focus", "tv-storage-catalog"],
+    "libraries": ["playwright-core"]
+  }
+}

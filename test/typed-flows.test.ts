@@ -92,7 +92,7 @@ describe("reproduction", () => {
     expect(validateReport(JSON.stringify(report), "research").recommendation).toBeUndefined();
   });
   it("parses git porcelain output including renames", () => {
-    expect(changedPaths(" M src/a.ts\0?? test/new.test.ts\0R  src/b.ts\0src/old.ts\0A  c.md\0")).toEqual([{ file: "src/a.ts", untracked: false }, { file: "test/new.test.ts", untracked: true }, { file: "src/b.ts", untracked: false }, { file: "c.md", untracked: false }]);
+    expect(changedPaths(" M src/a.ts\0?? test/new.test.ts\0R  src/b.ts\0src/old.ts\0A  c.md\0 D src/gone.ts\0")).toEqual([{ file: "src/a.ts", untracked: false, deleted: false }, { file: "test/new.test.ts", untracked: true, deleted: false }, { file: "src/b.ts", untracked: false, deleted: false }, { file: "c.md", untracked: false, deleted: false }, { file: "src/gone.ts", untracked: false, deleted: true }]);
   });
 });
 
@@ -206,7 +206,7 @@ describe("context pack", () => {
 
 type Doc = { dir?: string; docsDir?: string; name?: string; taskId?: string; markdown: string };
 type Defect = { stage: string; apply: (summary: string) => string; mode: "first" | "always" };
-type RunState = { calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
+type RunState = { dependencyPreps: number; calls: StageInput[]; docs: Doc[]; published: Array<Record<string, unknown>>; packRequests: Array<{ terms: string[]; paths: string[] }>; verifications: ReproVerification[]; comments: Array<{ prUrl: string; body: string }>; defect?: Defect; unfixable?: string };
 const runs = new Map<string, RunState>();
 const fake = new FakeProvider();
 let env: TestWorkflowEnvironment; let worker: Worker; let running: Promise<void>; let tmp: string; let sequence = 0;
@@ -220,9 +220,10 @@ beforeAll(async () => {
   const activities = {
     checkDependencies: async () => undefined,
     prepareWorktree: async () => path.join(tmp, "wt"),
-    prepareProjectDependencies: async () => ({ installed: false, summary: "none" }),
+    prepareProjectDependencies: async () => { currentRun.dependencyPreps++; return { installed: false, summary: "none" }; },
     writeAnalysisDocument: async (input: { taskId: string; docsDir: string; markdown: string }) => { currentRun.docs.push({ docsDir: input.docsDir, taskId: input.taskId, markdown: input.markdown }); return path.join(tmp, "analysis.md"); },
     writeDocument: async (input: { dir: string; name: string; markdown: string }) => { currentRun.docs.push({ dir: input.dir, name: input.name, markdown: input.markdown }); return path.join(tmp, `${input.name}.md`); },
+    buildSurveyContext: async () => ({ inventory: { text: "INVENTORY_MARKER: 2 routes", routes: [{ file: "pages/a.vue", lines: 100 }, { file: "pages/b.vue", lines: 700 }], stores: ["store/session.js"], files: 9 }, packText: "PACK_MARKER: guidance", files: ["AGENTS.md"] }),
     buildContextPack: async (input: { terms: string[]; paths: string[] }) => { currentRun.packRequests.push(input); return { text: "PACK_MARKER: router.ts matches", files: ["src/router.ts"], truncated: false }; },
     verifyReproduction: async (): Promise<ReproVerification> => currentRun.verifications.shift() ?? NOT_REPRODUCED,
     collectWorktree: async () => path.join(tmp, "w.patch"),
@@ -248,7 +249,7 @@ afterAll(async () => { worker.shutdown(); await running; await env.teardown(); a
 const repository = { remote: "origin", targetBranch: "main", branch: "codex/t-a1", baseSha: "a".repeat(40), prBaseBranch: "main", taskTitle: "Wrong language shown" };
 async function run(input: Partial<RunInput> & Pick<RunInput, "prompt">, verifications: ReproVerification[] = [], defect?: Defect, unfixable?: "acceptance" | "environment" | "approval"): Promise<{ result: RunResult; state: RunState }> {
   const id = `typed-${++sequence}`;
-  const state: RunState = { calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
+  const state: RunState = { dependencyPreps: 0, calls: [], docs: [], published: [], packRequests: [], verifications: [...verifications], comments: [], ...(defect ? { defect } : {}), ...(unfixable ? { unfixable } : {}) };
   runs.set(id, state); currentRun = state;
   const full: RunInput = { runId: id, taskId: `T-${sequence}`, projectId: "p", profile: "bugfix", provider: "fake", projectRoot: tmp, artifactsDir: tmp, repository, qualityCommands: [{ executable: "npm", args: ["test"] }], ...input };
   const result = await env.client.workflow.execute(projectWorkflow, { taskQueue: "typed", workflowId: id, args: [full] });
@@ -320,6 +321,44 @@ describe("bug flow in the workflow", () => {
   });
 });
 
+describe("survey in the workflow (ADR 0032)", () => {
+  it("does not install the project's dependencies for a read-only investigation (survey, research, architecture)", async () => {
+    for (const taskType of ["survey", "research", "architecture"] as const) {
+      const { result, state } = await run({ taskType, profile: "research", prompt: "Look at the app", qualityCommands: [] });
+      expect(result.status, `${taskType}: ${result.message}`).toBe("completed");
+      expect(state.dependencyPreps, taskType).toBe(0);
+    }
+  });
+  it("still installs dependencies for a code task", async () => {
+    const { state } = await run({ prompt: "Implement the requested behavior" });
+    expect(state.dependencyPreps).toBeGreaterThan(0);
+  });
+  it("surveys from the inventory, commits the report under docs/survey and implements nothing", async () => {
+    const { result, state } = await run({ taskType: "survey", profile: "research", prompt: "Mode: migrate\nSurvey the Vue app for a React rebuild", qualityCommands: [] });
+    expect(result.status).toBe("completed");
+    expect(result.message).toContain("report produced; draft PR published");
+    expect(stagesOf(state)).toEqual(["survey"]);
+    expect(state.calls[0]!.prompt).toContain("INVENTORY_MARKER");
+    expect(state.calls[0]!.prompt).toContain("PACK_MARKER");
+    expect(state.calls[0]!.prompt).toContain("MIGRATE:");
+    expect(state.docs).toHaveLength(1);
+    expect(state.docs[0]).toMatchObject({ dir: "docs/survey" });
+    expect(state.docs[0]!.markdown).toContain("## Refactor backlog");
+    expect(state.docs[0]!.markdown).toContain("Replace Vuex session with a store");
+    expect(state.docs[0]!.markdown).toMatch(/Needs a decision[\s\S]*R3/);
+    expect(state.published[0]!.kind).toBe("document");
+    expect(result.metadata?.taskType).toBe("survey");
+  });
+  it("falls back to the route list, marked as such, when the answer stays unreadable", async () => {
+    const { result, state } = await run({ taskType: "survey", profile: "research", prompt: "Survey the app [INJECT_UNSTRUCTURED_SURVEY]", qualityCommands: [] });
+    expect(result.status).toBe("completed");
+    expect(state.calls.filter(call => call.stage === "survey")).toHaveLength(2);
+    expect(state.docs[0]!.markdown).toContain("only the route list");
+    expect(state.docs[0]!.markdown).toContain("pages/b.vue");
+    expect(result.metadata?.warnings?.some(warning => warning.stage === "survey" && warning.message.includes("deterministic fallback"))).toBe(true);
+  }, 90_000);
+});
+
 describe("research and architecture in the workflow", () => {
   it("explores from the context pack and publishes the report as a document PR without implementing anything", async () => {
     const { result, state } = await run({ taskType: "research", profile: "research", prompt: "How are requests routed?", documentsDir: "docs/research", qualityCommands: [] });
@@ -378,7 +417,8 @@ const DEFECTS: Record<string, (summary: string) => string> = {
 describe("structured stages of the typed flows never kill a run", () => {
   const bug = (stage: string) => ({ input: { taskType: "bug" as const, prompt: "Wrong language" }, stage, verifications: [REPRODUCED] });
   const research = (stage: string) => ({ input: { taskType: "research" as const, profile: "research", prompt: "How are requests routed?", qualityCommands: [] }, stage, verifications: [] });
-  const cases = [...["diagnose", "reproduce"].map(stage => bug(stage)), ...["scope", "explore"].map(stage => research(stage))].flatMap(item => Object.keys(DEFECTS).flatMap(defect => (["always", ...(["truncated", "proseOnly", "empty"].includes(defect) ? ["first"] : [])] as Array<"first" | "always">).map(mode => [item, defect, mode] as const)));
+  const survey = (stage: string) => ({ input: { taskType: "survey" as const, profile: "research", prompt: "Mode: migrate\nSurvey the app", qualityCommands: [] }, stage, verifications: [] });
+  const cases = [...["diagnose", "reproduce"].map(stage => bug(stage)), ...["scope", "explore"].map(stage => research(stage)), ...["survey"].map(stage => survey(stage))].flatMap(item => Object.keys(DEFECTS).flatMap(defect => (["always", ...(["truncated", "proseOnly", "empty"].includes(defect) ? ["first"] : [])] as Array<"first" | "always">).map(mode => [item, defect, mode] as const)));
   it.each(cases)("%# answer is damaged: the run still completes", async (item, defect, mode) => {
     const { result } = await run(item.input, item.verifications, { stage: item.stage, apply: DEFECTS[defect]!, mode });
     expect(result.status, `${item.stage}/${defect}/${mode}: ${result.message}`).toBe("completed");

@@ -6,9 +6,11 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { profiles } from "./profiles.js";
 import { LANE_PROFILES, effectiveLane, gateCommandsFor, lanePlan, laneFor } from "./lanes.js";
-import { admitRepository, resolveStackBase, taskBranch } from "./workspaces.js";
+import { admitRepository, readProjectContract, resolveStackBase, taskBranch } from "./workspaces.js";
 import { projectContractBlock } from "./contract.js";
+import { admitDesign } from "./design-gate.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
+import { effectiveRouting } from "./area-routing.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { resolveProjectHostRoot } from "./project-roots.js";
 import { assertNoTestFlags, readJsonBody, tokenMatches } from "./http-guard.js";
@@ -19,6 +21,8 @@ import { templateSummaries } from "./bootstrap-templates.js";
 import { prepareBootstrapRun } from "./bootstrap-start.js";
 import { loadBootstrapConfig } from "./bootstrap-config.js";
 import { compactEmbeddedLogs } from "./log-compact.js";
+import { applyReference } from "./reference.js";
+import { loadCatalog, selectSkills, skillGuidance } from "./skills.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
@@ -41,6 +45,15 @@ async function loadManifests() {
   return indexManifests(manifests);
 }
 let projects = await loadManifests();
+let skillsCatalog: ReturnType<typeof loadCatalog> | undefined;
+function getSkillsCatalog() {
+  if (skillsCatalog) return skillsCatalog;
+  try { skillsCatalog = loadCatalog(); } catch (error) {
+    if (error instanceof Error && error.message.startsWith("skills catalog not found:")) return skillsCatalog = { version: 1, skills: [] };
+    throw error;
+  }
+  return skillsCatalog;
+}
 /** A project created after startup (by a bootstrap) is picked up by re-reading the manifests once, so no bridge restart is needed. */
 async function findProject(id: string) {
   const known = projects.get(id);
@@ -93,8 +106,8 @@ const server = createServer(async (req, res) => {
       const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle);
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
-      const readsRepository = taskType?.flow === "investigation" && (project.providerRouting.explore?.provider ?? project.providers.default ?? "fake") !== "fake";
-      let repository; let projectContract: string | undefined;
+      const readsRepository = taskType?.flow === "investigation" && (project.providerRouting[taskType.id === "survey" ? "survey" : "explore"]?.provider ?? project.providers.default ?? "fake") !== "fake";
+      let repository; let projectContract: string | undefined; let design: string | undefined;
       if (codeWorkflow || readsRepository) {
         if (!project.repository) throw new Error(`project '${project.id}' has no GitHub repository configuration (remote and targetBranch); refusing patch-only execution`);
         if (!project.containerRoot) throw new Error(`project '${project.id}' has no containerRoot bind mount configured for Git admission`);
@@ -106,8 +119,13 @@ const server = createServer(async (req, res) => {
         repository = { remote: project.repository.remote, targetBranch: project.repository.targetBranch, branch, baseSha: stack.baseSha, prBaseBranch: stack.prBaseBranch, taskTitle: payload.taskTitle ?? payload.taskId, requiredSourcePaths: project.repository.requiredSourcePaths, ...(stack.integrateParents ? { integrateParents: true } : {}) };
         const contractSettings = (await loadBootstrapConfig()).contract;
         projectContract = codeWorkflow ? await projectContractBlock({ gitRoot, baseSha: stack.baseSha, settings: contractSettings }) : undefined;
+        // Design gate (B-159): a critical code task is built inside an approved design; the design is read at the task's base commit, so what was approved is what is carried.
+        if (codeWorkflow) design = await admitDesign({ taskId: payload.taskId, baseSha: stack.baseSha, targetBranch: project.repository.targetBranch, task: { critical: parsedPrompt.critical, area: parsedPrompt.area, design: parsedPrompt.design }, gate: project.designGate, read: file => readProjectContract(gitRoot, stack.baseSha, file, 20_000) });
       }
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: compactEmbeddedLogs(parsedPrompt.prompt), taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, ...(lane ? { tier: project.tier, lane: lane.name } : {}), openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(lane?.plan.openSpec ?? project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? lane?.plan.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: project.providerRouting, providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands, ...(process.env.ORCHESTRATOR_WORKER_REPORTS === "1" ? { reportToPaperclip: true } : {}) });
+      const catalog = getSkillsCatalog();
+      const skills = skillGuidance(catalog, selectSkills(catalog, { profile: project.stack?.profile, taskType: taskType?.id, ...project.skills }));
+      const finalPrompt = applyReference(compactEmbeddedLogs(parsedPrompt.prompt), project.reference, process.env, project.id);
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), ...(skills ? { skills } : {}), ...(design ? { design } : {}), ...(project.intelligence ? { intelligence: project.intelligence } : {}), ...(project.review?.specialists.length ? { specialists: project.review.specialists } : {}), projectId: project.id, profile: profileId, prompt: finalPrompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, ...(lane ? { tier: project.tier, lane: lane.name } : {}), openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(lane?.plan.openSpec ?? project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? lane?.plan.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: effectiveRouting(project.providerRouting, project.areaRouting, parsedPrompt), providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands, ...(process.env.ORCHESTRATOR_WORKER_REPORTS === "1" ? { reportToPaperclip: true } : {}) });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
     const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject|resume))?$/);

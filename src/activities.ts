@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { reproductionCommandProblem, TEST_PATH, type ReproVerification } from "./bug.js";
 import { buildContextPack as buildPack, type ContextPack } from "./context-pack.js";
+import { buildSurveyInventory } from "./survey-inventory.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { StageOutputSchema, type QualityCommand, type StageInput, type StageOutput } from "./contracts.js";
@@ -23,12 +24,16 @@ import { buildDigest, parseNumstat, type Digest } from "./diff-digest.js";
 import { findReusable, qualityKey, qualityReuseEnabled, readPasses, treeFingerprint, writePass } from "./quality-cache.js";
 import { clearUnityEvidence, readUnityTestFiles, unityTestResultPath, stopProjectEditors, stripBenignEditorNoise, waitForProjectUnlock, unityEvidenceProblem, unityExitHint, withUnityDefaults } from "./unity.js";
 import { getProvider } from "./providers.js";
-import { applyReviewAssessment } from "./review.js";
+import { intelligenceGates, prepareStageIntelligence } from "./intelligence-stage.js";
+import { applyReviewAssessment, requireRuleCitations } from "./review.js";
+import { readRuleContext, type RuleContext } from "./review-rules.js";
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
+import { gateBatches } from "./gate-batches.js";
+import { CHANGED_TOKEN, commandHasChangedToken, expandChangedArgs } from "./affected-tests.js";
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
 import { buildIntegrationBase, resolveRemoteBranch, runCommand } from "./workspaces.js";
@@ -243,13 +248,32 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
   let qualityChecks: Array<{ executable: string; args: string[]; exitCode: number | null; durationMs: number; output: string; stderr: string }> | undefined;
   const qualityWarnings: string[] = []; const visualWarnings: string[] = []; const visualImages: string[] = [];
   if (input.stage === "verify") {
-    const checks = input.qualityCommands ?? [];
-    if (checks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
+    const configuredChecks = input.qualityCommands ?? [];
+    const checks = [...configuredChecks, ...await intelligenceGates(input.projectRoot, configuredChecks, input.intelligence)];
+    if (configuredChecks.length === 0 && input.provider !== "fake" && !input.deterministicChecksAlreadyPassed) {
       const durationMs = Date.now() - activityStartedAt;
       await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "missing_quality_commands", providerDurationMs: 0, activityDurationMs: durationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1) }, "error");
       return { ok: false, summary: "quality gate failed: no deterministic quality commands are configured", findings: ["Configure at least one deterministic verification command."], artifactRefs: [], provider: "quality-gate", durationMs, metadata: { checks: [], passed: false, activityDurationMs: durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
     }
     const results: NonNullable<typeof qualityChecks> = [];
+    let changedFiles: string[] | undefined;
+    const preparedChecks = async (batch: QualityCommand[]): Promise<QualityCommand[]> => {
+      if (!batch.some(check => commandHasChangedToken(check.args))) return batch;
+      if (!changedFiles) {
+        const status = await runCheck("git", ["status", "--porcelain", "-z", "--untracked-files=all"], input.projectRoot, 200_000);
+        if (status.code !== 0) throw new Error(`could not read changed files for {changed}: ${status.stderr || status.output}`);
+        changedFiles = changedPaths(status.output).filter(file => !file.deleted).map(file => file.file.replace(/\\/g, "/"));
+      }
+      const prepared: QualityCommand[] = [];
+      for (const check of batch) {
+        if (!commandHasChangedToken(check.args)) { prepared.push(check); continue; }
+        const expanded = expandChangedArgs(check.args, changedFiles);
+        if (expanded.skipped === "none-changed") qualityWarnings.push(`${check.executable} ${check.args.join(" ")}: skipped, no changed source files`);
+        else if (expanded.skipped === "too-many") qualityWarnings.push(`${check.executable} ${check.args.join(" ")}: skipped, more than 200 changed files; the milestone check runs the full suite`);
+        else prepared.push({ ...check, args: expanded.args });
+      }
+      return prepared;
+    };
     // The same commands on the same files gave a pass before (an activity retry, a resumed run, a repair round that changed nothing): the verdict is reused instead of running the suite again. Failures are never reused.
     const reuseKey = qualityKey(checks);
     const fingerprintBefore = checks.length && qualityReuseEnabled() ? await treeFingerprint(input.projectRoot) : undefined;
@@ -265,7 +289,8 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
       return [acceptanceProblem(input.prompt, testFiles.map(file => file.text)), sliceProblem(input.prompt, testFiles)].filter(Boolean).join("\n\n") || undefined;
     };
     const earlyTraceProblem = !reusable && checks.some(check => check.executable === "unity") ? await acceptanceTraceProblem().catch(() => undefined) : undefined;
-    for (const check of reusable ? [] : checks) {
+    // One check, run and summarised. Consecutive commands marked `parallel` run at the same time (B-131, src/gate-batches.ts); the .meta healing below stays out of such a batch.
+    const runOne = async (check: QualityCommand, allowHeal: boolean) => {
       const checkStartedAt = Date.now();
       const checkCwd = path.resolve(input.projectRoot, check.cwd ?? ".");
       const isUnity = check.executable === "unity";
@@ -280,7 +305,7 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
         if (evidence || note) result = { code: evidence ? 1 : result.code, output: result.output, stderr: [result.stderr, note].filter(Boolean).join("\n") };
       }
       // Missing .meta files are the Editor's to write (an agent must not invent GUIDs): when a check reports them, one batch import generates them and the check runs again, before anything is handed to a model.
-      if (result.code !== 0 && !isUnity && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
+      if (result.code !== 0 && !isUnity && allowHeal && !healedMeta && /meta-missing:/.test(`${result.output}\n${result.stderr}`)) {
         healedMeta = true;
         const unityProject = await detectUnityProject(input.projectRoot).catch(() => undefined);
         if (unityProject) {
@@ -298,7 +323,15 @@ async function executeStageInner(input: StageInput): Promise<StageOutput> {
 --- console output (shortened) ---
 ${compactLog(result.output, { maxChars: 1500 })}`;
       }
-      results.push({ executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) });
+      return { check, result, entry: { executable: check.executable, args: check.args, exitCode: result.code, durationMs: Date.now() - checkStartedAt, output: storedOutput, stderr: compactLog(result.stderr, { maxChars: CHECK_STORE_CHARS }) } };
+    };
+    for (const batch of reusable ? [] : gateBatches(checks)) {
+      const runnable = await preparedChecks(batch);
+      if (!runnable.length) continue;
+      // Results are recorded in the configured order, so the first failing command decides the verdict whether the batch ran in parallel or not.
+      const ran = runnable.length > 1 ? await Promise.all(runnable.map(item => runOne(item, false))) : [await runOne(runnable[0]!, true)];
+      for (const { check, result, entry } of ran) {
+      results.push(entry);
       if (result.code !== 0 && check.severity === "warn") {
         qualityWarnings.push(`${check.executable} ${check.args.join(" ")} reported problems (exit ${result.code ?? "unknown"}), non-blocking by configuration: ${[result.output, result.stderr].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300)}`);
       } else if (result.code !== 0) {
@@ -309,11 +342,12 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
         await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: "quality-gate", category: "quality_check_failed", providerDurationMs: 0, activityDurationMs, retries: Math.max(0, (info?.attempt ?? 1) - 1), failedCommand: `${check.executable} ${check.args.join(" ")}` }, "error");
         return { ok: false, summary: `quality check failed: ${check.executable} ${check.args.join(" ")}`, findings: results.map(r => compactLog([r.output, r.stderr].filter(Boolean).join("\n"))), artifactRefs: [failed], provider: "quality-gate", durationMs: activityDurationMs, metadata: { checks: results, passed: false, activityDurationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
       }
+      }
     }
     if (!reusable && fingerprintBefore) {
       // The checks may create files (Unity writes .meta files), so the tree after the run counts too: the next verify of an untouched tree then matches.
       const fingerprintAfter = await treeFingerprint(input.projectRoot);
-      await writePass(artifactsDir, { key: reuseKey, fingerprints: [...new Set([fingerprintBefore, ...(fingerprintAfter ? [fingerprintAfter] : [])])], attempt: input.attempt, checks: results, warnings: qualityWarnings.filter(warning => warning.includes("non-blocking by configuration")) }).catch(() => undefined);
+      await writePass(artifactsDir, { key: reuseKey, fingerprints: [...new Set([fingerprintBefore, ...(fingerprintAfter ? [fingerprintAfter] : [])])], attempt: input.attempt, checks: results, warnings: qualityWarnings.filter(warning => warning.includes("non-blocking by configuration") || warning.includes(": skipped,")) }).catch(() => undefined);
     }
     // Game tasks number their acceptance criteria (T3-AC1); each one needs a test that says "Covers: T3-AC1" or an open "Deferred:" note. The tests passing proves nothing about a criterion nobody tested.
     if (checks.some(check => check.executable === "unity")) {
@@ -366,6 +400,15 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     const coverage = criteria.length ? coverageTable(criteria, await readUnityTestFiles(input.projectRoot)) : undefined;
     if (coverage) stageInput.prompt += `\n\n${coverage}`;
   }
+  // Rule-aware review (ADR 0035, B-134): the project's rules in front of the reviewer, and a finding must cite one (requireRuleCitations below).
+  let ruleContext: RuleContext | undefined;
+  if (input.stage === "review") { ruleContext = await readRuleContext(input.projectRoot); if (ruleContext) stageInput.prompt += `\n\n${ruleContext.block}`; }
+  // The preparation package (ADR 0038, B-163): deterministic facts, re-checked against the working tree, in front of the plan, implement and review prompts. It never fails a stage.
+  let intelligenceMetadata: Record<string, unknown> | undefined;
+  const intelligence = await prepareStageIntelligence({ stage: input.stage, prompt: input.prompt, projectRoot: input.projectRoot, taskId: input.taskId, intelligence: input.intelligence });
+  if (intelligence) { intelligenceMetadata = intelligence.metadata; visualWarnings.push(...intelligence.warnings); if (intelligence.block) stageInput.prompt += `
+
+${intelligence.block}`; }
   if (input.stage === "review" && input.visual?.enabled) {
     // Screenshots are evidence for the reviewer. Problems only warn unless the project requires visual verification.
     const shots = await captureScreenshots(input.visual, { cwd: input.projectRoot, outDir: path.join(artifactsDir, `visual-${input.attempt}`), signal: activitySignal() });
@@ -373,7 +416,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
     if (shots.images.length) { stageInput.prompt += visualReviewSection(shots.images); stageInput.images = shots.images; }
     else if (input.visual.required) throw ApplicationFailure.nonRetryable(`visual verification is required but no screenshots were captured: ${shots.warnings.join("; ")}`, "VisualVerificationError");
   }
-  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
+  const withVisual = (metadata: StageOutput["metadata"]): StageOutput["metadata"] => ({ ...metadata, ...(intelligenceMetadata ? { intelligence: intelligenceMetadata } : {}), ...(visualWarnings.length ? { warnings: visualWarnings } : {}), ...(visualImages.length ? { screenshots: visualImages } : {}) });
   // A retry after a lost response must not pay for (or redo) a stage that already succeeded with identical input.
   const inputHash = createHash("sha256").update(JSON.stringify([input.stage, input.provider, input.model ?? "", input.reasoningEffort ?? "", stageInput.prompt])).digest("hex");
   const stageFile = path.join(artifactsDir, `${input.stage}-${input.attempt}.json`);
@@ -416,7 +459,7 @@ ${compactLog(result.output, { maxChars: 1500 })}`;
   const parsed = StageOutputSchema.safeParse(result);
   if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
   // CLI reviewers (codex, claude) return prose or JSON text; without this the verdict was never enforced and blocking findings passed the gate.
-  const providerOutput = input.stage === "review" ? applyReviewAssessment(parsed.data) : parsed.data;
+  const providerOutput = input.stage === "review" ? (ruleContext ? requireRuleCitations(applyReviewAssessment(parsed.data), ruleContext.ids) : applyReviewAssessment(parsed.data)) : parsed.data;
   const out: StageOutput = input.stage === "verify" && input.provider !== "fake"
     ? { ...providerOutput, summary: `${input.deterministicChecksAlreadyPassed ? "Deterministic quality commands passed in the preceding check. " : "Deterministic quality commands passed. "}${providerOutput.summary}`, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, deterministicQuality: { passed: true, checks: qualityChecks ?? [], alreadyPassed: input.deterministicChecksAlreadyPassed ?? false }, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } }
     : { ...providerOutput, durationMs: Date.now() - activityStartedAt, metadata: { ...providerOutput.metadata, providerDurationMs: providerOutput.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) } };
@@ -470,15 +513,23 @@ async function buildContextPackImpl(input: { worktree: string; terms: string[]; 
 }
 export const buildContextPack = heartbeating(timedActivity("buildContextPack", buildContextPackImpl, emitActivityEvent));
 
+/** The survey's starting point (ADR 0032): the deterministic inventory plus the repository's own guidance documents. */
+async function buildSurveyContextImpl(input: { worktree: string }) {
+  const inventory = await buildSurveyInventory(input.worktree);
+  const pack = await buildPack({ root: input.worktree, terms: [], paths: ["AGENTS.md", "CLAUDE.md", "docs"], maxChars: 9000 });
+  return { inventory, packText: pack.text, files: pack.files };
+}
+export const buildSurveyContext = heartbeating(timedActivity("buildSurveyContext", buildSurveyContextImpl, emitActivityEvent));
+
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
 
 /** Paths in `git status --porcelain -z` output; a rename or copy entry is followed by its source path, which is skipped. */
-export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean }> {
-  const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean }> = [];
+export function changedPaths(porcelain: string): Array<{ file: string; untracked: boolean; deleted: boolean }> {
+  const parts = porcelain.split("\0"); const changed: Array<{ file: string; untracked: boolean; deleted: boolean }> = [];
   for (let index = 0; index < parts.length; index++) {
     const entry = parts[index]!;
     if (entry.length < 4) continue;
-    changed.push({ file: entry.slice(3), untracked: entry.startsWith("??") });
+    changed.push({ file: entry.slice(3), untracked: entry.startsWith("??"), deleted: entry[0] === "D" || entry[1] === "D" });
     if (/^[RC]/.test(entry) || entry[1] === "R" || entry[1] === "C") index++;
   }
   return changed;

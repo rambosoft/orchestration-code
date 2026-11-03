@@ -1,5 +1,53 @@
 # Mission changelog
 
+## 2026-11-03 player orchestration planned (B-170, B-171)
+- Documentation only. The operator's player orchestration report (policy-driven playback microkernel, native shell players first for http Xtream sources, scope-first error policy, Chromium 53 floor) is kept in the research folder with a plan that names what to reconcile with ADR 0036 before building and a checklist for the first player task.
+
+## 2026-11-03 skill catalog and prompt delivery (B-116, B-117 partly)
+- skills/catalog.json with three reviewed react-ts digests (TV input and focus, TV storage and large catalogues, Xtream provider); the bridge selects by stack profile and task type within the manifest's `skills` budget and passes the selection on the run input. The workflow renders it per stage into the plan, implement and review prompts of code tasks, so Claude, Codex and OpenRouter get the same guidance; the review treats a deviation as blocking only with a concrete defect scenario. The run result records the catalog version and skill ids. An earlier draft prepended the block to the raw task prompt, which the implement and review stages never see (they read the brief); moved to run-input data like the project contract (ADR 0011). No new workflow step, replay fixture unchanged.
+
+## 2026-11-02 readiness plan with gates; intelligence registry (B-167, B-168)
+- Documentation only. Every open item is assigned to a gate before Milestone 1, at the start of Milestone 1, before Milestone 2 or later; an integration rehearsal and a live canary prove the items work together; code-intelligence tools are registered capabilities with off, advisory and gate modes and a kill switch.
+
+## 2026-11-02 facts-first code intelligence (ADR 0038, B-162..B-166)
+- Design only. Assessment of Graphify, Serena, dependency-cruiser, Knip, Context7, ts-morph, ast-grep, Aider's repo map, CodeQL and SCIP against what the orchestrator already does: deterministic activities with provenance, a preparation package per task, dependency-cruiser as a pack gate, a Graphify spike and a Context7 cache; MCP-based tools stay out of unattended runs because of their per-turn token cost. Several claims in the source text (versions, Vue support) are unverified.
+
+## 2026-11-02 luxus-app-react on GitHub; the idiom map (B-114 partly)
+- Created the private repository rambosoft/luxus-app-react and pushed main. The idiom map (counts per idiom, a high-risk list, a migration order and contradicted assumptions such as this.$store in 80 files versus 2 files using Vuex helpers, and localStorage in 33 files) was produced by Codex through the pinned CLI; the global codex alpha exits when a configured MCP server fails authentication, and a background run needs its prompt on stdin from a file.
+
+## 2026-11-02 react-ts-vite standards pack and the luxus-app-react repository (B-121..B-124, B-132, B-133, B-147)
+- templates/react-ts-vite (AGENTS.md rules R-001..R-020, enforcement manifest, ESLint rules, check scripts for AI files, debt ledger and page documents, tokens.css as the single root scale unit, Renovate and PR template) and scripts/apply-react-pack.mjs, covered by test/react-pack.test.ts (15 tests). Applied to the new repository luxus-app-react where npm run verify passes. Handled on the way: TypeScript 7 and oxlint from the scaffold conflict with typescript-eslint and the custom rules (pinned TypeScript 6.0 and ESLint 9, recorded), solution-style tsconfig made tsc --noEmit a no-op (gate is tsc -b).
+
+## 2026-11-02 first live survey of luxus-app
+- Run through the command line (pilot runbook) after fixing the worker's Node (FM-066) and the dependency install on read-only runs (FM-067). Result: a usable survey with modules, critical areas (cache, player, carousel, search and sort, Xtream), repo constraints and a Chrome 38 versus 53 contract conflict; draft PR 333 on rambosoft/luxus-app. Run record: docs/engineering/knowledge/metrics/runs/2026-11-02-survey-luxus-app.json.
+
+## 2026-11-02 investigations skip the dependency install (FM-067); EGM plugin assessment
+- research, architecture and survey runs no longer run the dependencies stage (npm ci); guarded by patched('investigation-skips-dependencies') so recorded histories replay; reproduced by a failing test first. Found on the first live survey of luxus-app, which sat in npm ci for 20+ minutes. Also an assessment of google/elephant-goldfish-model with a design gate for critical areas as the main takeaway (B-159..B-161).
+
+## 2026-11-02 parallel gates (B-131) and the wrong Node in the worker (FM-066)
+- A quality command may be marked `parallel: true`: consecutive marked commands run at the same time, results are recorded in the configured order, the first failing command still decides the verdict, warn severity is honoured, Unity commands are never batched and the .meta healing stays out of a batch. The verify loop's per-check body became `runOne`. The deterministic test passes only with real concurrency (one command waits for a file another creates). Separately, the first live survey failed at admission with spawn npm ENOENT: the worker supervisor had picked the Codex desktop app's bundled Node 24, which has no npm beside it; run-worker.ps1 now selects a Node with npm and logs it.
+
+## 2026-11-02 consumption highlight (B-146) and a clone finding (B-148)
+- `timing` now prints a Heavy tasks section: tasks whose busy time is at least 3x the median of the same kind of task (project and dominant activity) in their project, with at least 4 tasks and 10 busy minutes, naming the heaviest activity. Found while testing it on the real log: comparing against the whole project's median flagged ordinary implementation runs at 40x because quick checks pulled the median down, so the group is project plus dominant activity. Also: a fresh Windows clone of luxus-app shows 37 media files as modified because of its `* text eol=lf` attributes (B-148).
+
+## 2026-11-02 roadmap questions answered; survey selectable from a task prompt (B-146, B-147)
+- The `Type:` directive of a task prompt did not list survey, audit or codebase-survey, so the command-line path could not start a survey; found while writing the pilot runbook, reproduced by a failing test in test/survey.test.ts, fixed in src/openspec-policy.ts. Roadmap answers recorded, ADR 0032 location corrected to the projects root, pilot runbook added, B-146 and B-147 added.
+
+## 2026-11-02 testing, AI files, review, model routing and the native bridge (ADR 0035, 0036, B-130..B-145)
+- Design only. ADR 0035: four test layers with a case matrix, canonical AGENTS.md with rule ids and an enforcement manifest, rule-aware risk-based review, per-area model routing (Opus for critical implementation), area-parallel scheduling, recipes and metrics, deterministic Vue extraction. ADR 0036: a versioned native bridge protocol with a handshake and origin allow-list, Android hardening, native-mediated http provider access, an https site with a temporary http exception, a host simulator, secrets hygiene. Roadmap with phases, readiness and 16 open questions added.
+
+## 2026-11-02 engineering constitution design (ADR 0034, B-121..B-129)
+- Design only. The operator's React/TypeScript/Vite rules and the TV/media platform demands become pack content with gates: a generic pack, a media-tv-app pack, an Xtream provider skill; page-behaviour docs with an AI map and a drift check; a tech-debt ledger; a unified input layer; a four-level storage contract; a large-catalogue plan that states its provider limit. Source: the operator's rules plus a secondary analysis whose library and standards claims are to be verified at scaffold time. Nothing implemented.
+
+## 2026-11-02 skill catalog design (ADR 0033, B-116..B-120)
+- Design only. Operator plugins are switched off in orchestrated runs and Codex has none, so stack standards become versioned data: a catalog and resolver, digests in every stage prompt plus standards files in the target repository, curated pinned import from installed plugins, stack packs that own their skills, a learning loop and a rejection-rate measure. Nothing implemented.
+
+## 2026-11-02 survey stage (ADR 0032, B-108)
+- New read-only task type `survey`: `buildSurveyContext` (inventory of routes, store modules, dependencies and guidance documents, plus the repository's AGENTS.md/CLAUDE.md/docs) then one structured `survey` stage whose report holds modules, hotspots, duplicated logic, constraints, risks and a sized refactor backlog (items without old file paths are dropped; items that would change behaviour are listed under "Needs a decision"). Unreadable answers fall back to one backlog item per route. A bug found by the tests: the shared `level()` helper lowercases its input, so the S/M/L sizes never matched; sizes are now lowercase in the schema and upper-cased after parsing. Workflow: new branch selected by `taskType === "survey"`, existing runs unchanged. Fake provider only.
+
+## 2026-11-02 existing-project design (ADR 0032, B-107..B-115); B-107 slice 1 done
+- Design only. A project can be adopted as maintain, refactor, migrate or audit; a read-only survey stage produces a sized refactor backlog that feeds the blueprint; refactor and migrate add characterization tests, a parity check, a migration-map ledger and refactor-not-copy gates; the first pack is Vue 2/Nuxt 2 to React with a tiered device matrix. B-107 slice 1 is implemented and tested (src/existing-project.ts, project_mode and existing_folder options, inspect-folder CLI; 933 tests pass); everything else is design.
+
 ## 2026-10-31 Unity scratch scene no longer published (B-103)
 - LOC-141's pull request (#27) carried `Assets/InitTestScene<guid>.unity`, a scene the Unity test runner writes for a run and leaves behind when the run is cut short; the project's main already holds three. It is now in the Unity generated-output list, so `excludeGeneratedPaths` drops a newly added one before the commit. Regression test in `test/publish-guard.test.ts` (fails without the pattern). Existing copies on the project's main are untouched.
 
@@ -152,3 +200,8 @@ One line per completed item: id, commit, evidence.
 - Live finding (Fairway Frenzy LOC-157): with no plan or brief stage `deterministicPlan` gives the brief the generic acceptance line, the first task line (300 characters) and only the never/do-not sentences; the implement prompt is the brief alone, so ADR 0015's claim that the criteria are already in it was wrong. The implementer saw only T33-AC1 (it contains "never") and refused to invent AC2 to AC5; LOC-156 passed its gates with its rename criterion unread.
 - `briefFromTask` and `briefText()` in src/workflows.ts put the full task text ahead of the brief at the eight places that hand the brief to a model (implement, gate repair, review repair, review). Prompt text only: no command change, no `patched()`, replay fixture unchanged. Regression test in test/lanes.test.ts, red without the change.
 - Not verified live: needs build, worker restart and a re-run of LOC-156 and LOC-157. ADR 0030.
+
+## 2026-11-01 A prototype task is never escalated to a review [B-106]
+- Measured on LOC-155..162: the escalation net (more than 15 files or 600 lines, risky paths, deleted tests, reported unmet criteria) fired on most screen tasks; LOC-160 spent about 20 of 66 minutes on a rejected review, a repair round and a second review. A prototype reviews once per milestone (ADR 0018, 0029).
+- `lane.escalation = false` for tier prototype in src/workflows.ts under `patched("prototype-no-escalation")`; replay test passes unchanged. The two escalation tests now run on tier mvp; new test "never escalates a prototype task" (40 files, 5000 lines, deleted test, risky path, unmet acceptance) is red without the change. ADR 0031.
+- Not verified live: needs build and worker restart.

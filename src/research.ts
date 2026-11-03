@@ -8,11 +8,11 @@ import { parseJsonLoose } from "./json-extract.js";
 // pack from them, EXPLORE answers the questions from that pack (and, for CLI providers, from reading only what the questions need), and the validated
 // report is rendered to a document. Nothing is implemented.
 export type ReportKind = "research" | "architecture";
-const text = (max: number) => clampedText(max);
-const optionalText = (max: number) => z.preprocess(value => typeof value === "string" && value.trim() ? value : undefined, text(max).optional());
-const strings = (max: number, each: number, min = 0) => z.preprocess(value => (value == null ? [] : Array.isArray(value) ? value : [value]).filter(item => typeof item === "string" && item.trim()).slice(0, max), z.array(text(each)).min(min));
-const level = <T extends string>(values: readonly [T, ...T[]], fallback: T) => z.preprocess(value => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : value, z.enum(values).catch(fallback));
-const objects = (max: number) => (value: unknown) => Array.isArray(value) ? value.filter(item => item && typeof item === "object").slice(0, max) : [];
+export const text = (max: number) => clampedText(max);
+export const optionalText = (max: number) => z.preprocess(value => typeof value === "string" && value.trim() ? value : undefined, text(max).optional());
+export const strings = (max: number, each: number, min = 0) => z.preprocess(value => (value == null ? [] : Array.isArray(value) ? value : [value]).filter(item => typeof item === "string" && item.trim()).slice(0, max), z.array(text(each)).min(min));
+export const level = <T extends string>(values: readonly [T, ...T[]], fallback: T) => z.preprocess(value => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : value, z.enum(values).catch(fallback));
+export const objects = (max: number) => (value: unknown) => Array.isArray(value) ? value.filter(item => item && typeof item === "object").slice(0, max) : [];
 
 export const ScopeSchema = z.object({
   restated: text(300),

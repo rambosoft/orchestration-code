@@ -1,11 +1,13 @@
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import { ProjectManifestSchema } from "./contracts.js";
 import { cancelRun, inspectRun, listRuns, signalApproval, resumeRun, startRun } from "./client.js";
 import { syncMergedStack } from "./workspaces.js";
 import { defaultDoctorDeps, formatDoctor, runDoctor } from "./doctor.js";
 import { cleanupWorktrees } from "./cleanup.js";
-import { formatTiming, parseEvents, summarizeTiming } from "./timing.js";
+import { batchTrend, formatBatchTrend, formatTiming, parseEvents, summarizeTiming } from "./timing.js";
 import { formatFindings, reconcile, type RunDetail, type RunRow } from "./reconcile.js";
 import { paperclipClient, startReconcileService } from "./reconcile-service.js";
 import { stackPr } from "./stack-pr.js";
@@ -15,10 +17,15 @@ import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
-import { onboardManifest } from "./stack-packs.js";
+import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS, readPack } from "./stack-packs.js";
+import { fetchDeclared } from "./lib-docs.js";
+import { defaultPluginsDir, findInstalledSkills, importCandidate, staleSkills, writeCandidate, type CatalogFile } from "./skills-sync.js";
+import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
 import { TIERS, type Tier } from "./lanes.js";
 import { STACK_PROFILE_IDS, type StackProfileId } from "./stack-profiles.js";
 import { access, writeFile } from "node:fs/promises";
+const exec = promisify(execFile);
+import { parseSurveyBacklog, planFromBacklog } from "./plan-from-survey.js";
 
 const [command, ...args] = process.argv.slice(2);
 const data = path.resolve(process.env.ORCHESTRATOR_DATA_DIR ?? "data");
@@ -45,6 +52,21 @@ async function startProjectRun(projectFile: string, taskId: string, revision: st
     approval: project.policy.requireApprovalBeforeMerge });
 }
 async function main() {
+  if (command === "plan-from-survey") {
+    const file = args[0];
+    const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
+    const projectId = option("--project"); const prefix = option("--prefix"); const output = option("--out") ?? `${file}.tasks.json`;
+    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] [--only R3,R4] [--design area=docs/design/x.md] [--area R5=cache-storage:critical]");
+    const only = option("--only")?.split(",").map(id => id.trim()).filter(Boolean);
+    const designs = Object.fromEntries(args.flatMap((arg, index) => arg === "--design" && args[index + 1]?.includes("=") ? [args[index + 1]!.split("=") as [string, string]] : []));
+    const areas = Object.fromEntries(args.flatMap((arg, index) => { const match = arg === "--area" ? /^([A-Za-z0-9-]+)=([a-z0-9-]+)(:critical)?$/.exec(args[index + 1] ?? "") : null; return match ? [[match[1]!, { area: match[2]!, critical: Boolean(match[3]) }]] : []; }));
+    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize"), ...(only?.length ? { only } : {}), designs, areas });
+    const planFile = /\.json$/i.test(output) ? output.replace(/\.json$/i, ".plan.md") : `${output}.plan.md`;
+    await writeFile(output, `${JSON.stringify(result.spec, null, 2)}\n`, "utf8");
+    await writeFile(planFile, `${result.plan}\n`, "utf8");
+    console.log(`wrote ${result.spec.tasks.length} tasks to ${output}; ${result.needsDecision.length} need a decision; ${result.needsDesign.length} area(s) still need an approved design (${result.needsDesign.join(", ") || "none"}); plan: ${planFile}`);
+    return;
+  }
   if (command === "run") {
     const prompt = args.slice(1).join(" ") || "Run the configured project workflow";
     const started = await startProjectRun(args[0] ?? "project.example.json", `local-${Date.now()}`, String(Date.now()), prompt);
@@ -54,6 +76,38 @@ async function main() {
     const checks = await runDoctor(defaultDoctorDeps());
     console.log(formatDoctor(checks));
     if (checks.some(check => !check.ok && check.severity === "error")) process.exitCode = 1;
+    return;
+  }
+  if (command === "skills-sync") {
+    // dev skills-sync <plugin skill folder name> --id <catalog id> --area <profile> [--title T] [--plugins-dir D] [--write] | --check
+    const option = (name: string) => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
+    const catalogFile = path.join(findOrchestratorRoot(), "skills", "catalog.json");
+    const catalog = JSON.parse(await readFile(catalogFile, "utf8")) as CatalogFile;
+    const pluginsDir = option("plugins-dir") ?? defaultPluginsDir();
+    if (args.includes("--check")) { const stale = await staleSkills(catalog, pluginsDir); console.log(stale.length ? stale.join("\n") : "no imported skill changed at its source"); if (stale.length) process.exitCode = 1; return; }
+    const name = args[0]; const id = option("id"); const area = option("area");
+    if (!name || name.startsWith("--") || !id || !area) throw new Error("usage: dev skills-sync <plugin skill folder name> --id <catalog id> --area <stack profile> [--title T] [--plugins-dir D] [--write] | dev skills-sync --check");
+    const installed = await findInstalledSkills(name, pluginsDir);
+    if (!installed.length) throw new Error(`no installed plugin has skills/${name} (looked in ${pluginsDir})`);
+    if (installed.length > 1) console.log(`${installed.length} installed copies; using ${installed[0]!.plugin} ${installed[0]!.version}`);
+    const imported = await importCandidate(catalog, installed[0]!, { id, area, title: option("title") });
+    console.log(`candidate ${id}: ${imported.files.length} text file(s), sha256 ${imported.entry.source.sha256}${imported.skipped.length ? `; skipped ${imported.skipped.length}: ${imported.skipped.join(", ")}` : ""}`);
+    if (!args.includes("--write")) { console.log("dry run: pass --write to record the candidate and keep its text under skills/candidates/"); return; }
+    const kept = await writeCandidate(findOrchestratorRoot(), id, imported.files);
+    await writeFile(catalogFile, `${JSON.stringify(imported.catalog, null, 2)}\n`);
+    console.log(`recorded; review the text in ${kept}, write skills/${id}.md (at most 1400 characters) and set the status to approved`);
+    return;
+  }
+  if (command === "libs-fetch") {
+    // dev libs-fetch <package...> [--root <project folder>] [--force] [--version <v>]: version-matched notes from Context7 into docs/ai/libs/ (B-165). Only declared dependencies; the library name, version and a generic question leave the machine.
+    const option = (name: string) => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
+    const flagged = new Set(["--root", "--version"]);
+    const names = args.filter((arg, index) => !arg.startsWith("--") && !flagged.has(args[index - 1] ?? ""));
+    if (!names.length) throw new Error("usage: dev libs-fetch <package...> [--root <project folder>] [--force] [--version <v>]  (needs CONTEXT7_API_KEY for more than the free rate limit)");
+    const results = await fetchDeclared(path.resolve(option("root") ?? "."), names, { ...(process.env.CONTEXT7_API_KEY ? { apiKey: process.env.CONTEXT7_API_KEY } : {}), ...(option("version") ? { version: option("version")! } : {}), force: args.includes("--force") });
+    for (const result of results) console.log(`${result.outcome.padEnd(7)} ${result.name}: ${result.detail}`);
+    if (results.some(result => result.outcome === "written")) console.log("Read each written note, then set Status: reviewed; a stage uses only reviewed notes.");
+    if (results.some(result => result.outcome === "failed")) process.exitCode = 1;
     return;
   }
   if (command === "drain") {
@@ -119,6 +173,13 @@ async function main() {
     const fileIndex = args.indexOf("--file");
     const file = fileIndex >= 0 ? args[fileIndex + 1]! : path.join(data, "logs", "worker-activity-events.jsonl");
     const summary = summarizeTiming(parseEvents(await readFile(file, "utf8")), { includeFake: args.includes("--include-fake"), ...(sinceIndex >= 0 ? { since: args[sinceIndex + 1]! } : {}) });
+    const batchIndex = args.indexOf("--batch"); const projectIndex = args.indexOf("--project");
+    if (batchIndex >= 0) {
+      const size = Number(args[batchIndex + 1] ?? 5) || 5;
+      const batches = batchTrend(summary.tasks, { size, ...(projectIndex >= 0 ? { project: args[projectIndex + 1]! } : {}) });
+      console.log(args.includes("--json") ? JSON.stringify(batches, null, 2) : formatBatchTrend(batches, size));
+      return;
+    }
     console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatTiming(summary));
     return;
   }
@@ -131,17 +192,42 @@ async function main() {
     if (!worktree || !childBranch || !parentPrUrl || !targetBranch) throw new Error("usage: dev sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
     return console.log(JSON.stringify(await syncMergedStack({ worktree, childBranch, parentPrUrl, targetBranch, remote }), null, 2));
   }
+  if (command === "inspect-folder") {
+    // Admission check for an existing project (ADR 0032): dev inspect-folder <folder>, or --list [folder] to browse the allowed roots (ORCHESTRATOR_BROWSE_ROOTS).
+    if (args[0] === "--list") return console.log(JSON.stringify(await listFolders(args[1], browseRoots()), null, 2));
+    if (!args[0]) throw new Error("usage: dev inspect-folder <folder> | dev inspect-folder --list [folder]");
+    const check = await inspectExistingFolder(args[0]);
+    console.log(JSON.stringify(check, null, 2));
+    if (!check.ok) process.exitCode = 1;
+    return;
+  }
   if (command === "onboard") {
-    // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--remote origin] [--branch main] [--write]
+    // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--pack <id>] [--install] [--write]
     const option = (name: string): string | undefined => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
     const folder = args[0]; const name = option("name"); const tier = option("tier") as Tier | undefined; const profile = option("profile") as StackProfileId | undefined;
-    if (!folder || folder.startsWith("--") || !name || !tier || !TIERS.includes(tier) || (profile !== undefined && !STACK_PROFILE_IDS.includes(profile))) throw new Error(`usage: dev onboard <repo folder> --name <name> --tier ${TIERS.join("|")} [--id <id>] [--profile ${STACK_PROFILE_IDS.join("|")}] [--remote origin] [--branch main] [--write]`);
-    const { manifest, notes } = onboardManifest({ root: folder, name, tier, ...(option("id") ? { id: option("id")! } : {}), ...(profile ? { profile } : {}), ...(option("remote") ? { remote: option("remote")! } : {}), ...(option("branch") ? { targetBranch: option("branch")! } : {}) });
+    const pack = option("pack"); const writing = args.includes("--write"); const install = args.includes("--install");
+    if (pack && !ONBOARD_PACK_IDS.includes(pack as typeof ONBOARD_PACK_IDS[number])) throw new Error(`unknown pack '${pack}'; valid packs: ${ONBOARD_PACK_IDS.join(", ")}`);
+    if (!folder || folder.startsWith("--") || !name || !tier || !TIERS.includes(tier) || (profile !== undefined && !STACK_PROFILE_IDS.includes(profile))) throw new Error(`usage: dev onboard <repo folder> --name <name> --tier ${TIERS.join("|")} [--id <id>] [--profile ${STACK_PROFILE_IDS.join("|")}] [--pack ${ONBOARD_PACK_IDS.join("|")}] [--install] [--write]`);
+    const orchestratorRoot = findOrchestratorRoot();
+    let packJson: { devDependencies: string[] } | undefined;
+    if (pack) {
+      packJson = readPack(pack as typeof ONBOARD_PACK_IDS[number]);
+      if (writing) {
+        const script = path.join(orchestratorRoot, "scripts", "apply-react-pack.mjs");
+        const result = await exec("node", [script, folder, "--name", name, "--pack", pack, ...(install ? ["--install"] : [])], { cwd: orchestratorRoot, encoding: "utf8" });
+        if (result.stdout) console.log(result.stdout.trimEnd());
+        if (result.stderr) console.error(result.stderr.trimEnd());
+      } else {
+        console.error(`pack ${pack} would be applied to ${path.resolve(folder)}`);
+      }
+      if (!install) console.error(`next: cd ${path.resolve(folder)} && npm install -D ${packJson.devDependencies.join(" ")}`);
+    }
+    const { manifest, notes } = onboardManifest({ root: folder, name, tier, ...(option("id") ? { id: option("id")! } : {}), ...(profile ? { profile } : {}), ...(pack ? { pack: pack as typeof ONBOARD_PACK_IDS[number] } : {}), ...(option("remote") ? { remote: option("remote")! } : {}), ...(option("branch") ? { targetBranch: option("branch")! } : {}) });
     const text = `${JSON.stringify(manifest, null, 2)}\n`;
-    if (!args.includes("--write")) { console.log(text); console.error(notes.map(note => `- ${note}`).join("\n")); return; }
+    if (!writing) { console.log(text); console.error(notes.map(note => `- ${note}`).join("\n")); if (pack) console.error("rebuild the bridge to load the updated manifest"); return; }
     const file = path.join(path.resolve("projects"), `${String(manifest.id)}.json`);
     if (await access(file).then(() => true, () => false)) throw new Error(`${file} already exists; remove it or pass another --id`);
-    await writeFile(file, text, "utf8"); console.log(`wrote ${file}`); console.log(notes.map(note => `- ${note}`).join("\n")); return;
+    await writeFile(file, text, "utf8"); console.log(`wrote ${file}`); console.log(notes.map(note => `- ${note}`).join("\n")); if (pack) console.log("rebuild the bridge to load the updated manifest"); return;
   }
   if (command === "resume-run") {
     const budgetIndex = args.indexOf("--budget"); const budget = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;
@@ -157,6 +243,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | libs-fetch <package...> [--root dir] [--force] | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

@@ -9,6 +9,8 @@ import { findBrowser } from "./visual.js";
 import { diskProblem, MAX_WORKTREE_PATH_CHARS, worktreePathProblem } from "./preflight.js";
 import { listEditorProcesses } from "./unity.js";
 import { heartbeatFile, heartbeatProblem, readHeartbeat, type Heartbeat } from "./reconcile-service.js";
+import { staleSkills, type CatalogFile } from "./skills-sync.js";
+import { findOrchestratorRoot } from "./stack-packs.js";
 
 export type DoctorCheck = { name: string; ok: boolean; severity: "error" | "warn"; detail: string };
 export type DoctorDeps = {
@@ -27,6 +29,8 @@ export type DoctorDeps = {
   pluginStatus?: () => Promise<PluginStatus | undefined>;
   /** The reconcile service's last heartbeat (data/logs/reconcile-heartbeat.json), undefined when it never wrote one. */
   reconcileHeartbeat?: () => Promise<Heartbeat | undefined>;
+  /** Imported skill entries whose source plugin text changed since the import (src/skills-sync.ts, ADR 0033). */
+  staleSkills?: () => Promise<string[]>;
   /** Ids of projects with the unity-mobile stack profile and what the worker has for building them (docs/engineering/research/unity-game-support.md). */
   unityProjects?: () => Promise<string[]>;
   unityStatus?: () => Promise<UnityStatus>;
@@ -201,6 +205,11 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     checks.push(problem ? fail("reconcile:service", problem, "warn") : pass("reconcile:service", "running (heartbeat is recent)"));
   }
 
+  if (deps.staleSkills) {
+    const stale = await deps.staleSkills().catch(() => [] as string[]);
+    checks.push(stale.length ? fail("skills:sources", `${stale.length} imported skill(s) are stale: ${stale.join("; ")}`, "warn") : pass("skills:sources", "no imported skill changed at its source"));
+  }
+
   const plugin = await (deps.pluginStatus?.() ?? Promise.resolve(undefined)).catch(() => undefined);
   if (plugin) {
     const problem = pluginProblem(plugin);
@@ -276,6 +285,7 @@ export const defaultDoctorDeps = (env: NodeJS.ProcessEnv = process.env): DoctorD
     return { ...(field("cliVersion") ? { cliVersion: field("cliVersion")! } : {}), loggedIn: field("auth\\.loggedIn") === "true", editors: withModules, worktreesRoot: root.split("\\").join("/"), runningEditors: running, ...(free !== undefined ? { freeDiskBytes: free } : {}), ...(adb ? { adbVersion: adb } : {}), ...(pluginPath ? { pluginDir: { path: pluginPath, exists: await access(pluginPath).then(() => true, () => false) } } : {}) };
   },
   reconcileHeartbeat: () => readHeartbeat(heartbeatFile(env.ORCHESTRATOR_DATA_DIR ?? "data")),
+  staleSkills: async () => staleSkills(JSON.parse(await readFile(path.join(findOrchestratorRoot(), "skills", "catalog.json"), "utf8")) as CatalogFile),
   pluginStatus: async () => {
     const folder = path.resolve("plugins", "project-bootstrap");
     let pin: string | undefined;

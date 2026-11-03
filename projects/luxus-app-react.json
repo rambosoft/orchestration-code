@@ -1,0 +1,353 @@
+{
+  "id": "luxus-app-react",
+  "aliases": [
+    "3c3b35dc-f799-42fa-b834-900ac5fec94a"
+  ],
+  "name": "Luxus App React",
+  "root": "luxus-app-react",
+  "containerRoot": "/workspace/projects/luxus-app-react",
+  "repository": {
+    "remote": "origin",
+    "targetBranch": "main",
+    "requiredSourcePaths": [
+      "AGENTS.md"
+    ]
+  },
+  "defaultProfile": "implementation",
+  "tier": "prototype",
+  "openSpec": {
+    "enabled": false
+  },
+  "analysis": {
+    "enabled": false,
+    "docsDir": "docs/analysis"
+  },
+  "providers": {
+    "default": "codex"
+  },
+  "providerRouting": {
+    "plan": {
+      "provider": "codex"
+    },
+    "research": {
+      "provider": "codex"
+    },
+    "review": {
+      "provider": "claude"
+    },
+    "verify": {
+      "provider": "codex"
+    },
+    "implement": {
+      "provider": "codex",
+      "fallback": [
+        {
+          "provider": "claude"
+        }
+      ]
+    },
+    "analyze": {
+      "provider": "codex"
+    },
+    "openspec": {
+      "provider": "codex"
+    },
+    "survey": {
+      "provider": "codex"
+    }
+  },
+  "providerTimeouts": {
+    "implement": 2700000,
+    "openspec": 720000
+  },
+  "stack": {
+    "profile": "react-ts"
+  },
+  "qualityCommands": [
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "typecheck"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "lint"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "knip"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "depcruise"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "jscpd"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:ai"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:debt"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:pages"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:styles"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:index"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:journeys"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:contracts"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:parity"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:design"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:deps"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:registry"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:device-tiers"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-apis"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "test:related",
+        "--",
+        "{changed}"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "build"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-syntax"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-budget"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "test"
+      ],
+      "scope": "milestone"
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "test:heap"
+      ],
+      "scope": "milestone"
+    }
+  ],
+  "uiUx": {
+    "enabled": true,
+    "autoSelect": true,
+    "include": [],
+    "exclude": []
+  },
+  "policy": {
+    "maxReviewRounds": 1,
+    "maxParallelism": 1,
+    "requireApprovalBeforeMerge": false
+  },
+  "reference": {
+    "root": "luxus-app",
+    "label": "legacy Nuxt 2 app (read-only)"
+  },
+  "intelligence": {
+    "tools": {
+      "ts-imports": {
+        "mode": "advisory"
+      },
+      "affected-tests": {
+        "mode": "advisory"
+      },
+      "pkg-deps": {
+        "mode": "advisory"
+      },
+      "reuse-index": {
+        "mode": "advisory"
+      },
+      "lib-docs": {
+        "mode": "advisory"
+      }
+    }
+  },
+  "skills": {
+    "include": [
+      "vue2-nuxt2-reading"
+    ],
+    "budgetChars": 4500
+  },
+  "review": {
+    "specialists": [
+      {
+        "id": "storage",
+        "paths": [
+          "src/storage/**",
+          "src/services/cache*/**",
+          "src/services/cache*.ts"
+        ],
+        "focus": "Catalogue and frequently written data go through the storage interface to IndexedDB; check batching, a stated size limit and eviction, quota and write failures, and that nothing outside src/storage touches localStorage."
+      },
+      {
+        "id": "input",
+        "paths": [
+          "src/input/**"
+        ],
+        "focus": "Only src/input listens for keys and pointer keys; check focus regions, focus restoration, modal containment, and that native key handling in text fields is preserved on remote, keyboard, mouse and touch."
+      },
+      {
+        "id": "xtream",
+        "paths": [
+          "src/services/xtream*/**",
+          "src/services/xtream*.ts"
+        ],
+        "focus": "The Xtream adapter is the single typed entry for the provider; check runtime validation of responses, timeouts, cancellation and backoff, no retry of authentication failures, and that credentials never reach logs or analytics."
+      },
+      {
+        "id": "carousel",
+        "paths": [
+          "src/components/carousel*/**",
+          "src/components/*Carousel*"
+        ],
+        "focus": "The carousel is a protected component: check that rows are virtualised and paged, memory stays bounded while scrolling, focus movement stays predictable, and every observer and timer is cleaned up."
+      },
+      {
+        "id": "player",
+        "paths": [
+          "src/player/**",
+          "src/services/player*/**",
+          "src/components/player*/**"
+        ],
+        "focus": "Playback code owns media resources: check that every media element, listener and request has an owner and a cleanup, that errors surface to the user, and that devices on the Chrome 53 tier still work."
+      }
+    ]
+  },
+  "designGate": {
+    "enabled": true,
+    "dir": "docs/design",
+    "areas": [
+      "cache-storage",
+      "input",
+      "xtream-fetch",
+      "carousel",
+      "player-native"
+    ]
+  }
+}

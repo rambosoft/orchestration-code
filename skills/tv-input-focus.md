@@ -1,0 +1,1 @@
+Use one input manager to turn remote, keyboard, mouse, and touch input into intents. Let a spatial navigation engine own focus, including its registry, zones, restoration, and modal containment. Register focusable regions from pages and components; do not add key listeners there. Preserve native key handling in text fields and controls.
