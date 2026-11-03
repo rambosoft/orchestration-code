@@ -36,6 +36,7 @@ Status: Proposed (2026-11-02). B-107 first slice (folder checks, mode option) an
 ## Open points
 - The exact survey report schema and the per-stack extractors (Vue 2/Nuxt 2 first) are designed in phase 2, with a real run on `luxus-app` as the first evidence.
 - Whether `characterize` is its own typed flow or a prelude inside the implement stage is decided in phase 3 from timing data.
+  - **Decided 2026-11-03 (B-110), after the pilot and a Codex design note:** characterize is a prelude inside the port task, not a task type and not a workflow step (no new Temporal command, no `patched()`, replay fixture unchanged). `dev plan-from-survey --characterize` adds the CHARACTERIZE FIRST paragraph to every task. The artifact is data in the target, `docs/characterization/<slice>.json` (legacy revision, cases with `static` or `observed` basis and legacy file:line sources), and the parity gate is the pack script `check:parity` (a deterministic quality command): every characterized case is a case of a page document and is cited by a test, and `docs/migration/map.md` is the ledger (ported or verified rows need existing files and tests; with `REFERENCE_ROOT` every cited legacy path must exist). Behaviour that only the running Vue app shows is recorded as `observed` with its capture; there is no differential browser runner.
 - The device tier cutoff stays a project option until real device-version data (the app already collects versions) says which tiers can be dropped.
 
 ## Addendum (2026-11-02): operator requirements for the migration

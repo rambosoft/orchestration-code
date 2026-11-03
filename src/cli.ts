@@ -54,8 +54,8 @@ async function main() {
     const file = args[0];
     const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
     const projectId = option("--project"); const prefix = option("--prefix"); const output = option("--out") ?? `${file}.tasks.json`;
-    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference]");
-    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference") });
+    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize]");
+    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize") });
     const planFile = /\.json$/i.test(output) ? output.replace(/\.json$/i, ".plan.md") : `${output}.plan.md`;
     await writeFile(output, `${JSON.stringify(result.spec, null, 2)}\n`, "utf8");
     await writeFile(planFile, `${result.plan}\n`, "utf8");
@@ -199,6 +199,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

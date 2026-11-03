@@ -19,6 +19,8 @@
     "scripts/generate-ai-index.mjs",
     "scripts/check-journeys.mjs",
     "scripts/check-module-contracts.mjs",
+    "scripts/check-parity.mjs",
+    "docs/characterization/README.md",
     "docs/ai/MODULE_README_TEMPLATE.md",
     "e2e/journeys/_TEMPLATE.md",
     ".github/workflows/drift.yml",
@@ -51,9 +53,10 @@
     "check:styles": "node scripts/check-style-tokens.mjs",
     "check:journeys": "node scripts/check-journeys.mjs",
     "check:contracts": "node scripts/check-module-contracts.mjs",
+    "check:parity": "node scripts/check-parity.mjs",
     "ai:index": "node scripts/generate-ai-index.mjs",
     "check:index": "node scripts/generate-ai-index.mjs --check",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages && npm run check:styles && npm run check:index && npm run check:journeys && npm run check:contracts"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages && npm run check:styles && npm run check:index && npm run check:journeys && npm run check:contracts && npm run check:parity"
   },
   "removeDevDependencies": ["oxlint"],
   "replaceScripts": { "lint": ["oxlint"] },
@@ -70,6 +73,7 @@
     { "script": "check:index", "parallel": true },
     { "script": "check:journeys", "parallel": true },
     { "script": "check:contracts", "parallel": true },
+    { "script": "check:parity", "parallel": true },
     { "script": "test:related", "extra": ["--", "{changed}"] },
     { "script": "build" },
     { "script": "test", "scope": "milestone" }

@@ -18,6 +18,19 @@ describe("survey backlog planning", () => {
     expect(items.map(item => item.depends_on)).toEqual([[], [], ["R2"], ["R3"], ["R4"], ["R2", "R4", "R5"], ["R3", "R4", "R5"], ["R2"], ["R4", "R7", "R8"], ["R3", "R4"], ["R3", "R5"], ["R3"]]);
   });
 
+  it("adds the characterize-first paragraph to every task only when asked, within the prompt budget", async () => {
+    const items = parseSurveyBacklog(await readFile(new URL("./fixtures/survey-luxus-app.md", import.meta.url), "utf8"));
+    const plain = planFromBacklog(items, { projectId: "luxus", prefix: "LUX" });
+    expect(plain.spec.tasks.every(task => !task.prompt.includes("CHARACTERIZE FIRST"))).toBe(true);
+    const characterized = planFromBacklog(items, { projectId: "luxus", prefix: "LUX", characterize: true });
+    for (const task of characterized.spec.tasks) {
+      expect(task.prompt).toContain("CHARACTERIZE FIRST");
+      expect(task.prompt).toContain(`docs/characterization/${task.taskId.replace("LUX-", "").toLowerCase()}.json`);
+      expect(task.prompt).toContain("npm run check:parity");
+      expect(task.prompt.length).toBeLessThan(3500);
+    }
+  });
+
   it("orders dependencies, excludes decision items, and writes bounded prompts", async () => {
     const markdown = await readFile(new URL("./fixtures/survey-luxus-app.md", import.meta.url), "utf8");
     const items = parseSurveyBacklog(markdown).map(item => item.id === "R2" ? { ...item, changes_behaviour: true } : item.id === "R1" ? { ...item, critical: true } : item);

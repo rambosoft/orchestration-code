@@ -20,5 +20,6 @@
   { "id": "R-019", "gate": "prose" },
   { "id": "R-020", "gate": "prose" },
   { "id": "R-021", "gate": "depcruise" },
-  { "id": "R-022", "gate": "check:contracts" }
+  { "id": "R-022", "gate": "check:contracts" },
+  { "id": "R-023", "gate": "check:parity" }
 ]
