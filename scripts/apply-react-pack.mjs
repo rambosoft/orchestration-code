@@ -14,11 +14,43 @@ const pack = JSON.parse(readFileSync(path.join(packDir, "pack.json"), "utf8"));
 const args = process.argv.slice(2);
 const flag = name => args.includes(`--${name}`);
 const option = name => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
-const target = args.find(arg => !arg.startsWith("--") && arg !== option("name"));
+const target = args.find(arg => !arg.startsWith("--") && arg !== option("name") && arg !== option("pack"));
 if (!target) { console.error('usage: node scripts/apply-react-pack.mjs <project folder> --name "App name" [--force] [--install]'); process.exit(2); }
 const root = path.resolve(target);
 if (!existsSync(path.join(root, "package.json"))) { console.error(`${root} has no package.json; create the Vite project first`); process.exit(2); }
 const name = option("name") ?? JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).name ?? "App";
+
+// An overlay pack (`extends` in its pack.json, for example media-tv-app) is applied on top of its base: the base first (this same script without --pack), then the overlay's files, scripts and dev dependencies.
+const requestedPack = option("pack");
+if (requestedPack && requestedPack !== pack.id) {
+  const overlayDir = path.join(repoRoot, "templates", requestedPack);
+  if (!/^[a-z0-9-]+$/.test(requestedPack) || !existsSync(path.join(overlayDir, "pack.json"))) { console.error(`unknown pack '${requestedPack}'`); process.exit(2); }
+  const overlay = JSON.parse(readFileSync(path.join(overlayDir, "pack.json"), "utf8"));
+  if (overlay.extends !== pack.id) { console.error(`pack ${requestedPack} extends '${overlay.extends}', which this script does not apply`); process.exit(2); }
+  const baseArgs = [fileURLToPath(import.meta.url), target, "--name", name, ...(flag("force") ? ["--force"] : []), ...(flag("install") ? ["--install"] : [])];
+  const base = spawnSync(process.execPath, baseArgs, { stdio: "inherit" });
+  if ((base.status ?? 1) !== 0) process.exit(base.status ?? 1);
+  const overlayWritten = []; const overlaySkipped = [];
+  for (const relative of overlay.copy) {
+    const file = path.join(root, relative);
+    if (existsSync(file) && !flag("force")) { overlaySkipped.push(relative); continue; }
+    let text = readFileSync(path.join(overlayDir, relative), "utf8");
+    if ((overlay.render ?? []).includes(relative)) text = text.replaceAll("{{name}}", name);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, text);
+    overlayWritten.push(relative);
+  }
+  const overlayManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  overlayManifest.scripts ??= {};
+  const overlayScripts = [];
+  for (const [script, command] of Object.entries(overlay.scripts ?? {})) if (!(script in overlayManifest.scripts)) { overlayManifest.scripts[script] = command; overlayScripts.push(script); }
+  writeFileSync(path.join(root, "package.json"), `${JSON.stringify(overlayManifest, null, 2)}\n`);
+  console.log(`pack ${overlay.id}: wrote ${overlayWritten.length}, kept ${overlaySkipped.length} existing file(s), added scripts: ${overlayScripts.join(", ") || "none"}`);
+  const overlayInstall = ["install", "-D", ...(overlay.devDependencies ?? [])];
+  if (flag("install") && overlay.devDependencies?.length) process.exit(spawnSync("npm", overlayInstall, { cwd: root, stdio: "inherit", shell: true }).status ?? 1);
+  console.log(overlay.devDependencies?.length ? `next: cd ${root} && npm ${overlayInstall.join(" ")}` : "no further dev dependencies");
+  process.exit(0);
+}
 
 const written = []; const skipped = [];
 const put = (relative, content) => {

@@ -12,7 +12,7 @@ import { parseUnityEditorVersion, type StackProfileId } from "./stack-profiles.j
 import { detectStack } from "./stack-traits.js";
 
 export type TestDepth = "smoke" | "unit" | "integration";
-export const ONBOARD_PACK_IDS = ["react-ts-vite"] as const;
+export const ONBOARD_PACK_IDS = ["react-ts-vite", "media-tv-app"] as const;
 export type OnboardPackId = typeof ONBOARD_PACK_IDS[number];
 type PackGate = { script: string; extra?: string[]; scope?: "milestone"; parallel?: boolean };
 /** The orchestrator checkout holding templates/ and scripts/, found by walking up from this module so it works from src/ (tests) and dist/src/; the bridge image has no templates/, so nothing reads them at import time. */
@@ -22,7 +22,22 @@ export function findOrchestratorRoot(from = path.dirname(fileURLToPath(import.me
     if (path.dirname(dir) === dir) throw new Error(`orchestrator templates/ not found above ${from}`);
   }
 }
-export const readReactPack = () => JSON.parse(readFileSync(path.join(findOrchestratorRoot(), "templates", "react-ts-vite", "pack.json"), "utf8")) as { scripts: Record<string, string>; devDependencies: string[]; gates: PackGate[] };
+type PackJson = { id: string; extends?: string; scripts: Record<string, string>; devDependencies: string[]; gates: PackGate[] };
+const readPackJson = (id: string): PackJson => JSON.parse(readFileSync(path.join(findOrchestratorRoot(), "templates", id, "pack.json"), "utf8")) as PackJson;
+export const readReactPack = () => readPackJson("react-ts-vite");
+/**
+ * A pack with its base merged in (B-125): scripts and dev dependencies are the union; the overlay's parallel gates join the base's parallel group (before the first serial gate), and its
+ * other gates (the milestone-scoped heap test) go at the end, so the order the base documents stays and nothing runs before the build it needs.
+ */
+export function readPack(id: OnboardPackId): { scripts: Record<string, string>; devDependencies: string[]; gates: PackGate[] } {
+  const pack = readPackJson(id);
+  if (!pack.extends) return pack;
+  const base = readPackJson(pack.extends);
+  const firstSerial = base.gates.findIndex(gate => !gate.parallel);
+  const parallel = pack.gates.filter(gate => gate.parallel);
+  const rest = pack.gates.filter(gate => !gate.parallel);
+  return { scripts: { ...base.scripts, ...pack.scripts }, devDependencies: [...new Set([...base.devDependencies, ...(pack.devDependencies ?? [])])], gates: [...base.gates.slice(0, firstSerial), ...parallel, ...base.gates.slice(firstSerial), ...rest] };
+}
 type Repo = { root: string; read: (file: string) => string | undefined; has: (file: string) => boolean };
 type Pack = {
   label: string;
@@ -122,8 +137,8 @@ export function onboardManifest(input: OnboardInput): { manifest: Record<string,
   if (!profile) throw new Error(`no stack pack recognises ${root}; pass --profile ${Object.keys(PACKS).join("|")} if it is one of them`);
   const pack = PACKS[profile]; const repo = repoAt(root);
   const depth = input.testDepth ?? (input.tier === "throwaway" || input.tier === "prototype" ? "smoke" : input.tier === "mvp" ? "unit" : "integration");
-  const { gates, notes } = input.pack === "react-ts-vite"
-    ? { gates: readReactPack().gates.map(gate => ({ executable: "npm" as const, args: gate.script === "test" ? ["test", ...(gate.extra ?? [])] : ["run", gate.script, ...(gate.extra ?? [])], ...(gate.scope ? { scope: gate.scope } : {}), ...(gate.parallel ? { parallel: true } : {}) })), notes: [] as string[] }
+  const { gates, notes } = input.pack
+    ? { gates: readPack(input.pack as OnboardPackId).gates.map(gate => ({ executable: "npm" as const, args: gate.script === "test" ? ["test", ...(gate.extra ?? [])] : ["run", gate.script, ...(gate.extra ?? [])], ...(gate.scope ? { scope: gate.scope } : {}), ...(gate.parallel ? { parallel: true } : {}) })), notes: [] as string[] }
     : pack.gates(repo, depth, input.tier);
   if (gates.length === 0) throw new Error(`no quality gate could be derived for ${pack.label} in ${root}: ${notes.join("; ") || "add a test or build script"}`);
   const others = detectStack(root).filter(item => item.root !== "").map(item => `${item.family} in ${item.root}/`);

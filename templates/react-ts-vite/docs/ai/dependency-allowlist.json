@@ -26,6 +26,7 @@
     { "name": "knip", "reason": "dead code gate (R-008)" },
     { "name": "dependency-cruiser", "reason": "module boundary gate (R-021)" },
     { "name": "jscpd", "reason": "duplicate code gate (R-009)" },
+    { "name": "playwright-core", "reason": "browser tests and the heap-growth test (media-tv-app pack)" },
     { "name": "acorn", "reason": "parses the legacy bundle (check:legacy-syntax)" }
   ]
 }

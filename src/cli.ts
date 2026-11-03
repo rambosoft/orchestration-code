@@ -17,7 +17,7 @@ import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
-import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS } from "./stack-packs.js";
+import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS, readPack } from "./stack-packs.js";
 import { fetchDeclared } from "./lib-docs.js";
 import { defaultPluginsDir, findInstalledSkills, importCandidate, staleSkills, writeCandidate, type CatalogFile } from "./skills-sync.js";
 import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
@@ -208,10 +208,10 @@ async function main() {
     const orchestratorRoot = findOrchestratorRoot();
     let packJson: { devDependencies: string[] } | undefined;
     if (pack) {
-      packJson = JSON.parse(await readFile(path.join(orchestratorRoot, "templates", pack, "pack.json"), "utf8")) as { devDependencies: string[] };
+      packJson = readPack(pack as typeof ONBOARD_PACK_IDS[number]);
       if (writing) {
         const script = path.join(orchestratorRoot, "scripts", "apply-react-pack.mjs");
-        const result = await exec("node", [script, folder, "--name", name, ...(install ? ["--install"] : [])], { cwd: orchestratorRoot, encoding: "utf8" });
+        const result = await exec("node", [script, folder, "--name", name, "--pack", pack, ...(install ? ["--install"] : [])], { cwd: orchestratorRoot, encoding: "utf8" });
         if (result.stdout) console.log(result.stdout.trimEnd());
         if (result.stderr) console.error(result.stderr.trimEnd());
       } else {

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "provisional",
+  "note": "Starting points for low-memory smart TVs, not measurements. Tighten them from the first real runs on the target devices; a change to a number is a reviewed change with its reason in docs/decisions/.",
+  "heap": {
+    "cycles": 12,
+    "warmupCycles": 3,
+    "maxGrowthKbPerCycle": 256,
+    "description": "After the warm-up cycles, the JavaScript heap (after a forced collection) may grow by at most this much per full pass over the routes in e2e/heap-routes.json."
+  },
+  "longTasks": {
+    "maxMs": 200,
+    "enforced": false,
+    "description": "Main-thread tasks longer than this are reported per run; they only warn until real device numbers exist."
+  },
+  "bundle": {
+    "enforcedBy": "check:legacy-budget",
+    "description": "The size of the emitted legacy chunks is held by the pack's per-app baseline (check:legacy-budget); no second number is kept here."
+  }
+}
