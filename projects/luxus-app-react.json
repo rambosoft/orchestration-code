@@ -57,7 +57,7 @@
     }
   },
   "providerTimeouts": {
-    "implement": 900000,
+    "implement": 2700000,
     "openspec": 720000
   },
   "stack": {
