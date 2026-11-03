@@ -130,6 +130,62 @@
       "executable": "npm",
       "args": [
         "run",
+        "check:styles"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:index"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:journeys"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:contracts"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:parity"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:device-tiers"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-apis"
+      ],
+      "parallel": true
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
         "test:related",
         "--",
         "{changed}"
@@ -140,6 +196,20 @@
       "args": [
         "run",
         "build"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-syntax"
+      ]
+    },
+    {
+      "executable": "npm",
+      "args": [
+        "run",
+        "check:legacy-budget"
       ]
     },
     {
