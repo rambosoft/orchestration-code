@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-119 DONE (skill content). NEXT: B-134/B-129 review, B-159, B-113, B-138, B-137, B-165, B-125, B-164, B-172/B-173.
 - 2026-11-03 B-118 DONE (pinned skill import, doctor skills:sources). NEXT: B-119 content, B-134/B-129, B-159, B-113, B-138, B-137, B-165, B-125, B-164, B-172/B-173.
 - 2026-11-03 B-167 done with B-163 (see above).
 - 2026-11-03 B-163 DONE with B-167 (intelligence registry): src/intelligence*.ts, tools ts-imports, affected-tests, pkg-deps and the depcruise gate, all off by default, manifest block intelligence, kill switch ORCHESTRATOR_INTELLIGENCE=off; 49 new tests, replay unchanged. luxus-app-react runs the advisory tools as the canary (rebuild bridge and worker). NEXT: B-118/B-119 skill content, B-134/B-129, B-159, B-113, then B-138, B-137, B-165, B-125, B-164, design notes B-172/B-173.

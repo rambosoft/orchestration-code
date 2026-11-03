@@ -265,7 +265,7 @@ describe("documents", () => {
   });
   it("writes matching standards and points to them only for a matching profile", () => {
     const react = renderDocs({ ...docsInput, standards: renderStandardsFiles(loadCatalog(), "react-ts") });
-    expect(Object.keys(react).filter(file => file.startsWith("docs/ai/standards/"))).toHaveLength(3);
+    expect(Object.keys(react).filter(file => file.startsWith("docs/ai/standards/"))).toHaveLength(4);
     expect(react["CLAUDE.md"]).toContain("Area standards live in `docs/ai/standards/`");
     const unrelated = renderDocs({ ...docsInput, standards: renderStandardsFiles(loadCatalog(), "spring-boot") });
     expect(Object.keys(unrelated).some(file => file.startsWith("docs/ai/standards/"))).toBe(false);

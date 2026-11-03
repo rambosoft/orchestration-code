@@ -247,5 +247,11 @@
         "mode": "advisory"
       }
     }
+  },
+  "skills": {
+    "include": [
+      "vue2-nuxt2-reading"
+    ],
+    "budgetChars": 4500
   }
 }

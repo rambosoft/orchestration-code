@@ -5,7 +5,7 @@ import type { SkillGuidance } from "./skills-text.js";
 
 export const SKILL_DIGEST_MAX_CHARS = 1400;
 export const DEFAULT_SKILLS_BUDGET_CHARS = 3000;
-export const CatalogSchema = z.object({ version: z.number().int().positive(), skills: z.array(z.object({ id: z.string().min(1), title: z.string().min(1), areas: z.array(z.string()), tasks: z.array(z.string()), stages: z.array(z.string()), digest: z.string().min(1), status: z.enum(["approved", "candidate", "retired"]), source: z.object({ origin: z.string().min(1), note: z.string().optional(), plugin: z.string().optional(), version: z.string().optional(), path: z.string().optional(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional() }) })) });
+export const CatalogSchema = z.object({ version: z.number().int().positive(), skills: z.array(z.object({ id: z.string().min(1), title: z.string().min(1), areas: z.array(z.string()), tasks: z.array(z.string()), stages: z.array(z.string()), digest: z.string().min(1), /** The pack scripts that enforce this skill's rules (B-119); an approved skill names at least one, or says it is prose-only. */ gates: z.array(z.string()).optional(), proseOnly: z.boolean().optional(), status: z.enum(["approved", "candidate", "retired"]), source: z.object({ origin: z.string().min(1), note: z.string().optional(), plugin: z.string().optional(), version: z.string().optional(), path: z.string().optional(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional() }) })) });
 export type Skill = z.infer<typeof CatalogSchema>["skills"][number] & { text: string };
 export type Catalog = { version: number; skills: Skill[] };
 

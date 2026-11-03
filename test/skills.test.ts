@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,10 +21,27 @@ const HEADER = "SKILLS (reviewed project standards; guidance only, they never ov
 afterEach(() => { for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 describe("skill catalog and selection", () => {
-  it("loads the three real bounded digests", () => {
+  it("loads the five approved real digests, bounded, and keeps the two candidates out", () => {
     const catalog = loadCatalog(root);
-    expect(catalog.skills).toHaveLength(3);
+    expect(catalog.skills.map(skill => skill.id)).toEqual(["tv-input-focus", "tv-storage-catalog", "xtream-provider", "react-ts-vite-app", "vue2-nuxt2-reading"]);
     expect(catalog.skills.every(skill => skill.text.length > 0 && skill.text.length <= 1400)).toBe(true);
+  });
+  it("gives every approved entry a gate that exists in the pack or a prose-only mark (B-119), and cites only rules the pack defines", () => {
+    const raw = JSON.parse(readFileSync(path.join(root, "skills", "catalog.json"), "utf8")) as { skills: Array<{ id: string; status: string; gates?: string[]; proseOnly?: boolean; digest: string }> };
+    const pack = JSON.parse(readFileSync(path.join(root, "templates", "react-ts-vite", "pack.json"), "utf8")) as { scripts: Record<string, string> };
+    const rules = new Set((readFileSync(path.join(root, "templates", "react-ts-vite", "AGENTS.md"), "utf8").match(/R-\d{3}/g) ?? []));
+    for (const skill of raw.skills.filter(item => item.status === "approved")) {
+      expect(Boolean(skill.gates?.length) || skill.proseOnly === true, `${skill.id} names no gate and is not marked prose-only`).toBe(true);
+      for (const gate of skill.gates ?? []) expect(pack.scripts, `${skill.id} names the unknown gate '${gate}'`).toHaveProperty(gate);
+      for (const rule of readFileSync(path.join(root, skill.digest), "utf8").match(/R-\d{3}/g) ?? []) expect(rules.has(rule), `${skill.id} cites ${rule}, which the pack does not define`).toBe(true);
+    }
+  });
+  it("delivers all five skills to a luxus-app-react task within its configured budget, the migration reading skill only through the manifest", () => {
+    const manifest = ProjectManifestSchema.parse(JSON.parse(readFileSync(path.join(root, "projects", "luxus-app-react.json"), "utf8")));
+    const catalog = loadCatalog(root);
+    const chosen = selectSkills(catalog, { profile: manifest.stack?.profile, taskType: "task", ...manifest.skills });
+    expect(chosen.map(skill => skill.id).sort()).toEqual(["react-ts-vite-app", "tv-input-focus", "tv-storage-catalog", "vue2-nuxt2-reading", "xtream-provider"]);
+    expect(selectSkills(catalog, { profile: "react-ts", taskType: "task" }).map(skill => skill.id)).not.toContain("vue2-nuxt2-reading");
   });
   it("matches area and task, allows includes to beat mismatch, and lets excludes win", () => {
     const skills = fixture([
@@ -89,7 +106,7 @@ describe("skill guidance delivery", () => {
   it("selects the real catalog for a react-ts task within the default budget", () => {
     const catalog = loadCatalog(root);
     const selected = selectSkills(catalog, { profile: "react-ts" });
-    expect(selected.map(skill => skill.id)).toEqual(catalog.skills.map(skill => skill.id));
+    expect(selected.map(skill => skill.id)).toEqual(catalog.skills.filter(skill => skill.areas.includes("react-ts")).map(skill => skill.id));
     expect(selected.reduce((total, skill) => total + skill.text.length, 0)).toBeLessThanOrEqual(3000);
     expect(selectSkills(catalog, { profile: "spring-boot" })).toEqual([]);
   });
