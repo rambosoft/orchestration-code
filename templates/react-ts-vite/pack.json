@@ -17,6 +17,8 @@
     "scripts/check-page-docs.mjs",
     "scripts/check-style-tokens.mjs",
     "scripts/generate-ai-index.mjs",
+    "scripts/check-journeys.mjs",
+    "e2e/journeys/_TEMPLATE.md",
     ".github/workflows/drift.yml",
     ".dependency-cruiser.cjs"
   ],
@@ -45,9 +47,10 @@
     "check:debt": "node scripts/check-debt-ledger.mjs",
     "check:pages": "node scripts/check-page-docs.mjs",
     "check:styles": "node scripts/check-style-tokens.mjs",
+    "check:journeys": "node scripts/check-journeys.mjs",
     "ai:index": "node scripts/generate-ai-index.mjs",
     "check:index": "node scripts/generate-ai-index.mjs --check",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages && npm run check:styles && npm run check:index"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages && npm run check:styles && npm run check:index && npm run check:journeys"
   },
   "removeDevDependencies": ["oxlint"],
   "replaceScripts": { "lint": ["oxlint"] },
@@ -62,6 +65,7 @@
     { "script": "check:pages", "parallel": true },
     { "script": "check:styles", "parallel": true },
     { "script": "check:index", "parallel": true },
+    { "script": "check:journeys", "parallel": true },
     { "script": "test:related", "extra": ["--", "{changed}"] },
     { "script": "build" },
     { "script": "test", "scope": "milestone" }

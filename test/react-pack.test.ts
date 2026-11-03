@@ -126,7 +126,7 @@ describe("check-page-docs", () => {
   it("fails a page without a document, a missing section, a case without a test and a stale document", async () => {
     expect((await check("check-page-docs.mjs", await project({ ...page }))).out).toContain("page 'offline' has no docs/pages/offline.md");
     expect((await check("check-page-docs.mjs", await project({ ...page, ...tests, "docs/pages/offline.md": doc().replace("## Inputs\nx\n\n", "") }))).out).toContain("missing the section '## Inputs'");
-    expect((await check("check-page-docs.mjs", await project({ ...page, ...tests, "docs/pages/offline.md": doc("- C-001 a\n- C-003 an untested case") }))).out).toContain("case C-003 is not cited by any test");
+    expect((await check("check-page-docs.mjs", await project({ ...page, ...tests, "docs/pages/offline.md": doc("- C-001 a\n- C-003 an untested case") }))).out).toContain("case C-003 is not cited by a test in src/pages/offline/ or a shared test");
     expect((await check("check-page-docs.mjs", await project({ ...page, ...tests, "docs/pages/offline.md": doc(), "docs/pages/gone.md": doc() }))).out).toContain("docs/pages/gone.md describes a page folder that does not exist");
   });
   it("fails a document with no cases, ignores the template and readme files, and passes a project with no pages", async () => {
@@ -154,7 +154,7 @@ describe("apply-react-pack", () => {
     expect(stdout).toContain("pack react-ts-vite");
     const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(manifest.scripts.test).toBe("vitest run");
-    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "check:styles", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
+    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "check:styles", "check:journeys", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("# Demo App: agent rules");
     expect(await readFile(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8")).toContain("Engineering standards: React + TypeScript + Vite");
     expect((await readFile(path.join(root, "src/main.tsx"), "utf8")).startsWith("import \"./styles/tokens.css\";")).toBe(true);

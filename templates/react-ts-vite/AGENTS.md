@@ -24,7 +24,7 @@ Area standards live in `docs/ai/standards/`; read the relevant area standards be
 - R-009 No duplicated code. Used twice, or has its own behaviour, or needs its own tests: extract it to a hook, util or component.
 - R-010 Logic has tests. Test names cite case ids where a page document lists them. Prefer table-driven tests; few tests that cover every case and edge case.
 - R-011 Deferred work: `TODO(debt:D-nnn)` or `@deprecated <replacement> (debt:D-nnn)` plus a complete row in docs/technical-debt/LEDGER.md (reason, risk, next action, owner, tracking, review date).
-- R-012 Every page folder has docs/pages/<page>.md: purpose, visible content (when), actions per user, inputs (remote, keyboard, mouse, touch), data, cases C-nnn. Every case id appears in a test.
+- R-012 Every page folder has docs/pages/<page>.md: purpose, visible content (when), actions per user, inputs (remote, keyboard, mouse, touch), data, cases C-nnn. Every case id appears in a test of that page (or a shared e2e test), and a test never cites a case its page document does not list. Milestone e2e journeys live in e2e/journeys/<slug>.md (few and wide, `npm run check:journeys`).
 - R-013 AGENTS.md stays under 150 lines; CLAUDE.md and other agent files only point to it.
 - R-014 A new dependency needs a recorded reason (bundle size, memory, device support, maintenance, licence) in docs/decisions/. Use current stable versions; keep updates easy (Renovate).
 - R-015 Sizes use rem and tokens from src/styles/tokens.css. No raw colours, px or vh outside src/styles (`npm run check:styles`; a `token-ok: <reason>` tag marks an exception). Full-height containers use `min-height: 100vh`, never rem. Custom styling is the exception; use variants.
