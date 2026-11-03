@@ -27,6 +27,8 @@ After Milestone 1 starts and one real page with a few components is refactored i
 Each item is built, tested and committed on its own (Codex drafts code or analysis; the diff is reviewed and the tests run before the commit). `STATUS.md` always names the next step, so work can resume from any commit. Work is never left half-done at a stop: if the Claude usage limit is near, finish the current item to a committed, green state and write the next step down.
 
 ## Gate G1: orchestration ready for Milestone 1 (build and test, before any M1 task)
+
+Order correction (2026-11-03, Codex audit, verified against BACKLOG dependencies): build B-117 before B-121 (B-121 depends on it), and keep B-168 last: it depends on B-167, which sits in G2, so the G1 rehearsal covers B-109, B-110, B-130, B-135 and B-116/B-117 only, and the full toggle matrix runs when B-167 lands (G2). B-169 and B-148 are done. Still unowned: backlog items for the M1 storage and input design notes (B-127, B-126 need a design-note task each).
 | Item | Why Milestone 1 needs it | Done when |
 |---|---|---|
 | B-110 reference mount + minimal characterize/parity | tasks must read the old code, and parity needs a check | a task worktree can read the reference read-only; a seeded behaviour change fails the parity check |
