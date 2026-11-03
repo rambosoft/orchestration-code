@@ -154,7 +154,7 @@ describe("apply-react-pack", () => {
     expect(stdout).toContain("pack react-ts-vite");
     const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(manifest.scripts.test).toBe("vitest run");
-    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "check:styles", "check:journeys", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
+    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "check:styles", "check:journeys", "check:contracts", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("# Demo App: agent rules");
     expect(await readFile(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8")).toContain("Engineering standards: React + TypeScript + Vite");
     expect((await readFile(path.join(root, "src/main.tsx"), "utf8")).startsWith("import \"./styles/tokens.css\";")).toBe(true);

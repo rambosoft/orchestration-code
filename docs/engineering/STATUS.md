@@ -1,6 +1,8 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-112 DONE with B-161.
+- 2026-11-03 B-161 DONE (check:contracts, R-022, module README template). B-112 is covered by the same pieces: AGENTS/CLAUDE, docs/ai/INDEX.md generated and drift-checked (B-123), per-module README contract (B-161); marking it done. NEXT: B-110 and B-114 from the Codex design notes, then B-168; luxus re-apply and READMEs batched after B-114.
 - 2026-11-03 B-132 DONE (two-way case matrix, check:journeys format and gate). NEXT: B-110 characterize stage and parity gate, B-114, B-112/B-161, B-168; luxus pack re-apply (Route lines, check:styles/index/journeys scripts) batched after B-114.
 - 2026-11-03 B-123 DONE (route coverage, generated AI index + drift check, drift workflow template). NEXT: B-132, B-110, B-114, B-112/B-161, B-168; luxus re-apply batched after B-132.
 - 2026-11-03 B-122 DONE (check:styles, R-015 now gated, template tokens floors). Luxus needs the pack re-applied (batched after B-132). NEXT: B-123, B-132, B-110, B-114, B-112/B-161, B-168 (operator order: run all, commit and push each).

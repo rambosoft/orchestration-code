@@ -29,7 +29,7 @@ for (const name of existsSync(docsDir) ? readdirSync(docsDir).filter(file => fil
 const moduleLines = [];
 for (const name of dirs(path.join(root, "src")).filter(item => !SKIP_MODULES.has(item))) {
   const readme = read(path.join(root, "src", name, "README.md"));
-  const purpose = readme.split("\n").map(line => line.trim()).find(line => line && !line.startsWith("#"));
+  const purpose = readme.split(/^##\s/m)[0].split("\n").map(line => line.trim()).find(line => line && !line.startsWith("#"));
   moduleLines.push(`- \`src/${name}/\`: ${purpose ? clip(purpose) : "no README.md yet (add one with Interface, Invariants and Side Effects)"}`);
 }
 const block = [BEGIN, "### Pages", ...(pageLines.length ? pageLines : ["- none yet"]), "", "### Modules", ...(moduleLines.length ? moduleLines : ["- none yet"]), END].join("\n");
