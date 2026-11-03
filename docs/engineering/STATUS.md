@@ -1,6 +1,8 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-173 done (see B-172).
+- 2026-11-03 B-172 DONE and B-173 DONE: storage and input designs approved (luxus-app-react PR 11 awaiting the operator's merge). NEXT: merge PR 11, deploy worker+bridge, B-164 (needs install approval), full-suite run, Paperclip project.
 - 2026-11-03 B-125 DONE (media-tv-app overlay pack). NEXT: B-172/B-173 design drafts (agy running), B-164 deferred, deploy worker+bridge, luxus pack re-apply PR, Paperclip project.
 - 2026-11-03 B-165 DONE (library notes cache and lib-docs tool). NEXT: B-125 media-tv-app pack, B-164 (deferred, needs install approval), B-172/B-173 design drafts, deploy worker+bridge, Paperclip project.
 - 2026-11-03 B-137 DONE (reuse index, recipes, pattern record, batch metrics). NEXT: B-165 Context7 cache, B-125 media-tv-app pack, B-164 Graphify spike, B-172/B-173 design notes, then Paperclip project.
