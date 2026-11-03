@@ -7,7 +7,7 @@ import { runCommand, type CommandRunner } from "./command.js";
 // Facts-first code intelligence (ADR 0038, B-163): a tool states what it found as a fact with provenance, the activity re-checks every fact against the working tree
 // before a model sees it, and what survives is written as a preparation package and rendered as a short, bounded prompt block. Deterministic, no model call.
 
-export const FACT_RELATIONSHIPS = ["imports", "imported_by", "tested_by", "missing_test", "declares_dependency", "exports"] as const;
+export const FACT_RELATIONSHIPS = ["imports", "imported_by", "tested_by", "missing_test", "declares_dependency", "exports", "documented_by"] as const;
 export const FactSchema = z.object({
   tool: z.string().min(1).max(60),
   toolVersion: z.string().min(1).max(40),
@@ -69,7 +69,7 @@ export function buildPackage(input: { taskId: string; commit: string; createdAt:
   const seen = new Set<string>();
   const unique = input.facts.filter(fact => { const key = FACT_KEY(fact); if (seen.has(key)) return false; seen.add(key); return true; });
   const by = (...relationships: Fact["relationship"][]) => unique.filter(fact => relationships.includes(fact.relationship));
-  return { version: 1, taskId: input.taskId, commit: input.commit, createdAt: input.createdAt, affectedFiles: input.affectedFiles, dependencyImpact: by("imports", "imported_by"), existingTests: by("tested_by"), missingTests: by("missing_test"), libraryReferences: by("declares_dependency"), reusable: by("exports"), tools: input.tools, warnings: input.warnings, droppedStale: Object.values(input.droppedReasons).reduce((sum, count) => sum + count, 0), droppedReasons: input.droppedReasons };
+  return { version: 1, taskId: input.taskId, commit: input.commit, createdAt: input.createdAt, affectedFiles: input.affectedFiles, dependencyImpact: by("imports", "imported_by"), existingTests: by("tested_by"), missingTests: by("missing_test"), libraryReferences: by("declares_dependency", "documented_by"), reusable: by("exports"), tools: input.tools, warnings: input.warnings, droppedStale: Object.values(input.droppedReasons).reduce((sum, count) => sum + count, 0), droppedReasons: input.droppedReasons };
 }
 
 /** The prompt block, identical for every provider: affected files, who depends on them, their tests, the missing tests, and the declared libraries, cut to `maxChars`. */

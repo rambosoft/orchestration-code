@@ -248,6 +248,9 @@
       },
       "reuse-index": {
         "mode": "advisory"
+      },
+      "lib-docs": {
+        "mode": "advisory"
       }
     }
   },

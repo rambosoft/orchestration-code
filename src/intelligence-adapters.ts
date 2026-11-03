@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { rangeHash, type Fact } from "./intelligence.js";
+import { declaredDependencies, declaredVersion, libFile, majorOf, readLibNote } from "./lib-docs.js";
 import { intelligenceRegistry, type IntelligenceAdapter, type IntelligenceContext } from "./intelligence-registry.js";
 
 // The first tools (B-163): read only, offline, no model. Each states facts with provenance (file, line, commit, snippet hash) and says plainly what it cannot see.
@@ -163,6 +164,33 @@ const reuseIndex: IntelligenceAdapter = {
   },
 };
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Reviewed, version-matched notes for the libraries a task names (B-165): declared dependencies the affected files import or the prompt mentions, with a note cached in docs/ai/libs/ by `dev libs-fetch`. Reads the repository only, never the network. An unreviewed note, or one for another major version than the project declares, is left out. */
+const libDocs: IntelligenceAdapter = {
+  id: "lib-docs", version: "1.0.0", defaultMode: "off", timeoutMs: 5_000, sizeBudgetChars: 6_000,
+  async run(context) {
+    const declared = await declaredDependencies(context.worktree);
+    const wanted = new Set<string>();
+    for (const source of await scan(context, context.affectedFiles.filter(file => context.files.includes(file)))) {
+      for (const { specifier } of source.imports) {
+        if (/^(?:\.|\/|node:|@\/|~\/)/.test(specifier)) continue;
+        const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0]!;
+        if (name in declared) wanted.add(name);
+      }
+    }
+    for (const name of Object.keys(declared)) if (new RegExp(`(?:^|[^A-Za-z0-9@/_-])${escapeRegExp(name)}(?![A-Za-z0-9_-])`).test(context.prompt ?? "")) wanted.add(name);
+    const facts: Fact[] = [];
+    for (const name of [...wanted].sort().slice(0, 12)) {
+      const note = await readLibNote(context.worktree, name);
+      const major = majorOf(declaredVersion(declared[name]!) ?? "");
+      if (!note || note.status !== "reviewed" || major === undefined || majorOf(note.version) !== major) continue;
+      const text = (await readFile(path.join(context.worktree, libFile(name)), "utf8").catch(() => "")).replace(/\r\n/g, "\n");
+      facts.push(mk("lib-docs", "1.0.0", context, { file: libFile(name), startLine: 1, endLine: 1, relationship: "documented_by", target: `${name}@${note.version} notes in ${libFile(name)}${note.summary ? `: ${note.summary.slice(0, 100)}` : ""}`, confidence: "verified", text }));
+    }
+    return facts;
+  },
+};
+
 /** dependency-cruiser as a gate: the project's own `depcruise` script (B-162) runs in verify. It states no facts; the verdict is the value. */
 const depcruise: IntelligenceAdapter = {
   id: "depcruise", version: "1.0.0", defaultMode: "off", timeoutMs: 1_000, sizeBudgetChars: 1_000,
@@ -173,4 +201,4 @@ const depcruise: IntelligenceAdapter = {
   },
 };
 
-for (const adapter of [tsImports, affectedTests, pkgDeps, reuseIndex, depcruise]) if (!intelligenceRegistry.get(adapter.id)) intelligenceRegistry.register(adapter);
+for (const adapter of [tsImports, affectedTests, pkgDeps, reuseIndex, libDocs, depcruise]) if (!intelligenceRegistry.get(adapter.id)) intelligenceRegistry.register(adapter);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IntelligenceConfig, QualityCommand } from "./contracts.js";
 import type { CommandRunner } from "./command.js";
 import { FactSchema, type Fact } from "./intelligence.js";
@@ -10,6 +11,8 @@ export type IntelligenceContext = {
   worktree: string; taskId: string; commit: string;
   /** Repository-relative files the task names or changes. */
   affectedFiles: string[];
+  /** The stage prompt, for tools that look for what the task names (B-165). */
+  prompt?: string;
   /** Tracked and untracked (not ignored) files of the worktree, repository-relative. */
   files: string[];
   signal: AbortSignal; runner?: CommandRunner;
@@ -49,7 +52,7 @@ export class IntelligenceRegistry {
       if (this.mode(adapter, config, options.env) !== "advisory") continue;
       const settings = config?.tools[adapter.id];
       const timeoutMs = settings?.timeoutMs ?? adapter.timeoutMs; const budget = settings?.sizeBudgetChars ?? adapter.sizeBudgetChars;
-      const key = [adapter.id, adapter.version, options.fingerprint, context.affectedFiles.join(",")].join("|");
+      const key = [adapter.id, adapter.version, options.fingerprint, context.affectedFiles.join(","), createHash("sha1").update(context.prompt ?? "").digest("hex").slice(0, 10)].join("|");
       let facts = this.cache.get(key);
       if (!facts) {
         const controller = new AbortController();

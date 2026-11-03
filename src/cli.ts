@@ -18,6 +18,7 @@ import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
 import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS } from "./stack-packs.js";
+import { fetchDeclared } from "./lib-docs.js";
 import { defaultPluginsDir, findInstalledSkills, importCandidate, staleSkills, writeCandidate, type CatalogFile } from "./skills-sync.js";
 import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
 import { TIERS, type Tier } from "./lanes.js";
@@ -92,6 +93,18 @@ async function main() {
     const kept = await writeCandidate(findOrchestratorRoot(), id, imported.files);
     await writeFile(catalogFile, `${JSON.stringify(imported.catalog, null, 2)}\n`);
     console.log(`recorded; review the text in ${kept}, write skills/${id}.md (at most 1400 characters) and set the status to approved`);
+    return;
+  }
+  if (command === "libs-fetch") {
+    // dev libs-fetch <package...> [--root <project folder>] [--force] [--version <v>]: version-matched notes from Context7 into docs/ai/libs/ (B-165). Only declared dependencies; the library name, version and a generic question leave the machine.
+    const option = (name: string) => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
+    const flagged = new Set(["--root", "--version"]);
+    const names = args.filter((arg, index) => !arg.startsWith("--") && !flagged.has(args[index - 1] ?? ""));
+    if (!names.length) throw new Error("usage: dev libs-fetch <package...> [--root <project folder>] [--force] [--version <v>]  (needs CONTEXT7_API_KEY for more than the free rate limit)");
+    const results = await fetchDeclared(path.resolve(option("root") ?? "."), names, { ...(process.env.CONTEXT7_API_KEY ? { apiKey: process.env.CONTEXT7_API_KEY } : {}), ...(option("version") ? { version: option("version")! } : {}), force: args.includes("--force") });
+    for (const result of results) console.log(`${result.outcome.padEnd(7)} ${result.name}: ${result.detail}`);
+    if (results.some(result => result.outcome === "written")) console.log("Read each written note, then set Status: reviewed; a stage uses only reviewed notes.");
+    if (results.some(result => result.outcome === "failed")) process.exitCode = 1;
     return;
   }
   if (command === "drain") {
@@ -227,6 +240,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | libs-fetch <package...> [--root dir] [--force] | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

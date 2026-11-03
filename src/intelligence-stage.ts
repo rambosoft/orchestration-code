@@ -33,7 +33,7 @@ export async function prepareStageIntelligence(input: { stage: string; prompt: s
     const affectedFiles = [...new Set([...named, ...changed])].slice(0, MAX_AFFECTED);
     const untracked = await Promise.all(lines(await git("ls-files", "--others", "--exclude-standard")).slice(0, 200).map(async file => { const info = await stat(path.join(root, file)).catch(() => undefined); return `${file}:${info?.size}:${info?.mtimeMs}`; }));
     const fingerprint = createHash("sha256").update([commit, await git("diff", "HEAD"), ...untracked].join("\n")).digest("hex").slice(0, 24);
-    const collected = await registry.collect({ worktree: root, taskId: input.taskId, commit, affectedFiles, files, runner }, input.intelligence, { fingerprint, env });
+    const collected = await registry.collect({ worktree: root, taskId: input.taskId, commit, affectedFiles, files, prompt: input.prompt, runner }, input.intelligence, { fingerprint, env });
     const checked = await validateFacts(collected.facts, root);
     const pkg = buildPackage({ taskId: input.taskId, commit, createdAt: (options.now?.() ?? new Date()).toISOString(), affectedFiles, facts: checked.valid, tools: collected.tools, warnings: collected.warnings, droppedReasons: checked.reasons });
     const block = renderPreparationBlock(pkg, input.intelligence?.budgetChars ?? DEFAULT_PREPARATION_CHARS);
