@@ -1,6 +1,8 @@
 {
   "id": "luxus-app-react",
-  "aliases": [],
+  "aliases": [
+    "3c3b35dc-f799-42fa-b834-900ac5fec94a"
+  ],
   "name": "Luxus App React",
   "root": "luxus-app-react",
   "containerRoot": "/workspace/projects/luxus-app-react",
