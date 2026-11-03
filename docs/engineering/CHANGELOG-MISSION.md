@@ -1,5 +1,11 @@
 # Mission changelog
 
+## 2026-11-03 player orchestration planned (B-170, B-171)
+- Documentation only. The operator's player orchestration report (policy-driven playback microkernel, native shell players first for http Xtream sources, scope-first error policy, Chromium 53 floor) is kept in the research folder with a plan that names what to reconcile with ADR 0036 before building and a checklist for the first player task.
+
+## 2026-11-03 skill catalog and prompt delivery (B-116, B-117 partly)
+- skills/catalog.json with three reviewed react-ts digests (TV input and focus, TV storage and large catalogues, Xtream provider); the bridge selects by stack profile and task type within the manifest's `skills` budget and passes the selection on the run input. The workflow renders it per stage into the plan, implement and review prompts of code tasks, so Claude, Codex and OpenRouter get the same guidance; the review treats a deviation as blocking only with a concrete defect scenario. The run result records the catalog version and skill ids. An earlier draft prepended the block to the raw task prompt, which the implement and review stages never see (they read the brief); moved to run-input data like the project contract (ADR 0011). No new workflow step, replay fixture unchanged.
+
 ## 2026-11-02 readiness plan with gates; intelligence registry (B-167, B-168)
 - Documentation only. Every open item is assigned to a gate before Milestone 1, at the start of Milestone 1, before Milestone 2 or later; an integration rehearsal and a live canary prove the items work together; code-intelligence tools are registered capabilities with off, advisory and gate modes and a kill switch.
 

@@ -1,6 +1,6 @@
 # ADR 0033: Skill catalog and standards packs
 
-Status: Proposed (2026-11-02). Design only: no code yet. Generalizes ADR 0010 (UI/UX skill selector), extends ADR 0017 (stack packs) and ADR 0032 (existing projects, migration packs).
+Status: Accepted; catalog, resolver and prompt delivery built 2026-11-03 (B-116, B-117 partly: `src/skills.ts`, `src/skills-text.ts`, `skills/`). Standards files, pack-owned skills, the sync script and the learning loop are still design. Generalizes ADR 0010 (UI/UX skill selector), extends ADR 0017 (stack packs) and ADR 0032 (existing projects, migration packs).
 
 ## Context
 - The agents that write code get better results when they carry stack-specific standards (React hooks rules, Vite configuration, Spring layering, Compose architecture). Today only UI work gets that: `src/uiux.ts` selects UI/UX skills by wording and frameworks and injects a guidance block (ADR 0010).

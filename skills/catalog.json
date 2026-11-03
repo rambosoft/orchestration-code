@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "skills": [
+    { "id": "tv-input-focus", "title": "TV input and focus", "areas": ["react-ts"], "tasks": ["task", "bug", "architecture"], "stages": ["plan", "implement", "review"], "digest": "skills/tv-input-focus.md", "status": "approved", "source": { "origin": "docs/standards/react-ts-vite.md" } },
+    { "id": "tv-storage-catalog", "title": "TV storage and large catalogues", "areas": ["react-ts"], "tasks": ["task", "bug", "architecture"], "stages": ["plan", "implement", "review"], "digest": "skills/tv-storage-catalog.md", "status": "approved", "source": { "origin": "docs/standards/react-ts-vite.md" } },
+    { "id": "xtream-provider", "title": "Xtream provider", "areas": ["react-ts"], "tasks": ["task", "bug", "architecture"], "stages": ["plan", "implement", "review"], "digest": "skills/xtream-provider.md", "status": "approved", "source": { "origin": "docs/standards/react-ts-vite.md" } }
+  ]
+}

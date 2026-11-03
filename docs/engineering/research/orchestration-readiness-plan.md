@@ -40,12 +40,11 @@ Each item is built, tested and committed on its own (Codex drafts code or analys
 | B-112 + B-161 AI map gate and the component contract format | later agents need contracts | gate fails a module without a contract |
 | B-116 + B-117 skill catalog, resolver and delivery | standards reach Codex and Claude alike | skills appear in prompts within budget; UI/UX selector unchanged |
 | B-135 per-area model routing and cost caps | storage and input are critical areas | a critical item routes implement to the strong model; others to the default |
-| B-167 intelligence registry with modes and kill switch | tools must be optional | modes honoured; tool failure never fails a task unless it is a gate |
 | B-168 integration rehearsal | prove the parts work together | see "Test plan" |
 | B-148 luxus-app `.gitattributes` (fix committed locally) | clean clones | operator pushes, or the clone override stays documented |
 
 ## Gate G2: prepare Milestone 1 (first stretch of M1, before its first product task)
-B-138 Vue and TypeScript extraction (ts-morph, `@vue/compiler-sfc`) for the milestone survey; B-137 recipes and reuse index; B-163 preparation package with provenance; B-165 Context7 pre-fetch and cache; B-118 + B-119 skill content (React/TS/Vite, Vue 2/Nuxt 2 reading, Xtream, TV performance, input, storage, compatibility); B-125 `media-tv-app` pack (compatibility matrix, budgets, heap test, component registry); B-134 + B-129 rule-aware, risk-based and specialist review; B-159 design gate for critical areas; B-113 dependency allow-list; B-164 Graphify spike (Codex, decide adopt or reject). Then the **M1 survey** and the **design notes** for storage and input. Done when a real M1 task gets a preparation package, its prompt carries the skills within budget, and the design notes are approved.
+B-138 Vue and TypeScript extraction (ts-morph, `@vue/compiler-sfc`) for the milestone survey; B-137 recipes and reuse index; B-163 preparation package with provenance together with B-167 (the intelligence registry with modes and kill switch, built with its first consumer so it is not speculative; moved here from G1 on 2026-11-02); B-165 Context7 pre-fetch and cache; B-118 + B-119 skill content (React/TS/Vite, Vue 2/Nuxt 2 reading, Xtream, TV performance, input, storage, compatibility); B-125 `media-tv-app` pack (compatibility matrix, budgets, heap test, component registry); B-134 + B-129 rule-aware, risk-based and specialist review; B-159 design gate for critical areas; B-113 dependency allow-list; B-164 Graphify spike (Codex, decide adopt or reject). Then the **M1 survey** and the **design notes** for storage and input. Done when a real M1 task gets a preparation package, its prompt carries the skills within budget, and the design notes are approved.
 
 ## Milestone 1 product work (executed by the orchestration)
 B-128 discovery on `luxus-service` first (can it index and page the catalog); R12 Vite and legacy bundle; R3 shell and auth bootstrap; R4/R5 storage interface, query layer and cache (B-127); input layer (B-126).
@@ -55,7 +54,7 @@ B-136 area-parallel scheduling (M2 has independent areas); B-120 learning loop a
 
 ## Later gates
 - **Before M3:** host simulator and mock-Xtream large mode working; carousel design note (B-159).
-- **Before M5:** bridge protocol, client, shells and native network channel (B-139 to B-142).
+- **Before M5:** bridge protocol, client, shells and native network channel (B-139 to B-142); player orchestration design note and device spike (B-170, B-171; docs/engineering/research/player-orchestration-plan.md) before any player refactor task.
 - **Before M6:** https deployment and secrets cleanup (B-144, B-145, operator's part), device validation on emulators and real TVs, the legacy device-usage data (roadmap Q9) and the https device check (Q4).
 - **Anytime:** B-160 (EGM skills evaluation).
 

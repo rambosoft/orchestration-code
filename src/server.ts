@@ -21,6 +21,7 @@ import { prepareBootstrapRun } from "./bootstrap-start.js";
 import { loadBootstrapConfig } from "./bootstrap-config.js";
 import { compactEmbeddedLogs } from "./log-compact.js";
 import { applyReference } from "./reference.js";
+import { loadCatalog, selectSkills, skillGuidance } from "./skills.js";
 
 const token = process.env.ORCHESTRATOR_API_TOKEN;
 if (!token) throw new Error("ORCHESTRATOR_API_TOKEN must be set");
@@ -43,6 +44,15 @@ async function loadManifests() {
   return indexManifests(manifests);
 }
 let projects = await loadManifests();
+let skillsCatalog: ReturnType<typeof loadCatalog> | undefined;
+function getSkillsCatalog() {
+  if (skillsCatalog) return skillsCatalog;
+  try { skillsCatalog = loadCatalog(); } catch (error) {
+    if (error instanceof Error && error.message.startsWith("skills catalog not found:")) return skillsCatalog = { version: 1, skills: [] };
+    throw error;
+  }
+  return skillsCatalog;
+}
 /** A project created after startup (by a bootstrap) is picked up by re-reading the manifests once, so no bridge restart is needed. */
 async function findProject(id: string) {
   const known = projects.get(id);
@@ -109,8 +119,10 @@ const server = createServer(async (req, res) => {
         const contractSettings = (await loadBootstrapConfig()).contract;
         projectContract = codeWorkflow ? await projectContractBlock({ gitRoot, baseSha: stack.baseSha, settings: contractSettings }) : undefined;
       }
+      const catalog = getSkillsCatalog();
+      const skills = skillGuidance(catalog, selectSkills(catalog, { profile: project.stack?.profile, taskType: taskType?.id, ...project.skills }));
       const finalPrompt = applyReference(compactEmbeddedLogs(parsedPrompt.prompt), project.reference, process.env, project.id);
-      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), projectId: project.id, profile: profileId, prompt: finalPrompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, ...(lane ? { tier: project.tier, lane: lane.name } : {}), openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(lane?.plan.openSpec ?? project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? lane?.plan.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: effectiveRouting(project.providerRouting, project.areaRouting, parsedPrompt), providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands, ...(process.env.ORCHESTRATOR_WORKER_REPORTS === "1" ? { reportToPaperclip: true } : {}) });
+      const started = await startRun({ taskId: payload.taskId, taskRevision: payload.revision, attempt: payload.attempt, blockerIds: payload.blockers.map(item => item.id), parentPublications: payload.parentPublications, ...(projectContract ? { projectContract } : {}), ...(skills ? { skills } : {}), projectId: project.id, profile: profileId, prompt: finalPrompt, taskType: taskType?.id, documentsDir: taskType?.id === "architecture" ? project.documents.architectureDir : project.documents.researchDir, ...(lane ? { tier: project.tier, lane: lane.name } : {}), openSpec: taskType?.flow === "bug" ? (payload.openSpec ?? parsedPrompt.openSpec ?? false) : resolveOpenSpecEnabled(lane?.plan.openSpec ?? project.openSpec.enabled, payload.openSpec ?? parsedPrompt.openSpec), analysis: payload.analysis ?? parsedPrompt.analysis ?? lane?.plan.analysis ?? project.analysis.enabled, analysisDocsDir: project.analysis.docsDir, uiUx: uiUx.config, uiUxFrameworks: uiUx.frameworks, visual: project.visual, provider: project.providers.default, providerRouting: effectiveRouting(project.providerRouting, project.areaRouting, parsedPrompt), providerTimeouts: project.providerTimeouts, ...(project.budget ? { budget: project.budget } : {}), projectRoot, repository, artifactsDir: path.join(artifactsRoot, "artifacts", payload.taskId), approval: payload.approval ?? (profiles[profileId]?.approvalBeforeMerge ?? project.policy.requireApprovalBeforeMerge), maxReviewRounds: project.policy.maxReviewRounds, maxRepairAttempts: project.policy.maxRepairAttempts, maxParallelism: project.policy.maxParallelism, injectReviewFailure: payload.injectReviewFailure ?? false, repeatReviewFailure: payload.repeatReviewFailure ?? false, injectActivityTimeout: payload.injectActivityTimeout ?? false, plugins: project.plugins, qualityCommands, ...(process.env.ORCHESTRATOR_WORKER_REPORTS === "1" ? { reportToPaperclip: true } : {}) });
       res.writeHead(202); res.end(JSON.stringify(started)); return;
     }
     const match = url.pathname.match(/^\/v1\/runs\/([^/]+)(?:\/(cancel|approve|reject|resume))?$/);
