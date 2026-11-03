@@ -70,4 +70,28 @@ describe("survey backlog planning", () => {
     expect(() => planFromBacklog([item("A", ["B"]), item("B", ["A"])], { projectId: "p", prefix: "T" })).toThrow(/cycle.*A.*B/i);
     expect(() => planFromBacklog([item("A", ["Z"])], { projectId: "p", prefix: "T" })).toThrow(/unknown dependency Z.*A/i);
   });
+
+  it("plans one milestone with --only, drops dependencies on the rest, and ties critical tasks to their approved design or says one is missing (B-159)", async () => {
+    const items = parseSurveyBacklog(await readFile(new URL("./fixtures/survey-luxus-app.md", import.meta.url), "utf8"));
+    const only = ["R3", "R4", "R5", "R12"];
+    const bare = planFromBacklog(items, { projectId: "luxus", prefix: "LUX", only });
+    const critical = bare.spec.tasks.filter(task => task.prompt.includes("Critical: yes")).map(task => ({ taskId: task.taskId, area: /^Area: (.+)$/m.exec(task.prompt)![1]! }));
+    expect(critical.length).toBeGreaterThan(0);
+    const area = critical[0]!.area;
+    const withDesign = planFromBacklog(items, { projectId: "luxus", prefix: "LUX", only, designs: { [area]: `docs/design/${area}.md` } });
+    expect(withDesign.spec.tasks.map(task => task.taskId).sort()).toEqual(only.map(id => `LUX-${id}`).sort());
+    const prompts = Object.fromEntries(withDesign.spec.tasks.map(task => [task.taskId, task.prompt]));
+    for (const task of critical) {
+      const prompt = prompts[task.taskId]!;
+      if (task.area === area) { expect(prompt).toContain(`Design: docs/design/${area}.md`); expect(prompt).toContain("build inside the approved design"); }
+      else { expect(prompt).not.toContain("Design:"); expect(prompt).toContain("no approved design exists for area " + task.area); }
+    }
+    expect(withDesign.needsDesign).toEqual([...new Set(critical.filter(task => task.area !== area).map(task => task.area))].sort());
+    expect(withDesign.plan.includes("## Needs an approved design first")).toBe(withDesign.needsDesign.length > 0);
+    const forced = planFromBacklog(items, { projectId: "luxus", prefix: "LUX", only: ["R12"], areas: { R12: { area: "build-release", critical: true } }, designs: { "build-release": "docs/design/build.md" } });
+    expect(forced.spec.tasks[0]!.prompt).toContain("Area: build-release");
+    expect(forced.spec.tasks[0]!.prompt).toContain("Critical: yes");
+    expect(forced.spec.tasks[0]!.prompt).toContain("Design: docs/design/build.md");
+    expect(() => planFromBacklog(items, { projectId: "luxus", prefix: "LUX", only: ["R3", "R99"] })).toThrow("Unknown backlog id(s) in --only: R99");
+  });
 });

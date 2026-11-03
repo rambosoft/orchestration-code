@@ -51,7 +51,13 @@ export function parseSurveyBacklog(markdown: string): BacklogItem[] {
   return rows;
 }
 
-export function planFromBacklog(items: BacklogItem[], options: { projectId: string; prefix: string; reference?: boolean; characterize?: boolean }): { spec: Pick<E2eSpec, "projectId" | "tasks">; plan: string; needsDecision: BacklogItem[] } {
+export function planFromBacklog(items: BacklogItem[], options: { projectId: string; prefix: string; reference?: boolean; characterize?: boolean; /** Only these backlog ids (one milestone); dependencies on the others count as done elsewhere. */ only?: string[]; /** Approved design document per area (B-159): a critical task of that area carries `Design:`. */ designs?: Record<string, string>; /** Area and criticality per backlog id, when the guess from the old paths is not what the plan says. */ areas?: Record<string, { area: string; critical: boolean }> }): { spec: Pick<E2eSpec, "projectId" | "tasks">; plan: string; needsDecision: BacklogItem[]; needsDesign: string[] } {
+  if (options.only?.length) {
+    const wanted = new Set(options.only);
+    const unknown = options.only.filter(id => !items.some(item => item.id === id));
+    if (unknown.length) throw new Error("Unknown backlog id(s) in --only: " + unknown.join(", "));
+    items = items.filter(item => wanted.has(item.id)).map(item => ({ ...item, depends_on: item.depends_on.filter(dep => wanted.has(dep)) }));
+  }
   const byId = new Map(items.map(item => [item.id, item]));
   for (const item of items) for (const dep of item.depends_on) if (!byId.has(dep)) throw new Error("Unknown dependency " + dep + " referenced by " + item.id);
   const needsDecision = items.filter(item => item.changes_behaviour);
@@ -66,19 +72,21 @@ export function planFromBacklog(items: BacklogItem[], options: { projectId: stri
     if (!ready.length) throw new Error("Dependency cycle among backlog ids: " + [...remaining].sort().join(", "));
     for (const item of ready) { ordered.push(item); remaining.delete(item.id); }
   }
-  const routed = ordered.map(item => item.area === "general" && !item.critical ? { ...item, ...inferArea(item.old_paths) } : item);
+  const routed = ordered.map(item => options.areas?.[item.id] ? { ...item, ...options.areas[item.id]! } : item.area === "general" && !item.critical ? { ...item, ...inferArea(item.old_paths) } : item);
   const tasks = routed.map(item => {
     const inChain = item.depends_on.filter(dep => !decisionIds.has(dep));
     const pendingDeps = item.depends_on.filter(dep => decisionIds.has(dep));
     const files = item.old_paths.map(file => "- " + (options.reference ? "reference repository: " : "") + file).join("\n") || "- none listed";
     const characterize = options.characterize ? "CHARACTERIZE FIRST (B-110): before porting, write docs/characterization/" + item.id.toLowerCase() + ".json from the OLD files (format and rules: docs/characterization/README.md; legacy file:line sources, basis static or observed), list each case under ## Cases of its page document and cite it in a test; npm run check:parity must pass." : "";
-    const critical = item.critical ? "CRITICAL AREA: a design note is required; write docs/decisions/" + item.area + ".md first and stop for review before implementing. This instruction is stated for the runner and is not enforced here." : "This is not marked as a critical area.";
-    const prompt = ["Area: " + item.area, ...(item.critical ? ["Critical: yes"] : []), "Goal: " + item.title, "Title: " + item.title, "Kind: " + item.kind + "; size: " + item.size + "; area: " + item.area + ".", critical, "OLD files to read:" , files, "Target: " + item.target, characterize, "Tests that must prove equal behaviour: " + (item.tests.join("; ") || "add or update tests that demonstrate the existing behaviour is preserved"), "Dependencies already in this chain: " + (inChain.join(", ") || "none"), pendingDeps.length ? "Dependencies pending a decision: " + pendingDeps.join(", ") + ". Continue this task while recording that prerequisite as pending." : "", "Port behaviour, not code. Restructure the implementation and extract logic to hooks or utils where appropriate. Follow AGENTS.md and keep npm run verify green. Record changes that would alter architecture or visible behaviour in docs/migration/findings.md and unfinished work in docs/migration/todo.md. Add a row per ported file to docs/migration/map.md. Page folders get docs/pages/<page>.md with case ids cited by tests. Support Chrome 53: do not use CSS max(), min(), or clamp(); use rem tokens.", "Acceptance criteria:", "1. The stated goal is implemented at the target.", "2. Existing behaviour is covered by tests and remains equal.", "3. Migration records and required documentation are updated.", "4. npm run verify passes."].filter(Boolean).join("\n");
+    const design = options.designs?.[item.area];
+    const critical = item.critical ? (design ? "CRITICAL AREA: build inside the approved design " + design + "; its protected constraints are binding and the task is refused at admission without it." : "CRITICAL AREA: no approved design exists for area " + item.area + " yet; this task cannot start until docs/design/" + item.area + ".md is approved and merged (B-159).") : "This is not marked as a critical area.";
+    const prompt = ["Area: " + item.area, ...(item.critical ? ["Critical: yes", ...(design ? ["Design: " + design] : [])] : []), "Goal: " + item.title, "Title: " + item.title, "Kind: " + item.kind + "; size: " + item.size + "; area: " + item.area + ".", critical, "OLD files to read:" , files, "Target: " + item.target, characterize, "Tests that must prove equal behaviour: " + (item.tests.join("; ") || "add or update tests that demonstrate the existing behaviour is preserved"), "Dependencies already in this chain: " + (inChain.join(", ") || "none"), pendingDeps.length ? "Dependencies pending a decision: " + pendingDeps.join(", ") + ". Continue this task while recording that prerequisite as pending." : "", "Port behaviour, not code. Restructure the implementation and extract logic to hooks or utils where appropriate. Follow AGENTS.md and keep npm run verify green. Record changes that would alter architecture or visible behaviour in docs/migration/findings.md and unfinished work in docs/migration/todo.md. Add a row per ported file to docs/migration/map.md. Page folders get docs/pages/<page>.md with case ids cited by tests. Support Chrome 53: do not use CSS max(), min(), or clamp(); use rem tokens.", "Acceptance criteria:", "1. The stated goal is implemented at the target.", "2. Existing behaviour is covered by tests and remains equal.", "3. Migration records and required documentation are updated.", "4. npm run verify passes."].filter(Boolean).join("\n");
     if (prompt.length >= 3500) throw new Error("Prompt for " + item.id + " exceeds 3500 characters");
     return { taskId: options.prefix + "-" + item.id, title: item.title, prompt };
   });
+  const needsDesign = [...new Set(routed.filter(item => item.critical && !options.designs?.[item.area]).map(item => item.area))].sort();
   const groups = new Map<string, BacklogItem[]>();
   for (const item of routed) groups.set(item.area, [...(groups.get(item.area) ?? []), item]);
   const plan = ["# Survey task plan", ...[...groups].map(([area, group]) => "## " + area + "\n" + group.map(item => "- " + options.prefix + "-" + item.id + " — " + item.title + " (" + item.size + ")").join("\n")), "## Needs a decision", needsDecision.length ? needsDecision.map(item => "- " + item.id + " — " + item.title + " (" + item.area + ", " + item.size + ")").join("\n") : "- none"].join("\n\n");
-  return { spec: { projectId: options.projectId, tasks }, plan, needsDecision };
+  return { spec: { projectId: options.projectId, tasks }, plan, needsDecision, needsDesign };
 }

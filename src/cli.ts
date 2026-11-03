@@ -56,12 +56,15 @@ async function main() {
     const file = args[0];
     const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
     const projectId = option("--project"); const prefix = option("--prefix"); const output = option("--out") ?? `${file}.tasks.json`;
-    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize]");
-    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize") });
+    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] [--only R3,R4] [--design area=docs/design/x.md] [--area R5=cache-storage:critical]");
+    const only = option("--only")?.split(",").map(id => id.trim()).filter(Boolean);
+    const designs = Object.fromEntries(args.flatMap((arg, index) => arg === "--design" && args[index + 1]?.includes("=") ? [args[index + 1]!.split("=") as [string, string]] : []));
+    const areas = Object.fromEntries(args.flatMap((arg, index) => { const match = arg === "--area" ? /^([A-Za-z0-9-]+)=([a-z0-9-]+)(:critical)?$/.exec(args[index + 1] ?? "") : null; return match ? [[match[1]!, { area: match[2]!, critical: Boolean(match[3]) }]] : []; }));
+    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize"), ...(only?.length ? { only } : {}), designs, areas });
     const planFile = /\.json$/i.test(output) ? output.replace(/\.json$/i, ".plan.md") : `${output}.plan.md`;
     await writeFile(output, `${JSON.stringify(result.spec, null, 2)}\n`, "utf8");
     await writeFile(planFile, `${result.plan}\n`, "utf8");
-    console.log(`wrote ${result.spec.tasks.length} tasks to ${output}; ${result.needsDecision.length} need a decision; plan: ${planFile}`);
+    console.log(`wrote ${result.spec.tasks.length} tasks to ${output}; ${result.needsDecision.length} need a decision; ${result.needsDesign.length} area(s) still need an approved design (${result.needsDesign.join(", ") || "none"}); plan: ${planFile}`);
     return;
   }
   if (command === "run") {
