@@ -25,13 +25,22 @@ html {
   font-size: 1.6vh;
 }
 
-@media (max-height: 540px) {
-  html { font-size: 9px; }
+/* Readable floors, media queries only (Chrome 53 has no max(), min() or clamp()). Full-height containers use min-height: 100vh, never a rem value. */
+@media (max-height: 750px) {
+  html { font-size: 12px; }
 }
 
 @media (max-aspect-ratio: 1/1) {
   /* Portrait (phones): scale from the width instead. */
   html { font-size: 2.4vw; }
+}
+
+@media (max-aspect-ratio: 1/1) and (max-width: 749px) {
+  html { font-size: 18px; }
+}
+
+@media (max-aspect-ratio: 1/1) and (max-width: 480px) {
+  html { font-size: 16px; }
 }
 
 body {

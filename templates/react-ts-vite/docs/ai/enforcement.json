@@ -13,7 +13,7 @@
   { "id": "R-012", "gate": "check:pages" },
   { "id": "R-013", "gate": "check:ai" },
   { "id": "R-014", "gate": "prose" },
-  { "id": "R-015", "gate": "prose" },
+  { "id": "R-015", "gate": "check:styles" },
   { "id": "R-016", "gate": "prose" },
   { "id": "R-017", "gate": "prose" },
   { "id": "R-018", "gate": "prose" },

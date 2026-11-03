@@ -54,6 +54,42 @@ describe("check-ai-files", () => {
   });
 });
 
+describe("check-style-tokens", () => {
+  const css = (body: string) => ({ "src/components/box.css": `.box {\n${body}\n}\n` });
+  it("accepts tokens, rem, 100vh min-height, px in a media query, tagged exceptions and anything under src/styles or in tests", async () => {
+    const files = {
+      ...css("  color: var(--color-text);\n  padding: 1.5rem;\n  min-height: 100vh;\n  border: 1px solid var(--color-focus); /* token-ok: hairline on a 1x panel */"),
+      "src/components/q.css": "@media (max-height: 750px) {\n  .a { margin: var(--space-2); }\n}\n",
+      "src/styles/tokens.css": ":root { --color-bg: #0b0b12; font-size: 12px; }\n",
+      "src/x.test.tsx": "const c = '#fff'; const w = '10px';\n",
+      "src/ok.tsx": "const style = { color: 'var(--color-text)' };\n",
+    };
+    const result = await check("check-style-tokens.mjs", await project(files));
+    expect(result.code, result.out).toBe(0);
+  });
+  it.each([
+    ["  color: #fff;", "raw colour"], ["  background: rgba(0, 0, 0, 0.5);", "raw colour"], ["  --accent: hsl(10 20% 30%);", "raw colour"],
+    ["  padding: 12px;", "raw px"], ["  margin: -0.5px;", "raw px"],
+    ["  height: 50vh;", "viewport unit 50vh"], ["  width: 100vw;", "viewport unit 100vw"], ["  font-size: 2vmin;", "viewport unit 2vmin"], ["  padding: 100vh;", "viewport unit 100vh"],
+  ])("fails %s", async (body, expected) => {
+    const result = await check("check-style-tokens.mjs", await project(css(body)));
+    expect(result.code).toBe(1);
+    expect(result.out).toContain(expected);
+    expect(result.out).toContain("src/components/box.css:2");
+  });
+  it("fails inline colours and sizes in TSX strings, ignores code outside strings and comments", async () => {
+    const bad = await check("check-style-tokens.mjs", await project({ "src/a.tsx": "export const a = <div style={{ color: '#abc', width: '20px' }} />;\n" }));
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("raw colour");
+    expect(bad.out).toContain("raw px");
+    const fine = await check("check-style-tokens.mjs", await project({ "src/b.tsx": "// colour #fff and 12px are described here\nexport const n = 12;\n", "src/c.css": "/* old: #fff 12px 50vh */\n.c { color: var(--color-text); }\n" }));
+    expect(fine.code, fine.out).toBe(0);
+  });
+  it("treats a tag without a reason as no tag", async () => {
+    expect((await check("check-style-tokens.mjs", await project(css("  padding: 3px; /* token-ok: */")))).code).toBe(1);
+  });
+});
+
 describe("check-debt-ledger", () => {
   const header = "| ID | Reason | Risk | Next action | Owner | Tracking | Review date |\n|---|---|---|---|---|---|---|\n";
   const row = (id: string, date = "2099-01-01", reason = "kept for old TVs") => `| ${id} | ${reason} | low | replace with the hook | team | #12 | ${date} |\n`;
@@ -118,7 +154,7 @@ describe("apply-react-pack", () => {
     expect(stdout).toContain("pack react-ts-vite");
     const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(manifest.scripts.test).toBe("vitest run");
-    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
+    for (const script of ["verify", "typecheck", "lint", "knip", "depcruise", "jscpd", "check:ai", "check:debt", "check:pages", "check:styles", "test:related"]) expect(manifest.scripts[script], script).toBeTruthy();
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toContain("# Demo App: agent rules");
     expect(await readFile(path.join(root, "ENGINEERING_STANDARDS.md"), "utf8")).toContain("Engineering standards: React + TypeScript + Vite");
     expect((await readFile(path.join(root, "src/main.tsx"), "utf8")).startsWith("import \"./styles/tokens.css\";")).toBe(true);
