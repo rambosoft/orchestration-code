@@ -1,6 +1,7 @@
 # STATUS (rewritten each update)
 
 ## Current checkout audit and provider update (2026-10-26)
+- 2026-11-03 B-164 DONE (Graphify: adopt, limited, later; see research/b164-graphify-spike.md). NEXT: server synthesis (Antigravity), create the Paperclip project and M1 issues (ask assigned or not), R4 design after Xtream playlist arrives.
 - 2026-11-03 B-173 done (see B-172).
 - 2026-11-03 B-172 DONE and B-173 DONE: storage and input designs approved (luxus-app-react PR 11 awaiting the operator's merge). NEXT: merge PR 11, deploy worker+bridge, B-164 (needs install approval), full-suite run, Paperclip project.
 - 2026-11-03 B-125 DONE (media-tv-app overlay pack). NEXT: B-172/B-173 design drafts (agy running), B-164 deferred, deploy worker+bridge, luxus pack re-apply PR, Paperclip project.
