@@ -28,7 +28,8 @@
   "scripts": {
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
+    "build": "vite build",
     "test:related": "vitest related --run --passWithNoTests",
     "test:input": "vitest run src/input --passWithNoTests",
     "test:storage": "vitest run src/storage --passWithNoTests",
@@ -42,6 +43,21 @@
     "check:pages": "node scripts/check-page-docs.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run knip && npm run depcruise && npm run jscpd && npm run check:ai && npm run check:debt && npm run check:pages"
   },
-  "devDependencies": ["eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-react-hooks", "eslint-plugin-jsx-a11y", "eslint-plugin-jsdoc", "globals", "knip", "dependency-cruiser", "jscpd"],
+  "removeDevDependencies": ["oxlint"],
+  "replaceScripts": { "lint": ["oxlint"] },
+  "gates": [
+    { "script": "typecheck", "parallel": true },
+    { "script": "lint", "parallel": true },
+    { "script": "knip", "parallel": true },
+    { "script": "depcruise", "parallel": true },
+    { "script": "jscpd", "parallel": true },
+    { "script": "check:ai", "parallel": true },
+    { "script": "check:debt", "parallel": true },
+    { "script": "check:pages", "parallel": true },
+    { "script": "test:related", "extra": ["--", "{changed}"] },
+    { "script": "build" },
+    { "script": "test", "scope": "milestone" }
+  ],
+  "devDependencies": ["typescript@~6.0.3", "vitest", "eslint@^9.39.5", "@eslint/js@^9.39.5", "typescript-eslint", "eslint-plugin-react-hooks", "eslint-plugin-jsx-a11y", "eslint-plugin-jsdoc", "globals", "knip", "dependency-cruiser", "jscpd"],
   "mainImports": ["./styles/tokens.css"]
 }

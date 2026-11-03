@@ -52,6 +52,8 @@ const manifest = JSON.parse(readFileSync(packageFile, "utf8"));
 manifest.scripts ??= {};
 const addedScripts = [];
 for (const [script, command] of Object.entries(pack.scripts)) if (!(script in manifest.scripts)) { manifest.scripts[script] = command; addedScripts.push(script); }
+// A scaffold default the pack supersedes (Vite ships `lint: oxlint`) is replaced; any other existing script is kept.
+for (const [script, defaults] of Object.entries(pack.replaceScripts ?? {})) if (defaults.includes(manifest.scripts[script])) { manifest.scripts[script] = pack.scripts[script]; addedScripts.push(`${script} (replaced)`); }
 writeFileSync(packageFile, `${JSON.stringify(manifest, null, 2)}\n`);
 
 const main = ["src/main.tsx", "src/main.ts"].map(file => path.join(root, file)).find(existsSync);
@@ -64,7 +66,10 @@ if (main) {
 console.log(`pack ${pack.id}: wrote ${written.length}, kept ${skipped.length} existing file(s), added scripts: ${addedScripts.join(", ") || "none"}`);
 if (skipped.length) console.log(`kept (use --force to replace): ${skipped.join(", ")}`);
 const install = ["install", "-D", ...pack.devDependencies];
+const removable = (pack.removeDevDependencies ?? []).filter(name => name in (manifest.devDependencies ?? {}));
 if (flag("install")) {
-  const result = spawnSync("npm", install, { cwd: root, stdio: "inherit", shell: true });
-  process.exit(result.status ?? 1);
-} else console.log(`next: cd ${root} && npm ${install.join(" ")}`);
+  let status = spawnSync("npm", install, { cwd: root, stdio: "inherit", shell: true }).status ?? 1;
+  // Scaffold tooling the pack supersedes (Vite ships oxlint) would be reported unused by knip.
+  if (status === 0 && removable.length) status = spawnSync("npm", ["uninstall", ...removable], { cwd: root, stdio: "inherit", shell: true }).status ?? 1;
+  process.exit(status);
+} else console.log(`next: cd ${root} && npm ${install.join(" ")}${removable.length ? ` && npm uninstall ${removable.join(" ")}` : ""}`);

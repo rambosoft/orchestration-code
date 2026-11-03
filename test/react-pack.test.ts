@@ -1,7 +1,7 @@
 // The react-ts-vite pack's check scripts (ADR 0034, 0035): they run in every new React project, so each one is proven here against fixtures that violate exactly one rule.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -102,6 +102,16 @@ describe("check-page-docs", () => {
 describe("apply-react-pack", () => {
   const apply = (root: string, ...extra: string[]) => run("node", [path.resolve("scripts/apply-react-pack.mjs"), root, "--name", "Demo App", ...extra]);
   const base = { "package.json": JSON.stringify({ name: "demo", scripts: { test: "vitest run" } }), "src/main.tsx": "import App from './App';\n" };
+  it("replaces the Vite default lint script, announces the superseded oxlint and pins the toolchain the gates need", async () => {
+    const root = await project({ "package.json": JSON.stringify({ name: "demo", scripts: { lint: "oxlint" }, devDependencies: { oxlint: "^1.0.0" } }), "src/main.tsx": "import App from './App';\n" });
+    const { stdout } = await apply(root);
+    expect(JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts.lint).toBe("eslint .");
+    expect(stdout).toContain("npm uninstall oxlint");
+    for (const pin of ["typescript@~6.0.3", "eslint@^9.39.5", "@eslint/js@^9.39.5", "vitest"]) expect(stdout, pin).toContain(pin);
+    const custom = await project({ "package.json": JSON.stringify({ name: "demo", scripts: { lint: "biome check" } }), "src/main.tsx": "import App from './App';\n" });
+    await apply(custom);
+    expect(JSON.parse(await readFile(path.join(custom, "package.json"), "utf8")).scripts.lint).toBe("biome check");
+  });
   it("installs the pack into a Vite project, keeps existing scripts, and the result passes its own checks", async () => {
     const root = await project(base);
     const { stdout } = await apply(root);
@@ -142,6 +152,43 @@ describe("apply-react-pack", () => {
   });
   it("refuses a folder that is not a project", async () => {
     await expect(apply(await project({ "readme.txt": "x" }))).rejects.toMatchObject({ code: 2 });
+  });
+});
+
+describe("onboard --pack", () => {
+  const orchestrator = path.resolve(".");
+  const manifestId = `pack-onboard-${process.pid}`;
+  const manifestFile = path.join(orchestrator, "projects", `${manifestId}.json`);
+  async function target(): Promise<string> {
+    const root = await project({ "package.json": JSON.stringify({ name: "demo", dependencies: { react: "19" }, scripts: {} }) });
+    await run("git", ["init", "-q"], { cwd: root });
+    return root;
+  }
+  const onboard = (root: string, write: boolean) => run("node", ["--import", "tsx", "src/cli.ts", "onboard", root, "--name", "Demo App", "--tier", "mvp", "--id", manifestId, "--pack", "react-ts-vite", ...(write ? ["--write"] : [])], { cwd: orchestrator, encoding: "utf8" });
+  afterEach(async () => { await rm(manifestFile, { force: true }); });
+  it("prints a dry run without changing the repository", async () => {
+    const root = await target();
+    const result = await onboard(root, false);
+    expect(result.stdout).toContain('"npm"');
+    expect(result.stderr).toContain("would be applied");
+    expect(result.stderr).toContain("npm install -D");
+    await expect(readFile(path.join(root, "AGENTS.md"), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, "scripts", "check-ai-files.mjs"), "utf8")).rejects.toThrow();
+    await expect(readFile(manifestFile, "utf8")).rejects.toThrow();
+  });
+  it("applies files on write and keeps them on an idempotent second run", async () => {
+    const root = await target();
+    const first = await onboard(root, true);
+    expect(first.stdout).toContain("pack react-ts-vite: wrote");
+    expect(first.stdout).toContain("npm install -D");
+    const files = ["AGENTS.md", "scripts/check-ai-files.mjs", "scripts/check-debt-ledger.mjs", "scripts/check-page-docs.mjs"];
+    for (const file of files) await expect(readFile(path.join(root, file), "utf8")).resolves.toBeTruthy();
+    expect(await readdir(path.join(root, "docs/ai/standards"))).not.toHaveLength(0);
+    const before = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    await rm(manifestFile, { force: true });
+    const second = await onboard(root, true);
+    expect(second.stdout).toContain("kept");
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(before);
   });
 });
 

@@ -16,7 +16,7 @@ const STORAGE_GLOBALS = [
 ];
 
 export default tseslint.config(
-  { ignores: ["dist", "coverage", "node_modules", "scripts"] },
+  { ignores: ["dist", "coverage", "node_modules", "scripts", ".dependency-cruiser.cjs"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

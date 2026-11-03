@@ -1,4 +1,6 @@
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import { ProjectManifestSchema } from "./contracts.js";
 import { cancelRun, inspectRun, listRuns, signalApproval, resumeRun, startRun } from "./client.js";
@@ -15,11 +17,12 @@ import { admitRepository, taskBranch } from "./workspaces.js";
 import { profiles } from "./profiles.js";
 import { parseTaskDirectives, resolveOpenSpecEnabled } from "./openspec.js";
 import { resolveProjectUiUx } from "./uiux-config.js";
-import { onboardManifest } from "./stack-packs.js";
+import { findOrchestratorRoot, onboardManifest, ONBOARD_PACK_IDS } from "./stack-packs.js";
 import { browseRoots, inspectExistingFolder, listFolders } from "./existing-project.js";
 import { TIERS, type Tier } from "./lanes.js";
 import { STACK_PROFILE_IDS, type StackProfileId } from "./stack-profiles.js";
 import { access, writeFile } from "node:fs/promises";
+const exec = promisify(execFile);
 import { parseSurveyBacklog, planFromBacklog } from "./plan-from-survey.js";
 
 const [command, ...args] = process.argv.slice(2);
@@ -155,16 +158,32 @@ async function main() {
     return;
   }
   if (command === "onboard") {
-    // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--remote origin] [--branch main] [--write]
+    // Register an existing repository: dev onboard <repo folder> --name <name> --tier <tier> [--id <id>] [--profile <profile>] [--pack <id>] [--install] [--write]
     const option = (name: string): string | undefined => { const index = args.indexOf(`--${name}`); return index >= 0 ? args[index + 1] : undefined; };
     const folder = args[0]; const name = option("name"); const tier = option("tier") as Tier | undefined; const profile = option("profile") as StackProfileId | undefined;
-    if (!folder || folder.startsWith("--") || !name || !tier || !TIERS.includes(tier) || (profile !== undefined && !STACK_PROFILE_IDS.includes(profile))) throw new Error(`usage: dev onboard <repo folder> --name <name> --tier ${TIERS.join("|")} [--id <id>] [--profile ${STACK_PROFILE_IDS.join("|")}] [--remote origin] [--branch main] [--write]`);
-    const { manifest, notes } = onboardManifest({ root: folder, name, tier, ...(option("id") ? { id: option("id")! } : {}), ...(profile ? { profile } : {}), ...(option("remote") ? { remote: option("remote")! } : {}), ...(option("branch") ? { targetBranch: option("branch")! } : {}) });
+    const pack = option("pack"); const writing = args.includes("--write"); const install = args.includes("--install");
+    if (pack && !ONBOARD_PACK_IDS.includes(pack as typeof ONBOARD_PACK_IDS[number])) throw new Error(`unknown pack '${pack}'; valid packs: ${ONBOARD_PACK_IDS.join(", ")}`);
+    if (!folder || folder.startsWith("--") || !name || !tier || !TIERS.includes(tier) || (profile !== undefined && !STACK_PROFILE_IDS.includes(profile))) throw new Error(`usage: dev onboard <repo folder> --name <name> --tier ${TIERS.join("|")} [--id <id>] [--profile ${STACK_PROFILE_IDS.join("|")}] [--pack ${ONBOARD_PACK_IDS.join("|")}] [--install] [--write]`);
+    const orchestratorRoot = findOrchestratorRoot();
+    let packJson: { devDependencies: string[] } | undefined;
+    if (pack) {
+      packJson = JSON.parse(await readFile(path.join(orchestratorRoot, "templates", pack, "pack.json"), "utf8")) as { devDependencies: string[] };
+      if (writing) {
+        const script = path.join(orchestratorRoot, "scripts", "apply-react-pack.mjs");
+        const result = await exec("node", [script, folder, "--name", name, ...(install ? ["--install"] : [])], { cwd: orchestratorRoot, encoding: "utf8" });
+        if (result.stdout) console.log(result.stdout.trimEnd());
+        if (result.stderr) console.error(result.stderr.trimEnd());
+      } else {
+        console.error(`pack ${pack} would be applied to ${path.resolve(folder)}`);
+      }
+      if (!install) console.error(`next: cd ${path.resolve(folder)} && npm install -D ${packJson.devDependencies.join(" ")}`);
+    }
+    const { manifest, notes } = onboardManifest({ root: folder, name, tier, ...(option("id") ? { id: option("id")! } : {}), ...(profile ? { profile } : {}), ...(pack ? { pack: pack as typeof ONBOARD_PACK_IDS[number] } : {}), ...(option("remote") ? { remote: option("remote")! } : {}), ...(option("branch") ? { targetBranch: option("branch")! } : {}) });
     const text = `${JSON.stringify(manifest, null, 2)}\n`;
-    if (!args.includes("--write")) { console.log(text); console.error(notes.map(note => `- ${note}`).join("\n")); return; }
+    if (!writing) { console.log(text); console.error(notes.map(note => `- ${note}`).join("\n")); if (pack) console.error("rebuild the bridge to load the updated manifest"); return; }
     const file = path.join(path.resolve("projects"), `${String(manifest.id)}.json`);
     if (await access(file).then(() => true, () => false)) throw new Error(`${file} already exists; remove it or pass another --id`);
-    await writeFile(file, text, "utf8"); console.log(`wrote ${file}`); console.log(notes.map(note => `- ${note}`).join("\n")); return;
+    await writeFile(file, text, "utf8"); console.log(`wrote ${file}`); console.log(notes.map(note => `- ${note}`).join("\n")); if (pack) console.log("rebuild the bridge to load the updated manifest"); return;
   }
   if (command === "resume-run") {
     const budgetIndex = args.indexOf("--budget"); const budget = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;

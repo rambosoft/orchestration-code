@@ -3,6 +3,7 @@
 // existing project in one command, at the tier the operator chooses. A new stack is one entry in PACKS plus a fixture in test/stack-packs.test.ts.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_BOOTSTRAP_CONFIG } from "./bootstrap.js";
 import { unityGates } from "./bootstrap-templates.js";
 import { ProjectManifestSchema, type QualityCommand } from "./contracts.js";
@@ -11,6 +12,17 @@ import { parseUnityEditorVersion, type StackProfileId } from "./stack-profiles.j
 import { detectStack } from "./stack-traits.js";
 
 export type TestDepth = "smoke" | "unit" | "integration";
+export const ONBOARD_PACK_IDS = ["react-ts-vite"] as const;
+export type OnboardPackId = typeof ONBOARD_PACK_IDS[number];
+type PackGate = { script: string; extra?: string[]; scope?: "milestone"; parallel?: boolean };
+/** The orchestrator checkout holding templates/ and scripts/, found by walking up from this module so it works from src/ (tests) and dist/src/; the bridge image has no templates/, so nothing reads them at import time. */
+export function findOrchestratorRoot(from = path.dirname(fileURLToPath(import.meta.url))): string {
+  for (let dir = from; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, "templates", "react-ts-vite", "pack.json"))) return dir;
+    if (path.dirname(dir) === dir) throw new Error(`orchestrator templates/ not found above ${from}`);
+  }
+}
+export const readReactPack = () => JSON.parse(readFileSync(path.join(findOrchestratorRoot(), "templates", "react-ts-vite", "pack.json"), "utf8")) as { scripts: Record<string, string>; devDependencies: string[]; gates: PackGate[] };
 type Repo = { root: string; read: (file: string) => string | undefined; has: (file: string) => boolean };
 type Pack = {
   label: string;
@@ -94,7 +106,7 @@ export function detectStackProfile(root: string): StackProfileId | undefined {
   return (Object.entries(PACKS) as Array<[StackProfileId, Pack]>).sort((a, b) => a[1].priority - b[1].priority).find(([, pack]) => pack.matches(repo))?.[0];
 }
 
-export type OnboardInput = { root: string; name: string; tier: Tier; id?: string; remote?: string; targetBranch?: string; profile?: StackProfileId; testDepth?: TestDepth };
+export type OnboardInput = { root: string; name: string; tier: Tier; id?: string; remote?: string; targetBranch?: string; profile?: StackProfileId; testDepth?: TestDepth; pack?: OnboardPackId | string };
 const slug = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 
 /**
@@ -103,13 +115,16 @@ const slug = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/
  */
 export function onboardManifest(input: OnboardInput): { manifest: Record<string, unknown>; notes: string[] } {
   if (!TIERS.includes(input.tier)) throw new Error(`tier must be one of ${TIERS.join(", ")}`);
+  if (input.pack && !ONBOARD_PACK_IDS.includes(input.pack as OnboardPackId)) throw new Error(`unknown pack '${input.pack}'; valid packs: ${ONBOARD_PACK_IDS.join(", ")}`);
   const root = path.resolve(input.root);
   if (!existsSync(root)) throw new Error(`${root} does not exist`);
   const profile = input.profile ?? detectStackProfile(root);
   if (!profile) throw new Error(`no stack pack recognises ${root}; pass --profile ${Object.keys(PACKS).join("|")} if it is one of them`);
   const pack = PACKS[profile]; const repo = repoAt(root);
   const depth = input.testDepth ?? (input.tier === "throwaway" || input.tier === "prototype" ? "smoke" : input.tier === "mvp" ? "unit" : "integration");
-  const { gates, notes } = pack.gates(repo, depth, input.tier);
+  const { gates, notes } = input.pack === "react-ts-vite"
+    ? { gates: readReactPack().gates.map(gate => ({ executable: "npm" as const, args: gate.script === "test" ? ["test", ...(gate.extra ?? [])] : ["run", gate.script, ...(gate.extra ?? [])], ...(gate.scope ? { scope: gate.scope } : {}), ...(gate.parallel ? { parallel: true } : {}) })), notes: [] as string[] }
+    : pack.gates(repo, depth, input.tier);
   if (gates.length === 0) throw new Error(`no quality gate could be derived for ${pack.label} in ${root}: ${notes.join("; ") || "add a test or build script"}`);
   const others = detectStack(root).filter(item => item.root !== "").map(item => `${item.family} in ${item.root}/`);
   if (others.length) notes.push(`other stacks found in sub-folders (${others.join(", ")}); this manifest gates the root only`);
