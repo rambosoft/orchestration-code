@@ -35,6 +35,8 @@ export class FakeProvider implements AgentProvider {
   readonly id = "fake";
   async run(input: StageInput): Promise<StageOutput> {
     if (input.prompt.includes("[TRANSIENT_ACTIVITY]") && (input.activityAttempt ?? 1) === 1) throw new Error("deterministic one-time Activity failure");
+    // [INJECT_NO_PROGRESS] fails implement the way the Codex no-progress guard does (task-size gate).
+    if (input.stage === "implement" && input.prompt.includes("[INJECT_NO_PROGRESS]")) throw new Error("codex no progress: no file change in 15 minutes");
     if (input.prompt.includes("[INVALID_RESULT]")) return { ok: true, summary: "invalid", findings: [], artifactRefs: [], provider: "", durationMs: -1 };
     let summary = `[fake:${input.stage}] ${input.prompt.slice(0, 180)}`;
     if (input.stage === "analyze") summary = JSON.stringify({ problem: "Deterministic fake analysis problem", constraints: ["Keep the result playable"], candidates: [{ name: "Linear ramp", summary: "Increase linearly with time", strengths: ["Simple"], weaknesses: ["Can outgrow human reaction time"] }, { name: "Eased capped ramp", summary: "Ease towards a capped maximum", strengths: ["Smooth", "Bounded"], weaknesses: ["More tuning"] }], evaluation_criteria: ["Fairness at the hardest level", "Smoothness of the increase"], chosen: { name: "Eased capped ramp", rationale: "Smooth and bounded, so the hardest stage stays playable", parameters: [{ name: "maxSpeed", value: "600 px/s", rationale: "Reachable with the existing jump" }] }, validation_properties: ["Every gap stays jumpable at maximum speed"], risks: ["Tuning needs playtesting"], implementation_requirements: ["Speed never exceeds maxSpeed"] });

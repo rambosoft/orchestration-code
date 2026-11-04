@@ -87,12 +87,12 @@ export function authoredLines(numstat: readonly string[]): number {
 }
 export type ChangeStats ={ files: string[]; lines: number; deletedFiles: string[]; countedFiles?: string[] };
 
-/** Why a result that skipped review should get one anyway. Empty means the lane's own stage list stands. */
-export function escalationReasons(stats: ChangeStats, unmetAcceptance: boolean): string[] {
+/** Why a result that skipped review should get one anyway. Empty means the lane's own stage list stands. `limits.maxFiles` (the tier's `largeMinFiles`, task-size gate) replaces the default file limit. */
+export function escalationReasons(stats: ChangeStats, unmetAcceptance: boolean, limits: { maxFiles?: number } = {}): string[] {
   const reasons: string[] = [];
   if (unmetAcceptance) reasons.push("the implementer reported acceptance criteria it did not meet");
-  const counted = (stats.countedFiles ?? stats.files).length;
-  if (counted > ESCALATION.maxFiles) reasons.push(`${counted} files changed (limit ${ESCALATION.maxFiles})`);
+  const counted = (stats.countedFiles ?? stats.files).length, maxFiles = limits.maxFiles ?? ESCALATION.maxFiles;
+  if (counted > maxFiles) reasons.push(`${counted} files changed (limit ${maxFiles})`);
   if (stats.lines > ESCALATION.maxLines) reasons.push(`${stats.lines} lines changed (limit ${ESCALATION.maxLines})`);
   const risky = stats.files.filter(file => RISKY_PATH.test(file.replace(/\\/g, "/")));
   if (risky.length) reasons.push(`touches security, data or deployment paths (${risky.slice(0, 3).join(", ")})`);

@@ -224,6 +224,15 @@ async function runProject(input: RunInput): Promise<RunResult> {
   // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
   const withWarnings = (message: string): string => warnings.length ? `${message} (${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(warning => `${warning.stage}: ${warning.message}`).join(" | ").slice(0, 1200)})` : message;
   const finish = (status: RunResult["status"], message: string): RunResult => ({ runId: input.runId, status, stages, artifactRefs, message, metadata: resultMetadata() });
+  // Task-size gate (B-183): an implement failure that says the task is too big for one pass (no progress, an implement timeout) is returned as a split request with the size evidence.
+  // Only for runs admitted with sizing; result data only, so the command sequence is unchanged.
+  const finishImplementFailure = (message: string, error: unknown): RunResult => {
+    const failure = input.sizing ? classifyFailure({ message: failureDetails(error) }) : undefined;
+    if (failure?.kind !== "size") return finish("failed", message);
+    const result = finish("failed", `needs split: ${message}`);
+    return { ...result, metadata: { ...result.metadata!, size: { kind: "size_suspected", reason: failure.reason, ...(input.size ? { estimate: input.size } : {}) } } };
+  };
+  if (input.sizeWarning) warnings.push({ stage: "size", message: input.sizeWarning });
   let workflowPrompt = input.prompt;
   let openSpecContext = "";
   let optimizedOpenSpec = "";
@@ -251,6 +260,8 @@ ${formatBrief(brief)}` : formatBrief(brief);
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId, ...(input.intelligence ? { intelligence: input.intelligence } : {}) };
     if (stage === "review" && input.visual) args.visual = input.visual;
     if (input.budget) args.budget = input.budget;
+    // The no-progress guard limits (task-size gate); only the Codex provider reads them, the others ignore the field.
+    if (stage === "implement" && input.sizing) args.progress = { firstEditMinutes: input.sizing.firstEditMinutes, idleMinutes: input.sizing.idleMinutes };
     // A usage limit or a lost connection waits on a timer and runs the same stage again without spending its retry attempts (ADR 0016); a pause that outlasts MAX_PAUSE_TOTAL_MS surfaces as a failure.
     // patched(): runs recorded before this change saw such a failure as an ordinary activity error.
     let output: StageOutput;
@@ -607,6 +618,12 @@ ${formatBrief(brief)}` : formatBrief(brief);
   // ADR 0031: a prototype reviews once per milestone, in the check task; the size and path escalation (more than 15 files or 600 lines, risky paths) added a review to nearly every screen task. patched(): runs recorded before this kept the escalation.
   if (lane && input.tier === "prototype" && patched("prototype-no-escalation")) lane.escalation = false;
   const stageList: WorkflowProfile["stages"] = lane ? [...lane.stages] : [...profile.stages];
+  // Task-size gate (B-183): the stage list admitted from the task's "Stages:" line or the manifest's lanes replaces the lane's, in canonical order (never verify before implement).
+  if (lane && input.stageList) {
+    const admitted = (["plan", "brief", "implement", "review", "verify"] as const).filter(stage => input.stageList!.includes(stage));
+    if (admitted.includes("implement") && admitted.includes("verify")) { stageList.splice(0, stageList.length, ...admitted); warnings.push({ stage: "stages", message: `stage list set: ${input.stageListReason ?? "run input"}` }); }
+    else warnings.push({ stage: "stages", message: `stage list ignored: it must contain implement and verify (${input.stageList.join(", ")}); the lane's own stages ran` });
+  }
   // Critical areas (B-129): the manifest lists paths whose change earns a focused review. Data on the run input, so a run without it takes exactly the path it always did.
   let specialistContext = "";
   const refreshSpecialists = async (): Promise<ReturnType<typeof matchSpecialists>> => {
@@ -718,6 +735,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
     catch (error) {
       if (isCancellation(error)) throw error;
       stopReason = stage === "plan" || stage === "brief" ? `${stage}_output_invalid` : `${stage}_activity_failed`;
+      if (stage === "implement") return finishImplementFailure(`${stage} Activity failed after bounded retries: ${failureDetails(error)}`, error);
       return finish("failed", stage === "plan" || stage === "brief" ? `${stage} could not be produced: ${failureDetails(error)}` : `${stage} Activity failed after bounded retries: ${failureDetails(error)}`);
     }
     if (stage === "review") {
@@ -763,7 +781,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
           stopReason = "blocking_findings_remain_after_final_review"; return finish("failed", `review quality gate failed after the maximum of ${maxRounds} review rounds`); }
         repairCount++;
         try { await execute("implement", { prompt: implementationPrompt(briefText(executionBrief!), blocking, gateCommands, uiUxContext, analysisDecisions, contractContext, skillsContext.implement) }); }
-        catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finish("failed", `repair Activity failed: ${failureDetails(error)}`); }
+        catch (error) { if (isCancellation(error)) throw error; stopReason = "repair_activity_failed"; return finishImplementFailure(`repair Activity failed: ${failureDetails(error)}`, error); }
         try {
           let verification = await execute("verify", { provider: "fake", model: undefined, verificationOnly: true });
           if (!verification.ok) verification = await repairGate(verification);
@@ -786,7 +804,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
     // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons).
     if ((lane?.escalation || input.specialists?.length) && stage === "implement" && !stageList.includes("review")) {
       const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
-      const reasons = [...(lane?.escalation && changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0) : []), ...(changes && input.specialists?.length ? specialistReasons(matchSpecialists(input.specialists, changes.files)) : [])];
+      const reasons = [...(lane?.escalation && changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0, input.sizing ? { maxFiles: input.sizing.largeMinFiles } : {}) : []), ...(changes && input.specialists?.length ? specialistReasons(matchSpecialists(input.specialists, changes.files)) : [])];
       if (reasons.length) { stageList.splice(stageList.indexOf("verify"), 0, "review"); warnings.push({ stage: "review", message: `review added to this ${input.lane} task: ${reasons.join("; ")}` }); }
     }
     completedStages.push(stage);
