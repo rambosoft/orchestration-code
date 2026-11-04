@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 import { progressVerdict, type ProgressLimits } from "./progress-guard.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -222,15 +223,22 @@ export function killedActivity(id: string, out: string): string {
 }
 
 const execFileAsync = promisify(execFile);
-/** The worktree's `git status --porcelain`, as the signature of "something changed". Throws when git fails. */
-const gitStatusSignature = async (cwd: string): Promise<string> => (await execFileAsync("git", ["status", "--porcelain"], { cwd, windowsHide: true, timeout: 20_000, maxBuffer: 10_000_000 })).stdout;
+type GitRead = (args: string[], cwd: string) => Promise<string>;
+const DIFF_READ_CAP = 5_000_000;
+const gitRead: GitRead = async (args, cwd) => (await execFileAsync("git", args, { cwd, windowsHide: true, timeout: 20_000, maxBuffer: args[0] === "diff" && !args.includes("--stat") ? DIFF_READ_CAP : 10_000_000 })).stdout;
+/** The signature of "something changed": `git status --porcelain` plus a hash of `git diff`, so a re-edit of an already-modified file counts (a repair round edits such files). A diff above the read cap hashes `git diff --stat` instead. Throws when git status fails. */
+export async function worktreeSignature(cwd: string, read: GitRead = gitRead): Promise<string> {
+  const status = await read(["status", "--porcelain"], cwd);
+  const diff = await read(["diff"], cwd).catch((error: unknown) => (error as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || /maxBuffer/i.test(String(error)) ? read(["diff", "--stat"], cwd) : "");
+  return `${status}\n${createHash("sha256").update(diff).digest("hex")}`;
+}
 /** Test hooks of the no-progress guard: the sampling interval and the worktree sampler. */
 export type ProgressGuardOptions = { intervalMs?: number; sample?: (cwd: string) => Promise<string> };
 
 /** Samples the worktree on a timer and kills the run once progressVerdict says it stopped; a failed sample is unknown and keeps the last signature. */
-/** Counts Codex events as stdout chunks arrive, independent of the capped output buffer: finished items and turns are progress, a command started and not finished is in flight. */
+/** Counts Codex events as stdout chunks arrive, independent of the capped output buffer: finished items and turns are progress, a command started and not finished is in flight, a finished file_change is a file edit. */
 export class CodexEventCounter {
-  done = 0; commandsStarted = 0; commandsDone = 0; private rest = "";
+  done = 0; commandsStarted = 0; commandsDone = 0; fileChanges = 0; private rest = "";
   push(chunk: Buffer): void {
     const lines = (this.rest + chunk.toString("utf8")).split("\n"); this.rest = (lines.pop() ?? "").slice(-5_000_000);
     for (const line of lines) {
@@ -239,7 +247,7 @@ export class CodexEventCounter {
         const event = JSON.parse(line) as { type?: unknown; item?: { type?: unknown } };
         const command = event.item?.type === "command_execution";
         if (event.type === "item.started" && command) this.commandsStarted++;
-        else if (event.type === "item.completed") { this.done++; if (command) this.commandsDone++; }
+        else if (event.type === "item.completed") { this.done++; if (command) this.commandsDone++; if (event.item?.type === "file_change") this.fileChanges++; }
         else if (event.type === "turn.completed") this.done++;
       } catch { /* not an event line */ }
     }
@@ -248,15 +256,16 @@ export class CodexEventCounter {
 }
 
 function startProgressGuard(child: ChildProcess, cwd: string, limits: ProgressLimits, events: CodexEventCounter, onStop: (reason: string) => void, options: ProgressGuardOptions = {}): { stop: () => void } {
-  const sample = options.sample ?? gitStatusSignature;
+  const sample = options.sample ?? ((cwd: string) => worktreeSignature(cwd));
   const startedAt = Date.now(); let lastProgressAt = startedAt; let firstChangeAt: number | undefined;
-  let signature: string | undefined; let activity = 0; let sampled = false; let busy = false; let stopped = false;
+  let signature: string | undefined; let activity = 0; let edits = 0; let sampled = false; let busy = false; let stopped = false;
   const tick = async () => {
     if (busy || stopped) return; busy = true;
     try {
       const next = await sample(cwd).catch(() => undefined);
       const now = Date.now();
       if (events.done > activity || events.commandInFlight) { activity = events.done; lastProgressAt = now; }
+      if (events.fileChanges > edits) { edits = events.fileChanges; firstChangeAt ??= now; lastProgressAt = now; }
       if (next !== undefined) {
         if (signature !== undefined && next !== signature) { firstChangeAt ??= now; lastProgressAt = now; }
         signature = next; sampled = true;

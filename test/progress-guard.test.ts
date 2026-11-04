@@ -15,7 +15,10 @@ vi.mock("../src/process-control.js", async (original) => ({ ...(await original<t
 vi.mock("../src/rtk.js", () => ({ isRtkInstalled: async () => false, resolveRtkStatus: async () => ({ active: false, reason: "test" }) }));
 
 const { progressVerdict } = await import("../src/progress-guard.js");
-const { CliProvider } = await import("../src/providers.js");
+const { CliProvider, worktreeSignature } = await import("../src/providers.js");
+const { execFileSync } = await import("node:child_process");
+const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+const os = await import("node:os"); const path = await import("node:path");
 type StageInput = import("../src/contracts.js").StageInput;
 
 describe("progressVerdict", () => {
@@ -122,6 +125,16 @@ describe("CliProvider no-progress guard", () => {
     expect(((await result) as { error: Error }).error.message).toMatch(/^codex stalled: no output for 45 minutes/);
   });
 
+  it("counts a completed Codex file_change event as the first edit and as progress, with an unchanged worktree sample", async () => {
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => " M a.ts")), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(3 * MIN);
+    child.emitEvent({ type: "item.completed", item: { type: "file_change", changes: [{ path: "a.ts", kind: "update" }] } });
+    await vi.advanceTimersByTimeAsync(9 * MIN);
+    expect(kills).toEqual([]);
+    await vi.advanceTimersByTimeAsync(5 * MIN);
+    expect(((await result) as { error: Error }).error.message).toMatch(/^codex no progress: no file change or command in 10 minutes/);
+  });
+
   it("treats a failing git sample as unknown and never kills because of it", async () => {
     let calls = 0;
     const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => { calls++; throw new Error("git is gone"); })), input({ firstEditMinutes: 15, idleMinutes: 10 }));
@@ -129,5 +142,28 @@ describe("CliProvider no-progress guard", () => {
     expect(calls).toBeGreaterThan(5);
     expect(kills).toEqual([]);
     child.exitCode = 0; child.emit("close", 0); await result;
+  });
+});
+
+describe("worktreeSignature", () => {
+  it("changes when an already-modified file is edited again, although git status stays the same", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "orch-sig-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: root, stdio: "pipe" }).toString();
+      git("init", "-q"); await writeFile(path.join(root, "a.ts"), "base\n"); git("add", "-A"); git("commit", "-qm", "base");
+      await writeFile(path.join(root, "a.ts"), "first edit\n"); const first = await worktreeSignature(root); const status = git("status", "--porcelain");
+      await writeFile(path.join(root, "a.ts"), "second edit\n"); const second = await worktreeSignature(root);
+      expect(git("status", "--porcelain")).toBe(status);
+      expect(second).not.toBe(first);
+      expect(await worktreeSignature(root)).toBe(second);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it("hashes git diff --stat when the diff is larger than the read cap", async () => {
+    const calls: string[][] = [];
+    const exec = async (args: string[]) => { calls.push(args); if (args[0] === "diff" && !args.includes("--stat")) throw Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }); return args[0] === "status" ? " M big.bin\n" : " big.bin | 2 +-\n"; };
+    const signature = await worktreeSignature("/repo", exec);
+    expect(calls.map(args => args.join(" "))).toEqual(["status --porcelain", "diff", "diff --stat"]);
+    expect(signature.startsWith(" M big.bin\n")).toBe(true);
+    await expect(worktreeSignature("/repo", async args => { if (args[0] === "status") throw new Error("not a repository"); return ""; })).rejects.toThrow("not a repository");
   });
 });
