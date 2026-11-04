@@ -97,7 +97,7 @@ describe("implement errors", () => {
     provider.run = async () => { throw new Error(message); };
     return attempt(1, async () => executeStage(await input(overrides))).then(() => undefined, (e: unknown) => e as Error);
   };
-  it.each(["codex no progress for 300s", "claude SizeSuspected: edits keep growing"])("size-suspected %s is prefixed and not retried", async message => {
+  it.each(["codex no progress: no file change in 15 minutes", "claude SizeSuspected: edits keep growing"])("size-suspected %s is prefixed and not retried", async message => {
     const error = await fail(message);
     expect(error).toBeInstanceOf(ApplicationFailure);
     expect((error as ApplicationFailure).nonRetryable).toBe(true);
@@ -110,7 +110,7 @@ describe("implement errors", () => {
     expect(error instanceof ApplicationFailure && error.nonRetryable).toBe(false);
   });
   it("other stages are neither prefixed nor size-classified", async () => {
-    const error = await fail("codex no progress for 300s", { stage: "review" });
+    const error = await fail("codex no progress: no file change in 15 minutes", { stage: "review" });
     expect(error!.message.startsWith("codex no progress")).toBe(true);
     expect(error instanceof ApplicationFailure && error.nonRetryable).toBe(false);
   });

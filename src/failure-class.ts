@@ -29,7 +29,7 @@ const TRANSIENT: RegExp[] = [
   /network pause exceeded|stalled: no output/i,
 ];
 const EXTERNAL: RegExp[] = [/external prerequisite|operator action|approval/i, /needs_info/i, /\b(?:401|403)\b|unauthori[sz]ed|authentication|not logged in/i];
-const SIZE_ANY = /\bno progress\b|SizeSuspected/i;
+const SIZE_ANY = /\b(?:codex|claude|gemini) no progress:|SizeSuspected/i; // the provider guard's own form (src/providers.ts), never "no progress" in prose or test output
 const SIZE_TIMEOUT = /timed out after|stalled: no output/i;
 const IMPLEMENT_STAGE = /\bimplement:/i; // the implement activity prefixes its errors with the stage name; a timeout of any other stage (or without a stage) stays transient
 const BUDGET = /TokenBudgetExceeded|token budget/i;

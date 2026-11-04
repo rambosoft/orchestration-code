@@ -49,7 +49,7 @@ export function proposeSplit(files: string[], limits: SizeLimits): Array<{ title
   return [...groups].flatMap(([area, group]) => Array.from({ length: Math.ceil(group.length / size) }, (_, part) => ({ title: `${area} part ${part + 1}`, files: group.slice(part * size, (part + 1) * size) })));
 }
 
-const NAMED_FILE = /(?<![\w./:@~-])(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:tsx|ts|jsx|js|mjs|cjs|json|css|scss|html|vue|py|cs|go|rs|java|kt|swift)\b/g;
+const NAMED_FILE = /(?<![\w./\\:@~-])(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:tsx|ts|jsx|js|mjs|cjs|json|css|scss|html|vue|py|cs|go|rs|java|kt|swift)\b/g;
 /** Framework names written in prose ("Node.js", "Vue.js") look like files but are not; a path such as lib/vue.js is still a file. */
 const FRAMEWORK_NAME = /^(?:node|vue|next|nuxt|react|express)\.js$/i;
 /** Relative paths with a known source extension named in task text, normalized to forward slashes and de-duplicated; URLs and absolute paths are skipped. */

@@ -42,4 +42,13 @@ describe("sizing, testScope and lanes manifest options", () => {
     expect(() => parse({ lanes: { light: ["deploy"] } })).toThrow();
     expect(() => parse({ lanes: { huge: ["plan"] } })).toThrow();
   });
+  it("a lanes list must keep implement and verify", () => {
+    for (const list of [["plan", "implement"], ["review", "verify"]]) expect(() => parse({ lanes: { heavy: list } }), list.join(",")).toThrow(/implement and verify/);
+    expect(parse({ lanes: { heavy: ["plan", "implement", "verify"] } }).lanes).toEqual({ heavy: ["plan", "implement", "verify"] });
+  });
+  it("sizing.smallMaxFiles must be below sizing.largeMinFiles when both are set", () => {
+    for (const sizing of [{ smallMaxFiles: 5, largeMinFiles: 5 }, { smallMaxFiles: 9, largeMinFiles: 4 }]) expect(() => parse({ sizing }), JSON.stringify(sizing)).toThrow(/smallMaxFiles/);
+    expect(parse({ sizing: { smallMaxFiles: 4, largeMinFiles: 5 } }).sizing).toMatchObject({ smallMaxFiles: 4, largeMinFiles: 5 });
+    expect(parse({ sizing: { smallMaxFiles: 50 } }).sizing).toMatchObject({ smallMaxFiles: 50 });
+  });
 });

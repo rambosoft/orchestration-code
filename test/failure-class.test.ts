@@ -48,6 +48,10 @@ describe("classifyFailure", () => {
     }
     for (const message of ["review: codex timed out after 2700000ms", "codex timed out after 2700000ms", "review: codex stalled: no output for 600000ms"]) expect(classifyFailure({ message }), message).toMatchObject({ kind: "transient", action: "resume" });
   });
+  it("reads 'no progress' as size only in the provider guard's form, not in prose or test output", () => {
+    for (const message of ["claude no progress: no file change in 15 minutes", "gemini no progress: idle"]) expect(kind({ message }), message).toBe("size");
+    for (const message of ["the dashboard showed no progress for the upload", "FAIL test/upload.test.ts > reports no progress when idle", "codex no progress for 300s"]) expect(kind({ message }), message).not.toBe("size");
+  });
   it("resumes only the transient and healable kinds, at most once per run", () => {
     expect(isResumable(classifyFailure({ message: "ETIMEDOUT" }))).toBe(true);
     expect(isResumable(classifyFailure({ message: "Filename too long" }))).toBe(true);

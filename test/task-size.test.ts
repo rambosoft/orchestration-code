@@ -49,6 +49,7 @@ describe("task size estimator", () => {
     expect(filesNamedIn("edit src/app/App.tsx and src/app/App.tsx")).toEqual(["src/app/App.tsx"]);
     expect(filesNamedIn("change src\\a\\B.ts, then test/b.test.ts. See https://x.com/a/b.js")).toEqual(["src/a/B.ts", "test/b.test.ts"]);
     expect(filesNamedIn("no files here, version 1.2.3")).toEqual([]);
+    expect(filesNamedIn("compare C:\\repo\\src\\a.ts and D:/repo/src/c.ts with src\\b.ts")).toEqual(["src/b.ts"]);
   });
   it("root-level files share one area so config files do not inflate the area count", () => {
     expect(estimateSize({ files: ["package.json", "tsconfig.json", "src/a/x.ts"] }, DEFAULT_SIZE_LIMITS.production).areas).toBe(2);

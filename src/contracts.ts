@@ -129,11 +129,11 @@ export const ProjectManifestSchema = z.object({
   sizing: z.object({
     smallMaxFiles: z.number().int().min(1).max(500).optional(), largeMinFiles: z.number().int().min(1).max(500).optional(), maxAreas: z.number().int().min(1).max(500).optional(),
     onSizeFailure: z.enum(["manual", "propose", "auto"]).default("manual"), firstEditMinutes: z.number().int().min(1).max(240).default(15), idleMinutes: z.number().int().min(1).max(240).default(10),
-  }).optional(),
+  }).refine(sizing => sizing.smallMaxFiles === undefined || sizing.largeMinFiles === undefined || sizing.smallMaxFiles < sizing.largeMinFiles, { message: "sizing.smallMaxFiles must be below sizing.largeMinFiles", path: ["smallMaxFiles"] }).optional(),
   /** Which quality commands gate which task. affected: commands marked scope "milestone" gate only the milestone check task, on every tier. full: every command gates every task. Absent: today's behaviour (milestone scoping on prototype only). */
   testScope: z.enum(["affected", "full"]).optional(),
   /** Stages each lane runs for this project, replacing the lane's built-in list (src/lanes.ts). Absent: the built-in lanes. */
-  lanes: z.partialRecord(z.enum(LANES), z.array(z.enum(["plan", "brief", "implement", "review", "verify"])).min(1)).optional(),
+  lanes: z.partialRecord(z.enum(LANES), z.array(z.enum(["plan", "brief", "implement", "review", "verify"])).min(1).refine(list => list.includes("implement") && list.includes("verify"), { message: "a lanes list must contain implement and verify" })).optional(),
   openSpec: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
   // Optional analysis stage (approach comparison, chosen parameters, validation properties). A task can override with an "Analysis: on|off" line.
   analysis: z.object({
