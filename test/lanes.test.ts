@@ -129,6 +129,14 @@ describe("prototype reviews and tests once per milestone (ADR 0029)", () => {
     for (const tier of ["throwaway", "mvp", "production", undefined] as const) expect(gateCommandsFor(tier, [fast, slow], "Build the board view")).toEqual([fast, slow]);
     expect(gateCommandsFor("prototype", [slow], "Build the board view")).toEqual([slow]);
   });
+  it("testScope affected applies the milestone filter on every tier, full and absent keep today's behaviour", () => {
+    expect(gateCommandsFor("production", [fast, slow], "Build the board view", "affected")).toEqual([fast]);
+    expect(gateCommandsFor("production", [fast, slow], check, "affected")).toEqual([fast, slow]);
+    expect(gateCommandsFor(undefined, [slow], "Build the board view", "affected")).toEqual([slow]);
+    expect(gateCommandsFor("prototype", [fast, slow], "Build the board view", "full")).toEqual([fast, slow]);
+    expect(gateCommandsFor("production", [fast, slow], "Build the board view", undefined)).toEqual([fast, slow]);
+    expect(gateCommandsFor("prototype", [fast, slow], "Build the board view", undefined)).toEqual([fast]);
+  });
   it("marks the Unity PlayMode gate as milestone-scoped for a prototype only", () => {
     const playMode = (maturity: string) => unityGates(maturity, "standard").find(command => command.args.includes("PlayMode"));
     expect(playMode("prototype")?.scope).toBe("milestone");

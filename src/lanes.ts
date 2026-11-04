@@ -32,9 +32,9 @@ export function effectiveLane(tier: Tier, lane: Lane, taskTitle?: string): Lane 
   return isMilestoneCheckTitle(taskTitle) ? "heavy" : lane === "heavy" ? "standard" : lane;
 }
 
-/** ADR 0029: on a prototype, commands marked `scope: "milestone"` gate only the milestone check task. Never leaves a task without a gate: when every command is milestone-scoped they all stay. */
-export function gateCommandsFor<T extends { scope?: "milestone" }>(tier: Tier | undefined, commands: readonly T[], taskTitle?: string): T[] {
-  if (tier !== "prototype" || isMilestoneCheckTitle(taskTitle)) return [...commands];
+/** ADR 0029: on a prototype, commands marked `scope: "milestone"` gate only the milestone check task. Never leaves a task without a gate: when every command is milestone-scoped they all stay. The manifest `testScope` overrides the tier: "affected" applies this to every tier, "full" gates every task on every command. */
+export function gateCommandsFor<T extends { scope?: "milestone" }>(tier: Tier | undefined, commands: readonly T[], taskTitle?: string, testScope?: "affected" | "full"): T[] {
+  if (testScope === "full" || (testScope !== "affected" && tier !== "prototype") || isMilestoneCheckTitle(taskTitle)) return [...commands];
   const perTask = commands.filter(command => command.scope !== "milestone");
   return perTask.length > 0 ? perTask : [...commands];
 }

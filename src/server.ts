@@ -103,7 +103,7 @@ const server = createServer(async (req, res) => {
       const codeWorkflow = profiles[profileId]?.stages.includes("implement") && project.providerRouting.implement?.provider !== "fake";
       // Quality commands are looked up by task type, then delivery profile, then the agent's profile name (older manifests key by "bugfix").
       // ADR 0029: on a prototype the slow suite (milestone-scoped commands) gates only the milestone check task.
-      const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle);
+      const qualityCommands = gateCommandsFor(project.tier, [taskType?.id, profileId, requestedProfile].map(key => key === undefined ? undefined : project.qualityCommandsByProfile[key]).find(commands => commands !== undefined) ?? project.qualityCommands, payload.taskTitle, project.testScope);
       if (codeWorkflow && qualityCommands.length === 0) throw new Error(`project '${project.id}' has no qualityCommands for profile '${profileId}'; code tasks need at least one deterministic check (for example npm test) so the result can be verified`);
       // Research and architecture only read the repository, but they commit a report as a draft PR, so they need the same admitted checkout.
       const readsRepository = taskType?.flow === "investigation" && (project.providerRouting[taskType.id === "survey" ? "survey" : "explore"]?.provider ?? project.providers.default ?? "fake") !== "fake";
