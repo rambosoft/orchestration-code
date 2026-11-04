@@ -121,7 +121,7 @@ export function reviewPromptWithDiff(prompt: string, diff: string, changedFiles 
 
 /** The digest in place of a raw diff; it carries its own scope header and budget, so nothing is cut here. */
 export function reviewPromptWithDigest(prompt: string, digest: string): string {
-  return `${prompt}\n\nImplementation under review (review this code against the task requirements):\n${digest}`;
+  return `${prompt}\n\nImplementation under review (review this code against the task requirements; for a framework migration, also compare it with the original page for in-scope visual states, interactions and keyboard accessibility, report only evidenced regressions, and say when a missing focused test leaves requested behavior unverified):\n${digest}`;
 }
 
 /**
