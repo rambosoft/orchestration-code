@@ -56,3 +56,9 @@
 - Templates live in `templates/<id>/` and are copied by the scaffold with `{{NAME}}`, `{{PACKAGE}}`, `{{ORIENTATION}}`, `{{FPS}}` replaced.
 - Manifest `budget` (optional): `{ maxCostUnits: int, warnAt: 0.1..1 (default 0.8) }`. Per-task token budget in input-token equivalents; passed to every stage as data, checked before each model call. Run input and stage input carry it as `budget`.
 - Quality command `report` (optional): `{ format: nunit|junit, path }`, relative to the command's folder, one `*` allowed in the file name (for example `target/surefire-reports/TEST-*.xml`). A failed command then leads its finding with the failing tests from the report. Unity test commands need none (the NUnit report is found from `--output`).
+
+## Task size gate options (2026-11-04, B-176)
+All optional; absent means today's behaviour, and existing manifests parse unchanged.
+- `sizing`: `{ smallMaxFiles?, largeMinFiles?, maxAreas?: int 1..500, onSizeFailure: manual|propose|auto (default manual), firstEditMinutes: int 1..240 (default 15), idleMinutes: int 1..240 (default 10) }`. The three numbers override the tier's size limits (`DEFAULT_SIZE_LIMITS` in `src/task-size.ts`; absent tier counts as `production`) through `sizeLimitsFor`. `firstEditMinutes` and `idleMinutes` bound a run with no first edit or no progress. `onSizeFailure` `propose` and `auto` are accepted and stored but have no behaviour yet; `manual` is the only active mode.
+- `testScope`: `affected | full`. `affected`: commands marked `scope: "milestone"` gate only the milestone check task, on every tier. `full`: every command gates every task. Absent: milestone scoping applies on the prototype tier only.
+- `lanes`: `{ light?|standard?|heavy?: [plan|brief|implement|review|verify, ...] }`, at least one stage per listed lane. The stage list a lane runs for this project, replacing the built-in list in `src/lanes.ts`. Absent lanes keep the built-ins.

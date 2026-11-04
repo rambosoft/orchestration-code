@@ -1,6 +1,7 @@
 // Task size estimate (task-size gate): how many files and areas a task touches decides small, normal or large, against per-tier limits. Pure and workflow-safe (no clock, no I/O); callers supply the file list,
 // measured from a diff or read from the task text (filesNamedIn). An empty list is "unknown": the estimate stays normal rather than guessing.
 import type { SizeHint, Tier } from "./lanes.js";
+import type { ProjectManifest } from "./contracts.js";
 
 export type SizeLimits = { smallMaxFiles: number; largeMinFiles: number; maxAreas: number };
 /** Production is the operator's 3 to 10 files and 1 to 2 areas; mvp and prototype values are a judgement call, tunable per project. */
@@ -10,6 +11,11 @@ export const DEFAULT_SIZE_LIMITS: Record<Tier, SizeLimits> = {
   mvp: { smallMaxFiles: 2, largeMinFiles: 12, maxAreas: 3 },
   production: { smallMaxFiles: 2, largeMinFiles: 10, maxAreas: 2 },
 };
+/** The limits for a project: its tier's defaults (absent tier: production) with the manifest's `sizing` numbers laid over them. */
+export function sizeLimitsFor(project: Pick<ProjectManifest, "tier" | "sizing">): SizeLimits {
+  const base = DEFAULT_SIZE_LIMITS[project.tier ?? "production"], z = project.sizing;
+  return { smallMaxFiles: z?.smallMaxFiles ?? base.smallMaxFiles, largeMinFiles: z?.largeMinFiles ?? base.largeMinFiles, maxAreas: z?.maxAreas ?? base.maxAreas };
+}
 export type SizeEstimate = { hint: SizeHint; files: number; areas: number; basis: "measured" | "text" | "unknown"; reasons: string[] };
 
 const norm = (file: string): string => file.replace(/\\/g, "/").replace(/^\.\//, "");

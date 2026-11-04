@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { TaskTypeId } from "./task-types.js";
 import { CORE_EXECUTABLES, STACK_PROFILE_IDS, stackCommandProblems } from "./stack-profiles.js";
 import type { BootstrapOutcome, BootstrapRunInput } from "./bootstrap.js";
-import { TIERS, type Lane, type Tier } from "./lanes.js";
+import { LANES, TIERS, type Lane, type Tier } from "./lanes.js";
 import type { SkillGuidance } from "./skills-text.js";
 
 export const StageNameSchema = z.enum(["openspec", "spec_optimize", "analyze", "plan", "brief", "implement", "review", "verify", "research", "diagnose", "reproduce", "scope", "explore", "stack", "charter", "blueprint", "design", "survey"]);
@@ -124,6 +124,15 @@ export const ProjectManifestSchema = z.object({
   budget: z.object({ maxCostUnits: z.number().int().positive(), warnAt: z.number().min(0.1).max(1).default(0.8) }).optional(),
   /** How finished the project must be (the bootstrap maturity). With a tier, tasks run the stages of their lane (src/lanes.ts) and OpenSpec and analysis follow the lane unless the task says otherwise. Absent: the full pipeline. */
   tier: z.enum(TIERS).optional(),
+  /** Task size gate (src/task-size.ts sizeLimitsFor): the three numbers override the tier's file and area limits; `firstEditMinutes` and `idleMinutes` bound a run with no first edit or no progress. `onSizeFailure` propose and auto are accepted but have no behaviour yet; manual is the only active mode. Absent: the tier defaults. */
+  sizing: z.object({
+    smallMaxFiles: z.number().int().min(1).max(500).optional(), largeMinFiles: z.number().int().min(1).max(500).optional(), maxAreas: z.number().int().min(1).max(500).optional(),
+    onSizeFailure: z.enum(["manual", "propose", "auto"]).default("manual"), firstEditMinutes: z.number().int().min(1).max(240).default(15), idleMinutes: z.number().int().min(1).max(240).default(10),
+  }).optional(),
+  /** Which quality commands gate which task. affected: commands marked scope "milestone" gate only the milestone check task, on every tier. full: every command gates every task. Absent: today's behaviour (milestone scoping on prototype only). */
+  testScope: z.enum(["affected", "full"]).optional(),
+  /** Stages each lane runs for this project, replacing the lane's built-in list (src/lanes.ts). Absent: the built-in lanes. */
+  lanes: z.partialRecord(z.enum(LANES), z.array(z.enum(["plan", "brief", "implement", "review", "verify"])).min(1)).optional(),
   openSpec: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
   // Optional analysis stage (approach comparison, chosen parameters, validation properties). A task can override with an "Analysis: on|off" line.
   analysis: z.object({
