@@ -42,7 +42,7 @@ Task 9 (B-183) adds no workflow command: `stageList`, `sizing` and the size fiel
 - The merged task of `mergeSmall` keeps `Lane: light` even if the combined files exceed the small limit; a long merged prompt throws.
 
 ## Evidence
-Dry run of the R3 shape (14 old paths over `src/a`, `src/b`, `src/c`, set after parsing because the schema clamps to 8) through `planFromBacklog` with `DEFAULT_SIZE_LIMITS.production`: no task is generated; `needsSplit` holds R3 with 14 files, 3 areas, reasons "14 files (large from 10)" and "3 areas (limit 2)", and a proposal of `src/a part 1 [6]`, `src/b part 1 [4]`, `src/c part 1 [4]`, each under 10 files. Pinned by the regression test "leaves a too-large item out of the tasks and proposes parts under the limit" in `test/plan-from-survey.test.ts`.
+Dry run of the R3 shape (14 old paths over `src/a`, `src/b`, `src/c`, set after parsing because the schema clamps to 8) through `planFromBacklog` with `DEFAULT_SIZE_LIMITS.production`: no task is generated; `needsSplit` holds R3 with 14 files, 3 areas, reasons "14 files (large from 10)" and "3 areas (limit 2)", and a proposal of `src/a part 1 [6]`, `src/b part 1 [4]`, `src/c part 1 [4]`, each under 10 files. The dry run itself was a throwaway script. The same case is pinned by the Task 4 test "leaves a too-large item out of the tasks and proposes parts under the limit; prototype keeps it" in `test/plan-from-survey.test.ts`.
 
 ## Deferred (separate items)
 Failed-run hygiene and the FM-068 chain-recovery command; model routing and review failover; checkpoint commits so a retry can resume partial work; automatic splitting (`onSizeFailure: propose|auto`); a second calibration of the `mvp` limits against real runs.
