@@ -33,6 +33,7 @@ import { ApplicationFailure, Context } from "@temporalio/activity";
 import { childEnv } from "./env.js";
 import { activitySignal, heartbeating, killOnAbort, toolCommand } from "./process-control.js";
 import { gateBatches } from "./gate-batches.js";
+import { classifyFailure } from "./failure-class.js";
 import { CHANGED_TOKEN, commandHasChangedToken, expandChangedArgs } from "./affected-tests.js";
 import { captureScreenshots, visualReviewSection } from "./visual.js";
 import type { ParentPublication, RepositoryContext } from "./contracts.js";
@@ -223,14 +224,14 @@ export async function reportResult(input: { workflowId: string; issueId: string;
 export async function probeConnectivity(): Promise<{ online: boolean }> { return { online: await isOnline() }; }
 
 /** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
-export async function executeStage(input: StageInput): Promise<StageOutput> {
+export async function executeStage(input: StageInput, git: typeof runCheck = runCheck): Promise<StageOutput> {
   let timer: NodeJS.Timeout | undefined;
   try { const context = Context.current(); timer = setInterval(() => context.heartbeat(), HEARTBEAT_INTERVAL_MS); } catch { /* direct unit invocation */ }
-  try { return await executeStageInner(input); } finally { if (timer) clearInterval(timer); }
+  try { return await executeStageInner(input, git); } finally { if (timer) clearInterval(timer); }
 }
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
-async function executeStageInner(input: StageInput): Promise<StageOutput> {
+async function executeStageInner(input: StageInput, git: typeof runCheck): Promise<StageOutput> {
   const info = (() => { try { return Context.current().info; } catch { return undefined; } })();
   const activityStartedAt = Date.now();
   const queueWaitMs = info ? Math.max(0, activityStartedAt - info.currentAttemptScheduledTimestampMs) : undefined;
@@ -434,6 +435,8 @@ ${intelligence.block}`; }
     if (spent.state === "exceeded") throw ApplicationFailure.nonRetryable(spent.message!, "TokenBudgetExceeded");
     if (spent.state === "warn") visualWarnings.push(spent.message!);
   }
+  // Attempt 2 of implement starts from the base commit: the worktree is committed only at publish, so HEAD is the base and the previous attempt's edits (not ignored files such as node_modules) are discarded (B-180).
+  if (activityAttempt > 1 && input.stage === "implement") { await git("git", ["reset", "--hard", "HEAD"], input.projectRoot); await git("git", ["clean", "-fd"], input.projectRoot); visualWarnings.push("clean-retry: discarded the previous attempt's edits"); }
   const providerStarted = Date.now();
   let result: StageOutput;
   try {
@@ -445,7 +448,8 @@ ${intelligence.block}`; }
     const category = classifyProviderError(message);
     await writeFile(failureFile, JSON.stringify({ runId: input.runId, taskId: input.taskId, stage: input.stage, stageAttempt: input.attempt, activityAttempt, retryCount: Math.max(0, activityAttempt - 1), provider: input.provider, model: input.model, providerTimeoutMs: input.providerTimeoutMs ?? null, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}), category, error: message, partialWorktree: input.projectRoot }, null, 2));
     await emitActivityEvent({ event: "activity.fail", ...activityContext, provider: input.provider, category, providerDurationMs, activityDurationMs: Date.now() - activityStartedAt, retries: Math.max(0, activityAttempt - 1), failureArtifact: failureFile }, "error");
-    const detail = `${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
+    // The implement prefix lets classifyFailure tell an implement timeout (size) from any other stage's (transient).
+    const detail = `${input.stage === "implement" ? "implement: " : ""}${message}; failure artifact: ${failureFile}; worktree preserved: ${input.projectRoot}`;
     // A usage limit or a lost connection is a pause, not a failure: the workflow waits on a timer and runs the stage again without spending its retry attempts (ADR 0016).
     // A timeout counts as an outage only when the connection is really down. patched() in the workflow keeps recorded runs on the old path.
     const pause = detectPause(message, { now: Date.now(), timedOut: category === "timeout", ...(category === "timeout" || /ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network|connection/i.test(message) ? { online: await isOnline() } : {}) });
@@ -454,7 +458,10 @@ ${intelligence.block}`; }
       throw ApplicationFailure.nonRetryable(`${input.provider} ${pause.kind} pause: ${pause.reason}`, PROVIDER_PAUSE, pause);
     }
     // Retrying bad credentials or configuration only repeats the failure (and the cost).
-    throw category === "authentication" || category === "configuration" ? ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError") : new Error(detail);
+    if (category === "authentication" || category === "configuration") throw ApplicationFailure.nonRetryable(detail, category === "authentication" ? "ProviderAuthenticationError" : "ProviderConfigurationError");
+    // An implement run that made no progress or timed out would do the same again: the task is probably too big, so a person splits it (B-180).
+    if (input.stage === "implement" && classifyFailure({ message: `implement: ${message}` }).kind === "size") throw ApplicationFailure.nonRetryable(detail, "SizeSuspected");
+    throw new Error(detail);
   }
   const parsed = StageOutputSchema.safeParse(result);
   if (!parsed.success) throw ApplicationFailure.nonRetryable(`invalid provider result: ${parsed.error.issues.map(issue => issue.path.join(".")).join(", ")}`, "InvalidProviderResult");
