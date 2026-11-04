@@ -114,7 +114,8 @@ export function claudeExecutionArgs(prompt: string, stage: StageInput["stage"], 
 }
 const specs: Record<string, ProviderSpec> = {
   // ECC_GATEGUARD=off: an interactive "state the facts first" hook of the operator's own Claude plugins must not deny the first tool call of an unattended run.
-  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot, options) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot), projectRoot ? detectStack(projectRoot) : [], options?.settings), env: { ECC_GATEGUARD: "off" } },
+  // The prompt goes to Claude on stdin, not as the last argument: a review prompt carries the diff and exceeded the Windows command-line limit (spawn ENAMETOOLONG).
+  claude: { executable: "claude", args: (p, stage, _effort, model, _images, projectRoot, options) => claudeExecutionArgs(p, stage, process.env, model, unityAgentContext(projectRoot), projectRoot ? detectStack(projectRoot) : [], options?.settings).slice(0, -1), env: { ECC_GATEGUARD: "off" } },
   codex: { executable: NODE_EXECUTABLE, args: (p, stage, effort, model, images) => codexExecutionArgs(p, stage, effort, model, images) },
   gemini: { executable: "gemini", args: (p, stage) => ["--approval-mode", stage === "implement" || stage === "reproduce" ? "auto_edit" : "plan", "--output-format", "json", "-p", p] },
 };
@@ -257,7 +258,7 @@ export class CliProvider implements AgentProvider {
         }
         resolve({ ok: true, summary: capSummary(redact(summary), metadata), findings: [], artifactRefs: [], provider: this.id, durationMs: Date.now() - started, metadata });
       });
-      if (this.id === "codex") child.stdin.end(instruction);
+      if (this.id === "codex" || this.id === "claude") child.stdin.end(instruction);
     });
   }
 }
