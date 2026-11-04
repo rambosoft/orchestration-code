@@ -1,6 +1,7 @@
 # Mission changelog
 
 ## 2026-11-04 task-size gate (ADR 0039, B-175..B-185)
+- Final-review fix wave: the implement retry no longer deletes OpenSpec output or a repair round's work (pre-implement snapshot on the main call only); sizing is an explicit opt-in; the progress guard sees re-edits; prose Stages lines no longer give HTTP 400; the estimate is recorded for every run; size-failure handling applies to every project; ADR 0039 and FM-069 corrected, B-187 opened for the adapter comment. Replay fixture unchanged.
 - Oversized tasks are caught at generation (needsSplit with a proposed split), flagged at admission, and a timed-out or stalled implement is a non-resumable size failure instead of a transient one. Implement attempt 2 starts from a clean worktree; a Codex no-progress guard kills runs with no first edit or idle; a Stages line and manifest lane lists choose the stage list; needs-split is a Paperclip comment only; size-report compares estimate with outcome. Workflow wiring is additive input data: no patched(), replay fixture unchanged. FM-069 added (mitigated). Deferred: failed-run hygiene and FM-068 recovery, model routing, checkpoint commits, automatic splitting.
 
 ## 2026-11-03 player orchestration planned (B-170, B-171)
