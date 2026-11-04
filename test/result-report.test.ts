@@ -51,6 +51,25 @@ describe("reportResultTo", () => {
   });
 });
 
+describe("needs-split result", () => {
+  const split = (over: Partial<RunResult> = {}): RunResult => result({ status: "failed", publish: undefined, message: "needs split: implement timed out after 30 min (12 file changes)", metadata: { size: { kind: "size_suspected", reason: "implement timeout", estimate: { hint: "large", files: 14, areas: 3, basis: "text", reasons: [] } } } as never, ...over });
+  it("is put in review with the evidence for a person, once", async () => {
+    const { calls, client } = fakePaperclip();
+    expect(await reportResultTo(client, { workflowId: "w9", issueId: "T1", result: split() })).toEqual({ reported: true, reason: "reported" });
+    const patch = calls.find(call => call.method === "PATCH")!;
+    expect(patch.body).toMatchObject({ status: "in_review" });
+    const comment = String(patch.body!.comment);
+    expect(comment).toContain("Needs a split"); expect(comment).toContain("implement timeout"); expect(comment).toContain("14 files, 3 areas"); expect(comment).toContain("12 file changes"); expect(comment).toContain("no file list recorded; split by area");
+    expect(calls.some(call => call.route.includes("/issues") && call.method === "POST")).toBe(false);
+  });
+  it("leaves other failed runs and other comments unchanged", async () => {
+    const plain = fakePaperclip();
+    expect((await reportResultTo(plain.client, { workflowId: "w", issueId: "T1", result: split({ message: "boom", metadata: undefined }) })).reason).toBe("no_status");
+    const done = fakePaperclip(); await reportResultTo(done.client, { workflowId: "w", issueId: "T1", result: result() });
+    expect(String(done.calls.find(call => call.method === "PATCH")!.body!.comment)).not.toContain("Needs a split");
+  });
+});
+
 describe("workflow report step", () => {
   let env: TestWorkflowEnvironment;
   beforeAll(async () => { env = await TestWorkflowEnvironment.createTimeSkipping(); }, 120_000);

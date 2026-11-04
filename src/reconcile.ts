@@ -1,4 +1,5 @@
 import type { RunResult } from "./contracts.js";
+import { isNeedsSplit, needsSplitSection } from "./size-report.js";
 import { classifyFailure, isResumable, MAX_AUTO_RESUMES, type FailureClass } from "./failure-class.js";
 
 // Reconcile (FM-037): when the machine sleeps, shuts down or loses the network, Temporal keeps the workflow alive and finishes it, but the Paperclip adapter that
@@ -61,6 +62,7 @@ export function statusFor(result: RunResult | undefined): string | undefined {
   if (result.status === "completed" && ((result.publish?.prUrl && result.publish.headSha) || result.bootstrap)) return "done";
   if (result.status === "needs_review" && result.publish?.prUrl) return "in_review";
   if (result.status === "needs_info") return "in_review";
+  if (result.status === "failed" && isNeedsSplit(result)) return "in_review";
   if (result.status === "rejected" && isBootstrap) return "cancelled";
   return undefined;
 }
@@ -71,8 +73,9 @@ export function resultComment(workflowId: string, status: string, result: RunRes
   const publication = publish ? `\n\nBranch: \`${publish.branch}\`\nHead SHA: \`${publish.headSha}\`\nDraft PR: ${publish.prUrl} (base \`${publish.prBaseBranch}\`)\nDone means gates passed and the draft PR was created; it does not mean merged.` : "";
   const open = result?.status === "needs_review" ? (result.metadata?.review.unresolvedFindings ?? []).map((finding, index) => `${index + 1}. [${finding.severity}/${finding.category}] ${finding.title}`).join("\n") : "";
   const decision = open ? `\n\n### Decision needed\nThe tests and build pass and the draft PR is published, but the automated review still has unresolved findings (also posted as a comment on the PR):\n${open}` : "";
+  const split = result?.status === "failed" && isNeedsSplit(result) ? `\n\n${needsSplitSection(result)}` : "";
   const marker = publish ? `\n<!-- orchestration-publish ${JSON.stringify(publish)} -->` : "";
-  return `Temporal workflow \`${workflowId}\` finished with status **${result?.status ?? status}**. ${result?.message ?? status}${body ? `\n\n${body}` : ""}${publication}${decision}\n\n${source === "worker" ? "_Reported by the orchestrator worker when the workflow finished._" : "_Reported by the orchestrator's reconcile step: Paperclip had lost its connection to this run (for example the machine was off), but the workflow finished._"}${marker}`;
+  return `Temporal workflow \`${workflowId}\` finished with status **${result?.status ?? status}**. ${result?.message ?? status}${body ? `\n\n${body}` : ""}${publication}${decision}${split}\n\n${source === "worker" ? "_Reported by the orchestrator worker when the workflow finished._" : "_Reported by the orchestrator's reconcile step: Paperclip had lost its connection to this run (for example the machine was off), but the workflow finished._"}${marker}`;
 }
 
 /**

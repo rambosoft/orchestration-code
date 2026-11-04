@@ -24,6 +24,7 @@
     "setup": "npm ci",
     "doctor": "node dist/src/cli.js doctor",
     "cleanup": "node dist/src/cli.js cleanup",
+    "size-report": "node dist/src/cli.js size-report",
     "timing": "node dist/src/cli.js timing",
     "unity:plugin": "node scripts/unity-plugin.mjs",
     "resume-run": "node dist/src/cli.js resume-run",

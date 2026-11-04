@@ -1,7 +1,8 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { formatSizeReport, runRecords, sizeReport, surveySizing } from "./size-report.js";
 import { ProjectManifestSchema } from "./contracts.js";
 import { cancelRun, inspectRun, listRuns, signalApproval, resumeRun, startRun } from "./client.js";
 import { syncMergedStack } from "./workspaces.js";
@@ -56,15 +57,24 @@ async function main() {
     const file = args[0];
     const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
     const projectId = option("--project"); const prefix = option("--prefix"); const output = option("--out") ?? `${file}.tasks.json`;
-    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] [--only R3,R4] [--design area=docs/design/x.md] [--area R5=cache-storage:critical]");
+    if (!file || !projectId || !prefix) throw new Error("usage: dev plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] [--only R3,R4] [--design area=docs/design/x.md] [--area R5=cache-storage:critical] [--manifest <project manifest> [--merge-small]]");
     const only = option("--only")?.split(",").map(id => id.trim()).filter(Boolean);
     const designs = Object.fromEntries(args.flatMap((arg, index) => arg === "--design" && args[index + 1]?.includes("=") ? [args[index + 1]!.split("=") as [string, string]] : []));
     const areas = Object.fromEntries(args.flatMap((arg, index) => { const match = arg === "--area" ? /^([A-Za-z0-9-]+)=([a-z0-9-]+)(:critical)?$/.exec(args[index + 1] ?? "") : null; return match ? [[match[1]!, { area: match[2]!, critical: Boolean(match[3]) }]] : []; }));
-    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize"), ...(only?.length ? { only } : {}), designs, areas });
+    const manifestFile = option("--manifest");
+    const sizing = surveySizing(manifestFile ? await loadProject(manifestFile) : undefined, args.includes("--merge-small"));
+    const result = planFromBacklog(parseSurveyBacklog(await readFile(file, "utf8")), { projectId, prefix, reference: args.includes("--reference"), characterize: args.includes("--characterize"), ...(only?.length ? { only } : {}), designs, areas, ...sizing });
     const planFile = /\.json$/i.test(output) ? output.replace(/\.json$/i, ".plan.md") : `${output}.plan.md`;
     await writeFile(output, `${JSON.stringify(result.spec, null, 2)}\n`, "utf8");
     await writeFile(planFile, `${result.plan}\n`, "utf8");
-    console.log(`wrote ${result.spec.tasks.length} tasks to ${output}; ${result.needsDecision.length} need a decision; ${result.needsDesign.length} area(s) still need an approved design (${result.needsDesign.join(", ") || "none"}); plan: ${planFile}`);
+    console.log(`wrote ${result.spec.tasks.length} tasks to ${output}; ${result.needsDecision.length} need a decision; ${result.needsDesign.length} area(s) still need an approved design (${result.needsDesign.join(", ") || "none"}); plan: ${planFile}${sizing.limits ? `; ${result.needsSplit.length} need a split (${result.needsSplit.map(item => item.id).join(", ") || "none"})` : ""}`);
+    return;
+  }
+  if (command === "size-report") {
+    // dev size-report <records dir>: size estimate against outcome per band, from the e2e run records (docs/engineering/knowledge/metrics/runs/*.json). Files in another shape are skipped.
+    if (!args[0]) throw new Error("usage: dev size-report <records dir>");
+    const records = (await Promise.all((await readdir(args[0])).filter(name => name.endsWith(".json")).map(async name => runRecords(await readFile(path.join(args[0]!, name), "utf8").then(text => JSON.parse(text) as unknown, () => null))))).flat();
+    console.log(formatSizeReport(sizeReport(records)));
     return;
   }
   if (command === "run") {
@@ -243,6 +253,6 @@ async function main() {
     console.log(JSON.stringify({ ...started, mode: command }));
     return;
   }
-  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | libs-fetch <package...> [--root dir] [--force] | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
+  throw new Error("usage: dev run [manifest] [prompt] | plan-from-survey <survey.md> --project <id> --prefix <PREFIX> [--out <file>] [--reference] [--characterize] | resume-run <failed workflowId> | resume <manifest> <taskId> <revision> <prompt> | restart <manifest> <taskId> <newRevision> <prompt> | size-report <records dir> | doctor | skills-sync <skill folder> --id <id> --area <profile> [--write] | skills-sync --check | libs-fetch <package...> [--root dir] [--force] | reconcile [--apply] [--auto-resume] | reconcile-watch | stack-pr [--repo <clone>] [--through <PR|task|branch>] [--apply] [--close-stacked] | drain [--wait-minutes N] | cleanup [--days N] [--all] [--dry-run] | timing [--since ISO] [--file path] [--include-fake] [--json] | runs | inspect <workflowId> | cancel <workflowId> | approve <workflowId> [reject] | sync-stack <worktree> <child-branch> <parent-pr-url> <target-branch> [remote]");
 }
 main().catch(e => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; });

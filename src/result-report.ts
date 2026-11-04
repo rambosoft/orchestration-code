@@ -1,7 +1,7 @@
 // The worker reports a finished run to Paperclip itself (ADR 0018), so the result no longer depends on the adapter still holding its lease when the workflow ends. It is the same report the adapter
 // and the reconcile step write (the same status mapping and comment, found by the same "Temporal workflow `<id>` finished" text), so whichever reaches the task first wins and the others see it done.
-// Only outcomes that change the task for a person are reported here: done, in review, needs information. A failed run is never commented on by the worker: a comment wakes the agent and can lock
-// the issue (FM-054), and failures belong to the resume and reconcile path.
+// Only outcomes that change the task for a person are reported here: done, in review, needs information, needs split (B-184: a size-suspected failure goes to review with the evidence for a person). Any other failed run is
+// never commented on by the worker: a comment wakes the agent and can lock the issue (FM-054), and failures belong to the resume and reconcile path.
 import type { RunResult } from "./contracts.js";
 import { resultComment, statusFor, type ReconcileDeps } from "./reconcile.js";
 import { syncRunFailedLabel } from "./run-failed-label.js";

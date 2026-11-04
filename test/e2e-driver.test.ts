@@ -37,6 +37,15 @@ describe("e2e driver", () => {
     await runChain({ projectId: "p", parent, tasks: [{ taskId: "T-1", prompt: "one" }] }, bridge.http, opts);
     expect(bridge.started[0]!.parentPublications).toEqual([parent]);
   });
+  it("records the size estimate, failure kind and changed files per task, only when known", async () => {
+    const estimate = { hint: "large", files: 14, areas: 3, basis: "text", reasons: [] };
+    const http = (async (method: string) => method === "POST" ? { status: 202, json: { workflowId: "wf" } } : { status: 200, json: { status: "COMPLETED", result: { runId: "r", status: "failed", stages: [], artifactRefs: [], message: "needs split: x", metadata: { review: {}, size: { kind: "size_suspected", reason: "r", estimate } } } } }) as never;
+    const [outcome] = await runChain({ projectId: "p", tasks: [{ taskId: "T-1", prompt: "one" }] }, http, opts);
+    expect(outcome).toMatchObject({ estimate, failureKind: "size" }); expect("changedFiles" in outcome!).toBe(false);
+    const bridge = fakeBridge(["completed"]);
+    const [plain] = await runChain({ projectId: "p", tasks: [{ taskId: "T-1", prompt: "one" }] }, bridge.http, opts);
+    expect("estimate" in plain!).toBe(false); expect("failureKind" in plain!).toBe(false);
+  });
   it("stops the chain at the first failure and reports the stop reason", async () => {
     const outcomes = await runChain(spec, fakeBridge(["failed"]).http, opts);
     expect(outcomes).toHaveLength(1);
