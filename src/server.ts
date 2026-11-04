@@ -94,9 +94,10 @@ const server = createServer(async (req, res) => {
       const taskType = resolved.type ? taskTypes[resolved.type] : undefined;
       const profileId = taskType?.profile ?? requestedProfile;
       // ADR 0015: a project with a tier runs implementation tasks in the lane the task names (a "Lane:" line, else standard); its stage list, OpenSpec and analysis follow the lane.
-      const lane = project.tier && LANE_PROFILES.includes(profileId) && taskType?.flow !== "bug" ? (() => { const name = effectiveLane(project.tier!, laneFor(undefined, parsedPrompt.lane), payload.taskTitle); return { name, plan: lanePlan(project.tier, name) }; })() : undefined;
+      const codeTask = LANE_PROFILES.includes(profileId) && taskType?.flow !== "bug";
+      const lane = project.tier && codeTask ? (() => { const name = effectiveLane(project.tier!, laneFor(undefined, parsedPrompt.lane), payload.taskTitle); return { name, plan: lanePlan(project.tier, name) }; })() : undefined;
       // Task size gate: the stage list (task "Stages:" line, else manifest lanes) and the size estimate; a large task only warns.
-      const admission = admitStages({ project, ...(lane ? { lane: lane.name } : {}), ...(parsedPrompt.stages ? { stages: parsedPrompt.stages } : {}), prompt: parsedPrompt.prompt });
+      const admission = admitStages({ project, ...(lane ? { lane: lane.name } : {}), codeTask, ...(parsedPrompt.stages ? { stages: parsedPrompt.stages } : {}), prompt: parsedPrompt.prompt });
       const unresolved = payload.blockers.filter(blocker => blocker.status !== "done");
       if (unresolved.length) throw new Error(`task is blocked by unresolved Paperclip dependencies: ${unresolved.map(item => item.id).join(", ")}`);
       const artifactsRoot = process.env.ORCHESTRATOR_HOST_DATA_DIR ?? path.resolve("data");

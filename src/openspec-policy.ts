@@ -37,8 +37,9 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   const stageLines: string[] = [];
   let invalidArea = false;
   lines.forEach((line, index) => {
+    // A Stages line is a directive only when every comma entry is a stage name; anything else ("Stages: forest, desert, snow", an empty line) is prose and stays in the prompt.
     const stagesLine = /^\s*Stages\s*:\s*(.*?)\s*$/i.exec(line);
-    if (stagesLine) { removed.add(index); stageLines.push(stagesLine[1]!); return; }
+    if (stagesLine && stagesLine[1]!.split(",").every(name => STAGE_NAMES.includes(name.trim().toLowerCase()))) { removed.add(index); stageLines.push(stagesLine[1]!); return; }
     const laneLine = /^\s*Lane\s*:\s*(light|standard|heavy)\s*$/i.exec(line);
     if (laneLine) { removed.add(index); lanes.add(laneLine[1]!.toLowerCase()); return; }
     const typed = /^\s*(?:Task\s+)?Type\s*:\s*(bug|defect|task|feature|research|explore|spike|architecture|adr|survey|audit|codebase-survey)\s*$/i.exec(line);
@@ -59,8 +60,6 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   if (lanes.size > 1) return { prompt, error: `task contains conflicting Lane directives (${[...lanes].join(", ")})` };
   if (stageLines.length > 1) return { prompt, error: "task contains conflicting Stages directives" };
   const stages = stageLines.length ? stageLines[0]!.split(",").map(name => name.trim().toLowerCase()) : undefined;
-  const badStage = stages?.find(name => !STAGE_NAMES.includes(name));
-  if (badStage !== undefined) return { prompt, error: `task contains an unknown Stages entry '${badStage}' (expected a comma list of ${STAGE_NAMES.join(", ")})` };
   if (types.size > 1) return { prompt, error: `task contains conflicting Type directives (${[...types].join(", ")})` };
   if (invalidArea) return { prompt, error: "task contains an invalid Area directive (expected a lowercase slug of at most 40 characters)" };
   if (areas.size > 1) return { prompt, error: `task contains conflicting Area directives (${[...areas].join(", ")})` };
