@@ -62,3 +62,10 @@ describe("task size estimator", () => {
     expect(parts.map(part => part.title)).toEqual(["src/a part 1", "src/a part 2", "src/b part 1", ". part 1"]);
   });
 });
+
+describe("framework names", () => {
+  it("filesNamedIn does not count Node.js, Vue.js and similar names as files", () => {
+    expect(filesNamedIn("Use Node.js with vue.js, Next.js, NUXT.JS, React.js and Express.js")).toEqual([]);
+    expect(filesNamedIn("Use Node.js to edit src/server.js and lib/vue.js")).toEqual(["src/server.js", "lib/vue.js"]);
+  });
+});

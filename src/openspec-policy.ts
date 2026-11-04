@@ -1,3 +1,7 @@
+import type { LaneStage } from "./lanes.js";
+
+const STAGE_NAMES: readonly string[] = ["plan", "brief", "implement", "review", "verify"];
+
 export function resolveOpenSpecEnabled(projectEnabled: boolean, taskOverride?: boolean): boolean {
   return taskOverride ?? projectEnabled;
 }
@@ -21,7 +25,7 @@ export function parseOpenSpecTaskPrompt(prompt: string): { prompt: string; overr
  * Task-level switches written as their own line in the task text: "OpenSpec: on|off" and "Analysis: on|off".
  * Directive lines are removed from the prompt; conflicting repeats of one directive are an error.
  */
-export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; lane?: "light" | "standard" | "heavy"; area?: string; critical?: boolean; design?: string; error?: string } {
+export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?: boolean; analysis?: boolean; taskType?: string; lane?: "light" | "standard" | "heavy"; area?: string; critical?: boolean; design?: string; stages?: LaneStage[]; error?: string } {
   const lines = prompt.split(/\r?\n/);
   const found = new Map<string, Set<boolean>>();
   const removed = new Set<number>();
@@ -30,8 +34,11 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   const areas = new Set<string>();
   const criticals = new Set<boolean>();
   const designs = new Set<string>();
+  const stageLines: string[] = [];
   let invalidArea = false;
   lines.forEach((line, index) => {
+    const stagesLine = /^\s*Stages\s*:\s*(.*?)\s*$/i.exec(line);
+    if (stagesLine) { removed.add(index); stageLines.push(stagesLine[1]!); return; }
     const laneLine = /^\s*Lane\s*:\s*(light|standard|heavy)\s*$/i.exec(line);
     if (laneLine) { removed.add(index); lanes.add(laneLine[1]!.toLowerCase()); return; }
     const typed = /^\s*(?:Task\s+)?Type\s*:\s*(bug|defect|task|feature|research|explore|spike|architecture|adr|survey|audit|codebase-survey)\s*$/i.exec(line);
@@ -50,6 +57,10 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   });
   for (const [key, values] of found) if (values.size > 1) return { prompt, error: `task contains conflicting ${key === "openspec" ? "OpenSpec" : "Analysis"} on/off directives` };
   if (lanes.size > 1) return { prompt, error: `task contains conflicting Lane directives (${[...lanes].join(", ")})` };
+  if (stageLines.length > 1) return { prompt, error: "task contains conflicting Stages directives" };
+  const stages = stageLines.length ? stageLines[0]!.split(",").map(name => name.trim().toLowerCase()) : undefined;
+  const badStage = stages?.find(name => !STAGE_NAMES.includes(name));
+  if (badStage !== undefined) return { prompt, error: `task contains an unknown Stages entry '${badStage}' (expected a comma list of ${STAGE_NAMES.join(", ")})` };
   if (types.size > 1) return { prompt, error: `task contains conflicting Type directives (${[...types].join(", ")})` };
   if (invalidArea) return { prompt, error: "task contains an invalid Area directive (expected a lowercase slug of at most 40 characters)" };
   if (areas.size > 1) return { prompt, error: `task contains conflicting Area directives (${[...areas].join(", ")})` };
@@ -57,7 +68,7 @@ export function parseTaskDirectives(prompt: string): { prompt: string; openSpec?
   if (criticals.size > 1) return { prompt, error: "task contains conflicting Critical yes/no directives" };
   const clean = lines.filter((_line, index) => !removed.has(index)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const flag = (key: string) => found.has(key) ? { [key === "openspec" ? "openSpec" : "analysis"]: [...found.get(key)!][0]! } : {};
-  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}), ...(lanes.size ? { lane: [...lanes][0]! as "light" | "standard" | "heavy" } : {}), ...(areas.size ? { area: [...areas][0]! } : {}), ...(criticals.size ? { critical: [...criticals][0]! } : {}), ...(designs.size ? { design: [...designs][0]! } : {}) };
+  return { prompt: clean, ...flag("openspec"), ...flag("analysis"), ...(types.size ? { taskType: [...types][0]! } : {}), ...(lanes.size ? { lane: [...lanes][0]! as "light" | "standard" | "heavy" } : {}), ...(areas.size ? { area: [...areas][0]! } : {}), ...(criticals.size ? { critical: [...criticals][0]! } : {}), ...(designs.size ? { design: [...designs][0]! } : {}), ...(stages ? { stages: [...new Set(stages)] as LaneStage[] } : {}) };
 }
 
 export function openSpecProposalPrompt(input: { taskPrompt: string; changeId: string }): string {

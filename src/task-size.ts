@@ -50,7 +50,9 @@ export function proposeSplit(files: string[], limits: SizeLimits): Array<{ title
 }
 
 const NAMED_FILE = /(?<![\w./:@~-])(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:tsx|ts|jsx|js|mjs|cjs|json|css|scss|html|vue|py|cs|go|rs|java|kt|swift)\b/g;
+/** Framework names written in prose ("Node.js", "Vue.js") look like files but are not; a path such as lib/vue.js is still a file. */
+const FRAMEWORK_NAME = /^(?:node|vue|next|nuxt|react|express)\.js$/i;
 /** Relative paths with a known source extension named in task text, normalized to forward slashes and de-duplicated; URLs and absolute paths are skipped. */
 export function filesNamedIn(text: string): string[] {
-  return [...new Set((text.match(NAMED_FILE) ?? []).map(norm))];
+  return [...new Set((text.match(NAMED_FILE) ?? []).filter(name => !FRAMEWORK_NAME.test(name)).map(norm))];
 }
