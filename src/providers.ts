@@ -209,6 +209,14 @@ let rtkProbe: Promise<boolean> | undefined;
 /** Whether the rtk CLI is on this worker's PATH, asked once per process. ORCHESTRATOR_RTK=0 turns the hint off. */
 const rtkAvailable = (): Promise<boolean> => process.env.ORCHESTRATOR_RTK === "0" ? Promise.resolve(false) : (rtkProbe ??= isRtkInstalled().catch(() => false));
 
+/** What a Codex run had done when it was killed (events are lost with the process otherwise): a timed-out run says whether it was working or spinning. Empty for other CLIs and for no events. */
+export function killedActivity(id: string, out: string): string {
+  if (id !== "codex") return "";
+  const { itemCounts, turnCount } = parseCodexTelemetry(out).telemetry;
+  const items = Object.entries(itemCounts).map(([name, count]) => `${count} ${name}`).join(", ");
+  return items ? ` (activity before the kill: ${items}; ${turnCount} turn(s))` : "";
+}
+
 export class CliProvider implements AgentProvider {
   constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs?: number) {}
   async run(input: StageInput): Promise<StageOutput> {
@@ -234,8 +242,8 @@ export class CliProvider implements AgentProvider {
       child.on("close", (code) => {
         clearTimeout(timer); clearInterval(stallTimer); stopKill();
         if (signal?.aborted) return reject(new Error(`${this.id} cancelled: process killed`)); const out = Buffer.concat(stdout).toString("utf8").trim();
-        if (timedOut) return reject(new Error(`${this.id} timed out after ${timeoutMs}ms`));
-        if (stalled) return reject(new Error(`${this.id} stalled: no output for ${Math.round(stallMs / 60_000)} minutes, process killed`));
+        if (timedOut) return reject(new Error(`${this.id} timed out after ${timeoutMs}ms${killedActivity(this.id, out)}`));
+        if (stalled) return reject(new Error(`${this.id} stalled: no output for ${Math.round(stallMs / 60_000)} minutes, process killed${killedActivity(this.id, out)}`));
         // Codex reports a usage limit or a dropped connection as an event on stdout, with little or nothing on stderr; the message is what the pause detection reads.
         if (code !== 0) return reject(new Error(`${this.id} exited ${code}: ${redact(cliFailureText(Buffer.concat(stderr).toString("utf8"), out, this.id === "codex" ? parseCodexTelemetry(out).errors : []))}`));
         let summary = out; const metadata: Record<string, unknown> = {};

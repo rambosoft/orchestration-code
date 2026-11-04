@@ -12,7 +12,7 @@ import type { RunInput, StageInput, StageOutput } from "../src/contracts.js";
 import { detectPause, resetWaitMs } from "../src/provider-gate.js";
 import { MAX_PAUSE_TOTAL_MS, PROVIDER_PAUSE, pauseFrom, pauseWaitMs } from "../src/pause-policy.js";
 import { classifyFailure } from "../src/failure-class.js";
-import { cliFailureText, parseCodexTelemetry, stallLimitMs } from "../src/providers.js";
+import { cliFailureText, killedActivity, parseCodexTelemetry, stallLimitMs } from "../src/providers.js";
 import { projectWorkflow } from "../src/workflows.js";
 
 const NOW = new Date(2026, 9, 30, 10, 0, 0).getTime();
@@ -164,4 +164,13 @@ describe("workflow pause", () => {
     expect(result.status).toBe("failed");
     expect(calls.filter(stage => stage === "implement")).toHaveLength(1);
   }, 60_000);
+});
+
+describe("killedActivity", () => {
+  it("tells a spinning Codex run from a working one in the timeout message, and stays empty without events or for other CLIs", () => {
+    const events = [{ type: "item.completed", item: { type: "command_execution" } }, { type: "item.completed", item: { type: "command_execution" } }, { type: "item.completed", item: { type: "file_change" } }, { type: "turn.completed" }].map(event => JSON.stringify(event)).join("\n");
+    expect(killedActivity("codex", events)).toBe(" (activity before the kill: 2 command_execution, 1 file_change; 1 turn(s))");
+    expect(killedActivity("codex", "")).toBe("");
+    expect(killedActivity("claude", events)).toBe("");
+  });
 });
