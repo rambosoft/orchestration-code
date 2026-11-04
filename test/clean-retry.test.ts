@@ -38,6 +38,21 @@ describe("clean retry of the implement stage", () => {
   });
 });
 
+describe("a failed worktree reset", () => {
+  it.each([["reset", 0], ["clean", 1]])("stops the retry when git %s exits non-zero", async (failing, index) => {
+    let called = false; const calls: string[][] = [];
+    provider.run = async () => { called = true; return ok(); };
+    const run = async (_exe: string, args: string[]) => { calls.push(args); return { code: calls.length - 1 === index ? 128 : 0, output: "fatal: index.lock exists", stderr: "" }; };
+    const error = await attempt(2, async () => executeStage(await input({}), run)).then(() => undefined, (e: unknown) => e);
+    expect(called).toBe(false);
+    expect(error).toBeInstanceOf(ApplicationFailure);
+    expect((error as ApplicationFailure).nonRetryable).toBe(true);
+    expect((error as ApplicationFailure).type).toBe("WorktreeResetError");
+    expect((error as Error).message).toContain("implement: could not discard the previous attempt's edits");
+    expect(calls.length).toBe(index + 1);
+  });
+});
+
 describe("implement errors", () => {
   const fail = async (message: string, overrides: Partial<StageInput> = {}) => {
     provider.run = async () => { throw new Error(message); };

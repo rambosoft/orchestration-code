@@ -224,6 +224,7 @@ export async function reportResult(input: { workflowId: string; issueId: string;
 export async function probeConnectivity(): Promise<{ online: boolean }> { return { online: await isOnline() }; }
 
 /** Heartbeats keep Temporal able to deliver cancellation to a long provider run. */
+// `git` is a test seam for the clean-retry reset; Temporal passes only the input.
 export async function executeStage(input: StageInput, git: typeof runCheck = runCheck): Promise<StageOutput> {
   let timer: NodeJS.Timeout | undefined;
   try { const context = Context.current(); timer = setInterval(() => context.heartbeat(), HEARTBEAT_INTERVAL_MS); } catch { /* direct unit invocation */ }
@@ -436,7 +437,10 @@ ${intelligence.block}`; }
     if (spent.state === "warn") visualWarnings.push(spent.message!);
   }
   // Attempt 2 of implement starts from the base commit: the worktree is committed only at publish, so HEAD is the base and the previous attempt's edits (not ignored files such as node_modules) are discarded (B-180).
-  if (activityAttempt > 1 && input.stage === "implement") { await git("git", ["reset", "--hard", "HEAD"], input.projectRoot); await git("git", ["clean", "-fd"], input.projectRoot); visualWarnings.push("clean-retry: discarded the previous attempt's edits"); }
+  if (activityAttempt > 1 && input.stage === "implement") {
+    // A failed reset (index.lock, a locked file on Windows) would run the provider on the dirty tree, which is the bug this prevents: stop, and do not claim the edits were discarded.
+    for (const args of [["reset", "--hard", "HEAD"], ["clean", "-fd"]]) { const done = await git("git", args, input.projectRoot); if (done.code !== 0) throw ApplicationFailure.nonRetryable(`implement: could not discard the previous attempt's edits (git ${args[0]} exited ${done.code}): ${[done.output, done.stderr].filter(Boolean).join(" ").slice(-300)}`, "WorktreeResetError"); }
+    visualWarnings.push("clean-retry: discarded the previous attempt's edits"); }
   const providerStarted = Date.now();
   let result: StageOutput;
   try {
