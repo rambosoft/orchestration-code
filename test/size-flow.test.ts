@@ -31,7 +31,7 @@ describe("workflow size gate", () => {
   beforeAll(async () => { env = await TestWorkflowEnvironment.createTimeSkipping(); }, 120_000);
   afterAll(async () => { await env?.teardown(); });
 
-  async function run(extra: Partial<RunInput>, options: { changes?: ChangeStats } = {}) {
+  async function run(extra: Partial<RunInput>, options: { changes?: ChangeStats; failRepair?: boolean } = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), "orch-size-"));
     const worktree = path.join(root, "worktree"); await mkdir(worktree);
     const calls: StageInput[] = [];
@@ -44,6 +44,8 @@ describe("workflow size gate", () => {
       executeStage: async (input: StageInput): Promise<StageOutput> => {
         calls.push(input);
         if (input.prompt.includes("[INJECT_NO_PROGRESS]")) return realExecuteStage(input);
+        // A repair round (the second implement call) that makes no progress.
+        if (options.failRepair && input.stage === "implement" && input.attempt > 1) return realExecuteStage({ ...input, prompt: `${input.prompt} [INJECT_NO_PROGRESS]` });
         return { ...(await new FakeProvider().run(input)), stage: input.stage };
       },
       collectWorktree: async () => path.join(root, "worktree.patch"),
@@ -70,16 +72,41 @@ describe("workflow size gate", () => {
     expect(result.metadata?.warnings).toEqual(expect.arrayContaining([{ stage: "stages", message: "stage list set: task Stages line" }, { stage: "size", message: "task names 9 files in 3 areas; limit is 5 files / 3 areas" }]));
     expect(result.metadata?.warnings?.filter(warning => warning.stage === "size")).toHaveLength(1);
     expect(calls.find(call => call.stage === "implement")!.progress).toEqual({ firstEditMinutes: 15, idleMinutes: 10 });
+    expect(calls.find(call => call.stage === "implement")!.cleanRetry).toBe(true);
+    expect(result.metadata?.sizeEstimate).toEqual(size);
   }, 90_000);
 
-  it("uses the sizing file limit for the escalation review", async () => {
-    const changes: ChangeStats = { files: Array.from({ length: 6 }, (_, index) => `src/f${index}.ts`), lines: 10, deletedFiles: [] };
-    const limited = await run({ tier: "mvp", lane: "light", sizing }, { changes });
+  it("returns a repair round that made no progress as a split request; repair inputs carry neither progress nor cleanRetry", async () => {
+    const { result, calls } = await run({ tier: "mvp", lane: "standard", sizing, size, injectReviewFailure: true }, { failRepair: true });
+    const implementCalls = calls.filter(call => call.stage === "implement");
+    expect(implementCalls).toHaveLength(2);
+    expect(implementCalls[0]).toMatchObject({ cleanRetry: true, progress: { firstEditMinutes: 15, idleMinutes: 10 } });
+    expect(implementCalls[1]).not.toHaveProperty("progress"); expect(implementCalls[1]).not.toHaveProperty("cleanRetry");
+    expect(result.status).toBe("failed");
+    expect(result.message.startsWith("needs split: repair Activity failed: "), result.message).toBe(true);
+    expect(result.metadata?.size).toMatchObject({ kind: "size_suspected", estimate: size });
+    expect(result.metadata?.review.stopReason).toBe("repair_activity_failed");
+  }, 90_000);
+
+  it("handles a size-suspected implement failure the same way for a project without a sizing block", async () => {
+    const { result, calls } = await run({ tier: "prototype", lane: "standard", prompt: "Build everything at once. [INJECT_NO_PROGRESS]" });
+    expect(calls.find(call => call.stage === "implement")).not.toHaveProperty("progress");
+    expect(result.status).toBe("failed");
+    expect(result.message.startsWith("needs split: "), result.message).toBe(true);
+    expect(result.metadata?.size).toMatchObject({ kind: "size_suspected" });
+    expect(result.metadata?.size).not.toHaveProperty("estimate");
+  }, 90_000);
+
+  it("escalates from the sizing largeMinFiles itself (the estimator's large boundary) and not below it", async () => {
+    const changes = (count: number): ChangeStats => ({ files: Array.from({ length: count }, (_, index) => `src/f${index}.ts`), lines: 10, deletedFiles: [] });
+    const limited = await run({ tier: "mvp", lane: "light", sizing }, { changes: changes(5) });
     expect([...limited.stages].sort()).toEqual(["implement", "review", "verify"]);
-    expect(limited.result.message).toContain("6 files changed (limit 5)");
-    const unlimited = await run({ tier: "mvp", lane: "light" }, { changes });
+    expect(limited.result.message).toContain("5 files changed (limit 4)");
+    const below = await run({ tier: "mvp", lane: "light", sizing }, { changes: changes(4) });
+    expect(below.stages).toEqual(["implement", "verify"]);
+    const unlimited = await run({ tier: "mvp", lane: "light" }, { changes: changes(5) });
     expect(unlimited.stages).toEqual(["implement", "verify"]);
-  }, 120_000);
+  }, 180_000);
 
   it("turns an implement stage that made no progress into a split request with the size evidence", async () => {
     const { result, stages } = await run({ tier: "prototype", lane: "standard", prompt: "Build everything at once. [INJECT_NO_PROGRESS]", sizing, size });
@@ -99,6 +126,7 @@ describe("workflow size gate", () => {
     expect(stages[0]).toBe("plan");
     expect(result.metadata?.warnings).toBeUndefined();
     expect(result.metadata).not.toHaveProperty("size");
+    expect(result.metadata).not.toHaveProperty("sizeEstimate");
     expect(calls.find(call => call.stage === "implement")!).not.toHaveProperty("progress");
     expect(result.message).toBe("quality gates passed; draft PR published");
   }, 90_000);

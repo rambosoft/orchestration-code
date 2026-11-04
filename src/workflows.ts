@@ -220,15 +220,15 @@ async function runProject(input: RunInput): Promise<RunResult> {
   let gateCommands = input.qualityCommands ?? [];
   let openFindings: ReviewFinding[] = [];
   let investigationConstraints: string[] = [];
-  const resultMetadata = () => ({ ...(taskType ? { taskType: taskType.id } : {}), review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}) });
+  const resultMetadata = () => ({ ...(taskType ? { taskType: taskType.id } : {}), review: { maxReviewRounds: maxRounds, reviewCount, repairCount, findingsFixed, reviewRuns: [...reviewRuns], nonBlockingNotes: [...nonBlockingNotes], unresolvedFindings: [...unresolvedFindings], ...(stopReason ? { stopReason } : {}) }, ...(openSpecInfo ? { openSpec: openSpecInfo } : {}), ...(warnings.length ? { warnings: [...warnings] } : {}), ...(input.size ? { sizeEstimate: input.size } : {}) });
   // Warnings travel in the final message because the Paperclip adapter already posts that message into the issue.
   const withWarnings = (message: string): string => warnings.length ? `${message} (${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${warnings.map(warning => `${warning.stage}: ${warning.message}`).join(" | ").slice(0, 1200)})` : message;
   const finish = (status: RunResult["status"], message: string): RunResult => ({ runId: input.runId, status, stages, artifactRefs, message, metadata: resultMetadata() });
   // Task-size gate (B-183): an implement failure that says the task is too big for one pass (no progress, an implement timeout) is returned as a split request with the size evidence.
-  // Only for runs admitted with sizing; result data only, so the command sequence is unchanged.
+  // Every project, like the activity (no retry) and reconcile (no resume); the opt-in `sizing` gates only the guard and the escalation limit. Result data only, so the command sequence is unchanged.
   const finishImplementFailure = (message: string, error: unknown): RunResult => {
-    const failure = input.sizing ? classifyFailure({ message: failureDetails(error) }) : undefined;
-    if (failure?.kind !== "size") return finish("failed", message);
+    const failure = classifyFailure({ message: failureDetails(error) });
+    if (failure.kind !== "size") return finish("failed", message);
     const result = finish("failed", `needs split: ${message}`);
     return { ...result, metadata: { ...result.metadata!, size: { kind: "size_suspected", reason: failure.reason, ...(input.size ? { estimate: input.size } : {}) } } };
   };
@@ -254,14 +254,15 @@ ${formatBrief(brief)}` : formatBrief(brief);
   let deterministicVerification: StageOutput | undefined;
   const openSpecRouteOptions = (({ provider, model, reasoningEffort }) => ({ provider, model, reasoningEffort }))(openSpecRoute(input));
   const limitedProviders = new Set<string>();
-  const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string } = {}): Promise<StageOutput> => {
+  const execute = async (stage: StageName, options: { prompt?: string; provider?: string; model?: string; reasoningEffort?: StageInput["reasoningEffort"]; providerTimeoutMs?: number; verificationOnly?: boolean; deterministicChecksAlreadyPassed?: boolean; qualityCommands?: StageInput["qualityCommands"]; openSpecChangeId?: string; mainImplement?: boolean } = {}): Promise<StageOutput> => {
     const route = stageRoute(input, stage === "brief" || stage === "spec_optimize" ? "plan" : stage); const stageAttempt = stages.filter(item => item.stage === stage).length + 1;
     const defaultPrompt = stage === "implement" ? implementationPrompt(executionBrief ? briefText(executionBrief) : "", undefined, gateCommands, uiUxContext, analysisDecisions, contractContext, skillsContext.implement) : stage === "plan" ? makePlanningPrompt(planningTaskGoal || workflowPrompt, optimizedOpenSpec, uiUxContext, analysisDecisions, contractContext, skillsContext.plan) : stage === "brief" ? (plan ? makeBriefPrompt(workflowPrompt, openSpecContext, plan) : "") : workflowPrompt;
     const args: StageInput = { runId: input.runId, taskId: input.taskId, projectId: input.projectId, profile: input.profile, stage, prompt: options.prompt ?? defaultPrompt, attempt: stageAttempt, provider: options.provider ?? route.provider, model: options.model ?? route.model, reasoningEffort: options.reasoningEffort ?? route.reasoningEffort, providerTimeoutMs: options.providerTimeoutMs ?? input.providerTimeouts?.[stage] ?? (stage === "openspec" ? 720_000 : undefined), projectRoot: workspace, artifactsDir: input.artifactsDir, plugins: input.plugins ?? [], qualityCommands: options.qualityCommands ?? gateCommands, verificationOnly: options.verificationOnly, deterministicChecksAlreadyPassed: options.deterministicChecksAlreadyPassed, openSpecChangeId: options.openSpecChangeId, ...(input.intelligence ? { intelligence: input.intelligence } : {}) };
     if (stage === "review" && input.visual) args.visual = input.visual;
     if (input.budget) args.budget = input.budget;
-    // The no-progress guard limits (task-size gate); only the Codex provider reads them, the others ignore the field.
-    if (stage === "implement" && input.sizing) args.progress = { firstEditMinutes: input.sizing.firstEditMinutes, idleMinutes: input.sizing.idleMinutes };
+    // The main implement call only (never a repair round, whose worktree holds the implementation it repairs): the clean retry, and with opt-in sizing the no-progress guard limits
+    // (only the Codex provider reads them). Data on the existing activity call, so the command sequence is unchanged.
+    if (stage === "implement" && options.mainImplement) { args.cleanRetry = true; if (input.sizing) args.progress = { firstEditMinutes: input.sizing.firstEditMinutes, idleMinutes: input.sizing.idleMinutes }; }
     // A usage limit or a lost connection waits on a timer and runs the same stage again without spending its retry attempts (ADR 0016); a pause that outlasts MAX_PAUSE_TOTAL_MS surfaces as a failure.
     // patched(): runs recorded before this change saw such a failure as an ordinary activity error.
     let output: StageOutput;
@@ -729,7 +730,7 @@ ${formatBrief(brief)}` : formatBrief(brief);
         deterministicVerification = verification; output = verification;
       } else {
         output = stage === "review" ? await execute("review", { prompt: reviewPrompt(briefText(executionBrief!), stages, ++reviewCount, Boolean(input.injectReviewFailure && repairCount === 0 || input.repeatReviewFailure), false, uiUxContext, analysisDecisions, contractContext, skillsContext.review, specialistContext) })
-          : await execute(stage);
+          : await execute(stage, stage === "implement" ? { mainImplement: true } : {});
       }
     }
     catch (error) {
@@ -801,10 +802,10 @@ ${formatBrief(brief)}` : formatBrief(brief);
       }
     }
     if (!output.ok && !(stage === "review" && openFindings.length)) { stopReason = `${stage}_quality_gate_failed`; return finish("failed", `${stage} quality gate failed`); }
-    // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons).
+    // A result that skipped review but looks risky gets one after all (src/lanes.ts escalationReasons). escalationReasons fires above maxFiles; largeMinFiles is the first large count, hence the - 1.
     if ((lane?.escalation || input.specialists?.length) && stage === "implement" && !stageList.includes("review")) {
       const changes = await assessChanges({ worktree: workspace }).catch(() => undefined);
-      const reasons = [...(lane?.escalation && changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0, input.sizing ? { maxFiles: input.sizing.largeMinFiles } : {}) : []), ...(changes && input.specialists?.length ? specialistReasons(matchSpecialists(input.specialists, changes.files)) : [])];
+      const reasons = [...(lane?.escalation && changes ? escalationReasons(changes, declaredUnmetAcceptance(output.summary).length > 0, input.sizing ? { maxFiles: input.sizing.largeMinFiles - 1 } : {}) : []), ...(changes && input.specialists?.length ? specialistReasons(matchSpecialists(input.specialists, changes.files)) : [])];
       if (reasons.length) { stageList.splice(stageList.indexOf("verify"), 0, "review"); warnings.push({ stage: "review", message: `review added to this ${input.lane} task: ${reasons.join("; ")}` }); }
     }
     completedStages.push(stage);

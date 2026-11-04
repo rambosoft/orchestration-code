@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { reproductionCommandProblem, TEST_PATH, type ReproVerification } from "./bug.js";
 import { buildContextPack as buildPack, type ContextPack } from "./context-pack.js";
 import { buildSurveyInventory } from "./survey-inventory.js";
@@ -436,11 +436,14 @@ ${intelligence.block}`; }
     if (spent.state === "exceeded") throw ApplicationFailure.nonRetryable(spent.message!, "TokenBudgetExceeded");
     if (spent.state === "warn") visualWarnings.push(spent.message!);
   }
-  // Attempt 2 of implement starts from the base commit: the worktree is committed only at publish, so HEAD is the base and the previous attempt's edits (not ignored files such as node_modules) are discarded (B-180).
-  if (activityAttempt > 1 && input.stage === "implement") {
-    // A failed reset (index.lock, a locked file on Windows) would run the provider on the dirty tree, which is the bug this prevents: stop, and do not claim the edits were discarded.
-    for (const args of [["reset", "--hard", "HEAD"], ["clean", "-fd"]]) { const done = await git("git", args, input.projectRoot); if (done.code !== 0) throw ApplicationFailure.nonRetryable(`implement: could not discard the previous attempt's edits (git ${args[0]} exited ${done.code}): ${[done.output, done.stderr].filter(Boolean).join(" ").slice(-300)}`, "WorktreeResetError"); }
-    visualWarnings.push("clean-retry: discarded the previous attempt's edits"); }
+  // Clean retry of the main implement call (B-180): HEAD is the base (the worktree is committed only at publish), so attempt 1 records what the earlier stages left (OpenSpec output, a tracked edit)
+  // and a later attempt restores exactly that state instead of the base. A repair round (no cleanRetry) never resets: its worktree holds the implementation it repairs.
+  if (input.stage === "implement" && input.cleanRetry) {
+    const snapshot = { patch: path.join(artifactsDir, `implement-${input.attempt}-snapshot.patch`), list: path.join(artifactsDir, `implement-${input.attempt}-snapshot.json`) };
+    if (activityAttempt === 1) await snapshotWorktree(git, input.projectRoot, snapshot);
+    else if (await restoreWorktree(git, input.projectRoot, snapshot)) visualWarnings.push("clean-retry: discarded the previous attempt's edits");
+    else visualWarnings.push("clean-retry skipped: no pre-implement snapshot");
+  }
   const providerStarted = Date.now();
   let result: StageOutput;
   try {
@@ -479,6 +482,37 @@ ${intelligence.block}`; }
   const costUsd = out.metadata?.total_cost_usd;
   await emitActivityEvent({ event: "activity.complete", ...activityContext, provider: out.provider, ok: out.ok, providerDurationMs: out.metadata?.providerDurationMs ?? out.durationMs, activityDurationMs: Date.now() - activityStartedAt, ...(typeof costUsd === "number" ? { costUsd } : {}), retries: Math.max(0, (info?.attempt ?? 1) - 1), ...(input.stage === "verify" ? { checkDurationsMs: (qualityChecks ?? []).map(check => check.durationMs) } : {}) });
   return { ...out, metadata: withVisual(out.metadata), stage: input.stage, artifactRefs: [...out.artifactRefs, ...qualityRefs, ...visualImages, file] };
+}
+type Snapshot = { patch: string; list: string };
+const untrackedPaths = async (git: typeof runCheck, root: string) => { const done = await git("git", ["ls-files", "--others", "--exclude-standard", "-z"], root, 50_000_000); return { done, paths: done.output.split("\0").filter(Boolean) }; };
+/** The pre-implement state: the tracked difference against HEAD as a binary patch and the untracked, not ignored paths. The list is written last, so it marks a complete snapshot; any failure leaves none (and the retry then does not reset). */
+async function snapshotWorktree(git: typeof runCheck, root: string, snapshot: Snapshot): Promise<void> {
+  try {
+    await rm(snapshot.list, { force: true });
+    if ((await git("git", ["diff", "HEAD", "--binary", `--output=${snapshot.patch}`], root)).code !== 0) return;
+    const { done, paths } = await untrackedPaths(git, root);
+    if (done.code === 0) await writeFile(snapshot.list, JSON.stringify({ untracked: paths }));
+  } catch { /* no snapshot: a later attempt warns instead of resetting */ }
+}
+/** Restores the snapshot: unstage (so files the failed attempt added keep their content until judged), reset tracked files to HEAD, remove only untracked paths the snapshot did not have, re-apply the tracked difference. False: no snapshot, nothing touched. */
+async function restoreWorktree(git: typeof runCheck, root: string, snapshot: Snapshot): Promise<boolean> {
+  const saved = await readFile(snapshot.list, "utf8").then(text => (JSON.parse(text) as { untracked?: unknown }).untracked, () => undefined);
+  if (!Array.isArray(saved)) return false;
+  // A failed step (index.lock, a locked file on Windows) would run the provider on a half-restored tree, which is the bug this prevents: stop, and do not claim the edits were discarded.
+  const fail = (step: string, detail: string): never => { throw ApplicationFailure.nonRetryable(`implement: could not discard the previous attempt's edits (${step}): ${detail.slice(-300)}`, "WorktreeResetError"); };
+  const step = async (args: string[]) => { const done = await git("git", args, root); if (done.code !== 0) fail(`git ${args[0]} exited ${done.code}`, [done.output, done.stderr].filter(Boolean).join(" ")); };
+  await step(["reset", "-q", "HEAD"]); await step(["reset", "--hard", "HEAD"]);
+  const { done, paths } = await untrackedPaths(git, root);
+  if (done.code !== 0) fail(`git ls-files exited ${done.code}`, [done.output, done.stderr].filter(Boolean).join(" "));
+  const keep = new Set(saved);
+  for (const file of paths.filter(file => !keep.has(file))) {
+    const target = path.resolve(root, file);
+    await rm(target, { force: true, recursive: true }).catch((error: unknown) => fail(`removing ${file}`, String(error)));
+    // Directories the failed attempt created are removed once empty; rmdir refuses a non-empty one.
+    for (let dir = path.dirname(target); dir.startsWith(path.resolve(root) + path.sep); dir = path.dirname(dir)) { if (!(await rmdir(dir).then(() => true, () => false))) break; }
+  }
+  if ((await stat(snapshot.patch).then(info => info.size, () => 0)) > 0) await step(["apply", "--binary", "--whitespace=nowarn", snapshot.patch]);
+  return true;
 }
 async function timeoutProbeImpl(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 5000)); }
 
