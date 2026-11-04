@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SIZE_LIMITS, areaOf, estimateSize, filesNamedIn } from "../src/task-size.js";
+import { DEFAULT_SIZE_LIMITS, areaOf, estimateSize, filesNamedIn, proposeSplit } from "../src/task-size.js";
 
 const production = DEFAULT_SIZE_LIMITS.production;
 const files = (n: number, dir = "src") => Array.from({ length: n }, (_, i) => `${dir}/f${i}.ts`);
@@ -42,11 +42,23 @@ describe("task size estimator", () => {
     expect(areaOf("app/store/x.ts")).toBe("app/store");
     expect(areaOf("packages/core/src/x.ts")).toBe("packages/core");
     expect(areaOf("docs/a/b.md")).toBe("docs");
-    expect(areaOf("README.md")).toBe("README.md");
+    expect(areaOf("README.md")).toBe(".");
+    expect(areaOf("package.json")).toBe(areaOf("tsconfig.json"));
   });
   it("filesNamedIn finds relative source paths once", () => {
     expect(filesNamedIn("edit src/app/App.tsx and src/app/App.tsx")).toEqual(["src/app/App.tsx"]);
     expect(filesNamedIn("change src\\a\\B.ts, then test/b.test.ts. See https://x.com/a/b.js")).toEqual(["src/a/B.ts", "test/b.test.ts"]);
     expect(filesNamedIn("no files here, version 1.2.3")).toEqual([]);
+  });
+  it("root-level files share one area so config files do not inflate the area count", () => {
+    expect(estimateSize({ files: ["package.json", "tsconfig.json", "src/a/x.ts"] }, DEFAULT_SIZE_LIMITS.production).areas).toBe(2);
+  });
+  it("proposeSplit groups by area, chunks to largeMinFiles - 1 and lists every file once", () => {
+    const limits = DEFAULT_SIZE_LIMITS.production;
+    const files = [...Array.from({ length: 12 }, (_, i) => `src/a/f${i}.ts`), "src/b/x.ts", "README.md"];
+    const parts = proposeSplit(files, limits);
+    expect(parts.flatMap(part => part.files).sort()).toEqual([...files].sort());
+    expect(parts.every(part => part.files.length <= limits.largeMinFiles - 1)).toBe(true);
+    expect(parts.map(part => part.title)).toEqual(["src/a part 1", "src/a part 2", "src/b part 1", ". part 1"]);
   });
 });

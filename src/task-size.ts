@@ -21,11 +21,11 @@ export type SizeEstimate = { hint: SizeHint; files: number; areas: number; basis
 const norm = (file: string): string => file.replace(/\\/g, "/").replace(/^\.\//, "");
 const SOURCE_ROOTS = new Set(["src", "app"]);
 
-/** The area of a file: the first directory under `src/` or `app/`, the package under `packages/`, else the first segment. */
+/** The area of a file: the first directory under `src/` or `app/`, the package under `packages/`, else the first segment; files at the repository root share the area ".". */
 export function areaOf(file: string): string {
   const parts = norm(file).split("/").filter(Boolean);
   const dirs = parts.slice(0, -1);
-  if (dirs.length === 0) return parts[0] ?? "";
+  if (dirs.length === 0) return ".";
   if (SOURCE_ROOTS.has(dirs[0]!) || dirs[0] === "packages") return dirs.slice(0, 2).join("/");
   return dirs[0]!;
 }
@@ -39,6 +39,14 @@ export function estimateSize(input: { files: string[]; basis?: "measured" | "tex
   if (areas > limits.maxAreas) reasons.push(`${areas} areas (limit ${limits.maxAreas})`);
   const hint: SizeHint = reasons.length > 0 ? "large" : files.length <= limits.smallMaxFiles && areas === 1 ? "small" : "normal";
   return { hint, files: files.length, areas, basis: input.basis ?? "text", reasons };
+}
+
+/** A split proposal for a task that is too large: the files grouped by area, each group cut into parts of at most `largeMinFiles - 1` files. Every file appears exactly once; titles name the area and part number. */
+export function proposeSplit(files: string[], limits: SizeLimits): Array<{ title: string; files: string[] }> {
+  const groups = new Map<string, string[]>();
+  for (const file of new Set(files.map(norm).filter(Boolean))) groups.set(areaOf(file), [...(groups.get(areaOf(file)) ?? []), file]);
+  const size = Math.max(1, limits.largeMinFiles - 1);
+  return [...groups].flatMap(([area, group]) => Array.from({ length: Math.ceil(group.length / size) }, (_, part) => ({ title: `${area} part ${part + 1}`, files: group.slice(part * size, (part + 1) * size) })));
 }
 
 const NAMED_FILE = /(?<![\w./:@~-])(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:tsx|ts|jsx|js|mjs|cjs|json|css|scss|html|vue|py|cs|go|rs|java|kt|swift)\b/g;

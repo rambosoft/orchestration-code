@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { BacklogItemSchema, formatSurveyMarkdown, validateSurvey } from "../src/survey.js";
 import { parseSurveyBacklog, planFromBacklog } from "../src/plan-from-survey.js";
+import { DEFAULT_SIZE_LIMITS } from "../src/task-size.js";
 
 describe("survey backlog planning", () => {
   it("round trips the validated backlog, including normalized area and critical", () => {
@@ -93,5 +94,54 @@ describe("survey backlog planning", () => {
     expect(forced.spec.tasks[0]!.prompt).toContain("Critical: yes");
     expect(forced.spec.tasks[0]!.prompt).toContain("Design: docs/design/build.md");
     expect(() => planFromBacklog(items, { projectId: "luxus", prefix: "LUX", only: ["R3", "R99"] })).toThrow("Unknown backlog id(s) in --only: R99");
+  });
+
+  describe("size gate (B-178)", () => {
+    // The schema clamps old_paths to 1..8 entries, so set them after parsing: the gate must also cope with longer lists and with none.
+    const mk = (id: string, old_paths: string[], extra: Record<string, unknown> = {}) => ({ ...BacklogItemSchema.parse({ id, title: "Item " + id, kind: "logic", old_paths: ["x"], target: "module", tests: ["t"], size: "S", depends_on: [], changes_behaviour: false, area: "core", ...extra }), old_paths });
+    const wide = () => mk("W", [...Array.from({ length: 6 }, (_, i) => `src/a/f${i}.ts`), ...Array.from({ length: 4 }, (_, i) => `src/b/f${i}.ts`), ...Array.from({ length: 4 }, (_, i) => `src/c/f${i}.ts`)]);
+    const base = { projectId: "p", prefix: "T" };
+    it("leaves a too-large item out of the tasks and proposes parts under the limit; prototype keeps it", () => {
+      const limits = DEFAULT_SIZE_LIMITS.production;
+      const result = planFromBacklog([wide(), mk("B", ["src/z/one.ts"])], { ...base, limits });
+      expect(result.spec.tasks.map(task => task.taskId)).toEqual(["T-B"]);
+      const [split] = result.needsSplit;
+      expect(split).toMatchObject({ id: "W", title: "Item W", files: 14, areas: 3 });
+      expect(split!.reasons.length).toBeGreaterThan(0);
+      expect(split!.proposal.length).toBeGreaterThan(1);
+      expect(split!.proposal.every(part => part.files.length < limits.largeMinFiles)).toBe(true);
+      expect(split!.proposal.flatMap(part => part.files)).toHaveLength(14);
+      const proto = planFromBacklog([wide()], { ...base, limits: DEFAULT_SIZE_LIMITS.prototype });
+      expect(proto.spec.tasks.map(task => task.taskId)).toEqual(["T-W"]);
+      expect(proto.needsSplit).toEqual([]);
+    });
+    it("adds a Lane line for small items only, and none for normal, unknown or when no limits are given", () => {
+      const limits = DEFAULT_SIZE_LIMITS.production;
+      const prompt = (items: ReturnType<typeof mk>[], opts: object, id: string) => planFromBacklog(items, { ...base, ...opts }).spec.tasks.find(task => task.taskId === "T-" + id)!.prompt;
+      expect(prompt([mk("S", ["src/a/x.ts"])], { limits }, "S")).toContain("Lane: light");
+      expect(prompt([mk("N", ["src/a/x.ts", "src/a/y.ts", "src/a/z.ts"])], { limits }, "N")).not.toContain("Lane:");
+      expect(prompt([mk("E", [])], { limits }, "E")).not.toContain("Lane:");
+      expect(prompt([mk("S", ["src/a/x.ts"])], {}, "S")).not.toContain("Lane:");
+    });
+    it("merges consecutive small same-area items only with mergeSmall, keeps both acceptance lists, never merges critical or dependent items", () => {
+      const limits = DEFAULT_SIZE_LIMITS.production;
+      const a = mk("A", ["src/a/x.ts"]), b = mk("B", ["src/a/y.ts"]);
+      expect(planFromBacklog([a, b], { ...base, limits }).spec.tasks.map(task => task.taskId)).toEqual(["T-A", "T-B"]);
+      const merged = planFromBacklog([a, b], { ...base, limits, mergeSmall: true }).spec.tasks;
+      expect(merged.map(task => task.taskId)).toEqual(["T-A+B"]);
+      expect(merged[0]!.prompt).toContain("Lane: light");
+      expect(merged[0]!.prompt).toContain("Item A");
+      expect(merged[0]!.prompt).toContain("Item B");
+      expect(merged[0]!.prompt.match(/^1\. The stated goal/gm)).toHaveLength(2);
+      const crit = planFromBacklog([a, mk("C", ["src/a/z.ts"], { critical: true })], { ...base, limits, mergeSmall: true }).spec.tasks;
+      expect(crit.map(task => task.taskId)).toEqual(["T-A", "T-C"]);
+      const dep = planFromBacklog([a, mk("D", ["src/a/q.ts"], { depends_on: ["A"] })], { ...base, limits, mergeSmall: true }).spec.tasks;
+      expect(dep.map(task => task.taskId)).toEqual(["T-A", "T-D"]);
+    });
+    it("treats a dependency on a split item like a pending decision", () => {
+      const result = planFromBacklog([wide(), mk("B", ["src/z/one.ts"], { depends_on: ["W"] })], { ...base, limits: DEFAULT_SIZE_LIMITS.production });
+      expect(result.spec.tasks.map(task => task.taskId)).toEqual(["T-B"]);
+      expect(result.spec.tasks[0]!.prompt).toContain("Dependencies pending a decision: W");
+    });
   });
 });

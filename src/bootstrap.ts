@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { ANSWER_SHAPE } from "./answer-shape.js";
 import { SLICE_PREFIX } from "./acceptance.js";
-import { MILESTONE_CHECK_PREFIX } from "./lanes.js";
+import { MILESTONE_CHECK_PREFIX, type Tier } from "./lanes.js";
+import { DEFAULT_SIZE_LIMITS } from "./task-size.js";
 import { parseJsonLoose } from "./json-extract.js";
 import { PLAN_LIMITS, projectSlug, textLines, type BootstrapForm, type OptionValue, type PlanLimits } from "./bootstrap-options.js";
 import { templateSummaries, usableTemplate, type ScaffoldTemplate } from "./bootstrap-templates.js";
@@ -271,6 +272,11 @@ function planOrderRule(options: Record<string, OptionValue>): string {
     ? "- Tasks that do not depend on each other run in parallel, each from the finished work of the tasks it depends on and nothing else. depends_on must therefore list every earlier task whose code or files a task needs (keys of earlier tasks only); a task that lists nothing starts from the project as it was at the end of the previous milestone. Give tasks that can run side by side separate files and modules, because two parallel tasks that change the same file conflict when their work is combined, so make the second one depend on the first."
     : "- Tasks run strictly one after another in the order you list them, and each starts from the previous task's finished work, so put them in an order where every task can rely on all earlier ones. depends_on notes which earlier tasks a task relies on (keys of earlier tasks only).";
 }
+/** The size limits of the selected maturity, stated to the model so it cuts tasks to fit (task-size gate). */
+export function sizeLimitSentence(options: Record<string, OptionValue>): string {
+  const limits = DEFAULT_SIZE_LIMITS[options.maturity as Tier] ?? DEFAULT_SIZE_LIMITS.mvp;
+  return `Size limit for this maturity: a task that touches ${limits.largeMinFiles} or more files, or more than ${limits.maxAreas} areas, is rejected as too large, so keep every task under ${limits.largeMinFiles} files and within ${limits.maxAreas} areas and split bigger work into separate tasks.`;
+}
 export function blueprintPrompt(run: BootstrapRunInput, stack: StackDecision, charter: Charter, limits: PlanLimits, scaffolded: boolean, design?: GameDesign): string {
   const { form, options } = run;
   const game = isGame(options);
@@ -300,6 +306,7 @@ ${uiLines}
 ${planOrderRule(options)}
 - Include the tests the selected test depth calls for inside the tasks that add behaviour. Do not plan work for deployment, CI or anything the charter puts out of scope. type is "task" for building, "research" or "architecture" only for a read-only investigation that a decision depends on.
 - size: "small" for a change that touches one or two files with no new behaviour to design (wiring, copy, a config or style tweak), "large" for a task that adds a subsystem, a data model or a cross-cutting change, otherwise "normal". Small tasks skip planning and review on lighter projects, so do not call risky work small.
+- ${sizeLimitSentence(options)}
 - Keys are short and unique (M1, M2, T1, T2 ...).
 ${designPromptSection(options)}${ANSWER_SHAPE} Return only one JSON object, no prose and no code fence, matching exactly: ${BLUEPRINT_HINT}.`;
 }

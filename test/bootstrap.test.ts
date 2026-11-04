@@ -186,6 +186,8 @@ describe("stack, charter and blueprint", () => {
     expect(blueprintPrompt(run, stack, deterministicCharter(run), limits, false)).toContain("first task must initialise");
     expect(prompt).toContain("design foundation");
     expect(prompt).toContain("one after another");
+    expect(prompt).toContain("touches 40 or more files, or more than 6 areas");
+    expect(blueprintPrompt(runInput({ maturity: "production" }), stack, deterministicCharter(run), limits, true)).toContain("touches 10 or more files, or more than 2 areas");
   });
 });
 
