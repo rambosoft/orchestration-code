@@ -1,5 +1,8 @@
 # Mission changelog
 
+## 2026-11-04 task-size gate (ADR 0039, B-175..B-185)
+- Oversized tasks are caught at generation (needsSplit with a proposed split), flagged at admission, and a timed-out or stalled implement is a non-resumable size failure instead of a transient one. Implement attempt 2 starts from a clean worktree; a Codex no-progress guard kills runs with no first edit or idle; a Stages line and manifest lane lists choose the stage list; needs-split is a Paperclip comment only; size-report compares estimate with outcome. Workflow wiring is additive input data: no patched(), replay fixture unchanged. FM-069 added (mitigated). Deferred: failed-run hygiene and FM-068 recovery, model routing, checkpoint commits, automatic splitting.
+
 ## 2026-11-03 player orchestration planned (B-170, B-171)
 - Documentation only. The operator's player orchestration report (policy-driven playback microkernel, native shell players first for http Xtream sources, scope-first error policy, Chromium 53 floor) is kept in the research folder with a plan that names what to reconcile with ADR 0036 before building and a checklist for the first player task.
 
