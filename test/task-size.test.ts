@@ -69,3 +69,12 @@ describe("framework names", () => {
     expect(filesNamedIn("Use Node.js to edit src/server.js and lib/vue.js")).toEqual(["src/server.js", "lib/vue.js"]);
   });
 });
+
+describe("proposeSplit", () => {
+  it("cuts 14 files over 3 areas into parts under the limit with every file exactly once", () => {
+    const files = [...Array.from({ length: 6 }, (_, i) => `src/a/f${i}.ts`), ...Array.from({ length: 5 }, (_, i) => `src/b/f${i}.ts`), ...Array.from({ length: 3 }, (_, i) => `lib/f${i}.ts`)];
+    const parts = proposeSplit(files, DEFAULT_SIZE_LIMITS.production);
+    expect(parts.every(part => part.files.length < DEFAULT_SIZE_LIMITS.production.largeMinFiles)).toBe(true);
+    expect(parts.flatMap(part => part.files).sort()).toEqual([...files].sort());
+  });
+});

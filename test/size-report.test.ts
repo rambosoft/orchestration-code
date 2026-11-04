@@ -1,21 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { formatSizeReport, isNeedsSplit, needsSplitSection, runRecords, sizeReport, surveySizing } from "../src/size-report.js";
-import { DEFAULT_SIZE_LIMITS, proposeSplit, type SizeEstimate } from "../src/task-size.js";
+import { DEFAULT_SIZE_LIMITS, type SizeEstimate } from "../src/task-size.js";
 import { planFromBacklog } from "../src/plan-from-survey.js";
 import { BacklogItemSchema } from "../src/survey.js";
 import type { RunResult } from "../src/contracts.js";
 
 const est = (hint: SizeEstimate["hint"], files = 5): SizeEstimate => ({ hint, files, areas: 1, basis: "text", reasons: [] });
 const rec = (hint: SizeEstimate["hint"] | undefined, status: string, failureKind?: string) => ({ ...(hint ? { estimate: est(hint) } : {}), status, ...(failureKind ? { failureKind } : {}) });
-
-describe("proposeSplit", () => {
-  it("cuts 14 files over 3 areas into parts under the limit with every file exactly once", () => {
-    const files = [...Array.from({ length: 6 }, (_, i) => `src/a/f${i}.ts`), ...Array.from({ length: 5 }, (_, i) => `src/b/f${i}.ts`), ...Array.from({ length: 3 }, (_, i) => `lib/f${i}.ts`)];
-    const parts = proposeSplit(files, DEFAULT_SIZE_LIMITS.production);
-    expect(parts.every(part => part.files.length < DEFAULT_SIZE_LIMITS.production.largeMinFiles)).toBe(true);
-    expect(parts.flatMap(part => part.files).sort()).toEqual([...files].sort());
-  });
-});
 
 describe("sizeReport", () => {
   it("counts runs per band, defaulting runs without an estimate to normal", () => {

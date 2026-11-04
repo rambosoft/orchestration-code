@@ -148,6 +148,24 @@ describe("reconcile", () => {
     expect(findings.map(finding => finding.issue)).toEqual(["LOC-1"]);
     expect(state.writes).toMatchObject([{ method: "POST", route: "/api/issues/I1/comments" }]);
   });
+  it("reports a needs-split failure as a comment only, with the Needs a split section, once", async () => {
+    const split = result({ status: "failed", publish: undefined, message: "needs split: implement timed out after 30 min (12 file changes)", metadata: { size: { kind: "size_suspected", reason: "implement timeout", estimate: { hint: "large", files: 14, areas: 3, basis: "text", reasons: [] } } } as never });
+    expect(statusFor(split)).toBeUndefined();
+    const { deps, state } = world({ issues: [{ id: "I1", identifier: "LOC-1", status: "blocked" }], runs: [{ workflowId: "pc-I1-x-a1", status: "COMPLETED" }], details: { "pc-I1-x-a1": { status: "COMPLETED", result: split } } });
+    expect(await reconcile(deps, { apply: true })).toMatchObject([{ action: "reported" }]);
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0]).toMatchObject({ method: "POST", route: "/api/issues/I1/comments" });
+    expect(state.writes.some(write => write.method === "PATCH")).toBe(false);
+    const body = String(state.writes[0]!.body!.body);
+    expect(body).toContain("Needs a split"); expect(body).toContain("implement timeout"); expect(body).toContain("14 files, 3 areas"); expect(body).toContain("12 file changes"); expect(body).toContain("no file list recorded; split by area");
+    state.comments.I1 = [body];
+    expect(await reconcile(deps, { apply: true })).toMatchObject([{ action: "already_reported" }]);
+    expect(state.writes).toHaveLength(1);
+  });
+  it("adds no split section to the comment of other results", () => {
+    expect(resultComment(wf, "COMPLETED", result())).not.toContain("Needs a split");
+    expect(resultComment(wf, "COMPLETED", result({ status: "failed", publish: undefined, message: "boom" }))).not.toContain("Needs a split");
+  });
   it("picks the running workflow of a task, else the newest, and never another task's", () => {
     const rows = [{ workflowId: "pc-I1-2026-10-22-a1", status: "COMPLETED" }, { workflowId: "pc-I1-2026-10-23-a1", status: "FAILED" }, { workflowId: "pc-I2-2026-10-24-a1", status: "RUNNING" }];
     expect(latestRun(rows, "I1")?.workflowId).toBe("pc-I1-2026-10-23-a1");

@@ -62,7 +62,6 @@ export function statusFor(result: RunResult | undefined): string | undefined {
   if (result.status === "completed" && ((result.publish?.prUrl && result.publish.headSha) || result.bootstrap)) return "done";
   if (result.status === "needs_review" && result.publish?.prUrl) return "in_review";
   if (result.status === "needs_info") return "in_review";
-  if (result.status === "failed" && isNeedsSplit(result)) return "in_review";
   if (result.status === "rejected" && isBootstrap) return "cancelled";
   return undefined;
 }
