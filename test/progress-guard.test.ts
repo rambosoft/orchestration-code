@@ -92,6 +92,36 @@ describe("CliProvider no-progress guard", () => {
     expect(samples).not.toHaveBeenCalled();
   });
 
+  it("keeps counting events after the 1 MB output cap, so a healthy run is not idle", async () => {
+    let signature = "";
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => signature)), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(MIN);
+    signature = " M a.ts";
+    for (let i = 0; i < 4; i++) child.emitEvent({ type: "item.completed", item: { type: "command_execution", aggregated_output: "x".repeat(400_000) } });
+    for (let i = 0; i < 60; i++) { child.emitEvent(itemDone); await vi.advanceTimersByTimeAsync(MIN); }
+    expect(kills).toEqual([]);
+    child.exitCode = 0; child.emit("close", 0); await result;
+  });
+
+  it("never kills for lack of a first edit while every git sample fails", async () => {
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => { throw new Error("git is gone"); })), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    for (let i = 0; i < 20; i++) { child.emitEvent(itemDone); await vi.advanceTimersByTimeAsync(MIN); }
+    expect(kills).toEqual([]);
+    child.exitCode = 0; child.emit("close", 0); await result;
+  });
+
+  it("does not call a run idle while a command is still in flight; the stall watchdog stays the backstop", async () => {
+    let signature = "";
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => signature)), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(MIN);
+    signature = " M a.ts";
+    child.emitEvent({ type: "item.started", item: { type: "command_execution" } });
+    await vi.advanceTimersByTimeAsync(30 * MIN);
+    expect(kills).toEqual([]);
+    await vi.advanceTimersByTimeAsync(20 * MIN);
+    expect(((await result) as { error: Error }).error.message).toMatch(/^codex stalled: no output for 45 minutes/);
+  });
+
   it("treats a failing git sample as unknown and never kills because of it", async () => {
     let calls = 0;
     const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => { calls++; throw new Error("git is gone"); })), input({ firstEditMinutes: 15, idleMinutes: 10 }));

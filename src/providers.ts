@@ -226,23 +226,42 @@ const gitStatusSignature = async (cwd: string): Promise<string> => (await execFi
 export type ProgressGuardOptions = { intervalMs?: number; sample?: (cwd: string) => Promise<string> };
 
 /** Samples the worktree on a timer and kills the run once progressVerdict says it stopped; a failed sample is unknown and keeps the last signature. */
-function startProgressGuard(child: ChildProcess, cwd: string, limits: ProgressLimits, output: () => string, onStop: (reason: string) => void, options: ProgressGuardOptions = {}): { stop: () => void } {
+/** Counts Codex events as stdout chunks arrive, independent of the capped output buffer: finished items and turns are progress, a command started and not finished is in flight. */
+export class CodexEventCounter {
+  done = 0; commandsStarted = 0; commandsDone = 0; private rest = "";
+  push(chunk: Buffer): void {
+    const lines = (this.rest + chunk.toString("utf8")).split("\n"); this.rest = (lines.pop() ?? "").slice(-5_000_000);
+    for (const line of lines) {
+      if (!line.includes("\"type\"")) continue;
+      try {
+        const event = JSON.parse(line) as { type?: unknown; item?: { type?: unknown } };
+        const command = event.item?.type === "command_execution";
+        if (event.type === "item.started" && command) this.commandsStarted++;
+        else if (event.type === "item.completed") { this.done++; if (command) this.commandsDone++; }
+        else if (event.type === "turn.completed") this.done++;
+      } catch { /* not an event line */ }
+    }
+  }
+  get commandInFlight(): boolean { return this.commandsStarted > this.commandsDone; }
+}
+
+function startProgressGuard(child: ChildProcess, cwd: string, limits: ProgressLimits, events: CodexEventCounter, onStop: (reason: string) => void, options: ProgressGuardOptions = {}): { stop: () => void } {
   const sample = options.sample ?? gitStatusSignature;
   const startedAt = Date.now(); let lastProgressAt = startedAt; let firstChangeAt: number | undefined;
-  let signature: string | undefined; let activity = 0; let busy = false; let stopped = false;
+  let signature: string | undefined; let activity = 0; let sampled = false; let busy = false; let stopped = false;
   const tick = async () => {
     if (busy || stopped) return; busy = true;
     try {
       const next = await sample(cwd).catch(() => undefined);
-      const { telemetry } = parseCodexTelemetry(output());
-      const done = Object.values(telemetry.itemCounts).reduce((a, b) => a + b, 0) + telemetry.turnCount;
       const now = Date.now();
-      if (done > activity) { activity = done; lastProgressAt = now; }
+      if (events.done > activity || events.commandInFlight) { activity = events.done; lastProgressAt = now; }
       if (next !== undefined) {
         if (signature !== undefined && next !== signature) { firstChangeAt ??= now; lastProgressAt = now; }
-        signature = next;
+        signature = next; sampled = true;
       }
-      const verdict = progressVerdict({ startedAt, now, ...(firstChangeAt !== undefined ? { firstChangeAt } : {}), lastProgressAt }, limits);
+      // A run whose worktree could not be read even once is never judged on file changes.
+      const judged = progressVerdict({ startedAt, now, ...(firstChangeAt !== undefined ? { firstChangeAt } : {}), lastProgressAt }, limits);
+      const verdict = judged === "no_first_edit" && !sampled ? "ok" : judged;
       if (verdict !== "ok" && !stopped) { stopped = true; onStop(verdict === "no_first_edit" ? `no file change in ${Math.round(limits.firstEditMs / 60_000)} minutes` : `no file change or command in ${Math.round(limits.idleMs / 60_000)} minutes`); killProcessTree(child); }
     } finally { busy = false; }
   };
@@ -273,8 +292,9 @@ export class CliProvider implements AgentProvider {
       // Codex implement with a progress budget: a run with no first file change, or idle after it, is too big or lost; stop it with a "no progress" error the failure class reads as size.
       let noProgress: string | undefined;
       const guarded = this.id === "codex" && input.stage === "implement" ? input.progress : undefined;
-      const progressGuard = guarded ? startProgressGuard(child, input.projectRoot, { firstEditMs: guarded.firstEditMinutes * 60_000, idleMs: guarded.idleMinutes * 60_000 }, () => Buffer.concat(stdout).toString("utf8"), reason => { noProgress = reason; }, this.guardOptions) : undefined;
-      child.stdout.on("data", (b: Buffer) => { lastOutputAt = Date.now(); size += b.length; if (size < 1_000_000) stdout.push(b); });
+      const events = new CodexEventCounter();
+      const progressGuard = guarded ? startProgressGuard(child, input.projectRoot, { firstEditMs: guarded.firstEditMinutes * 60_000, idleMs: guarded.idleMinutes * 60_000 }, events, reason => { noProgress = reason; }, this.guardOptions) : undefined;
+      child.stdout.on("data", (b: Buffer) => { lastOutputAt = Date.now(); if (guarded) events.push(b); size += b.length; if (size < 1_000_000) stdout.push(b); });
       child.stderr.on("data", (b: Buffer) => { if (Buffer.concat(stderr).length < 64_000) stderr.push(b); });
       child.on("error", (e) => { clearTimeout(timer); clearInterval(stallTimer); progressGuard?.stop(); stopKill(); reject(e); });
       child.on("close", (code) => {
