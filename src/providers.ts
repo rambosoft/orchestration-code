@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
+import { progressVerdict, type ProgressLimits } from "./progress-guard.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -217,8 +219,40 @@ export function killedActivity(id: string, out: string): string {
   return items ? ` (activity before the kill: ${items}; ${turnCount} turn(s))` : "";
 }
 
+const execFileAsync = promisify(execFile);
+/** The worktree's `git status --porcelain`, as the signature of "something changed". Throws when git fails. */
+const gitStatusSignature = async (cwd: string): Promise<string> => (await execFileAsync("git", ["status", "--porcelain"], { cwd, windowsHide: true, timeout: 20_000, maxBuffer: 10_000_000 })).stdout;
+/** Test hooks of the no-progress guard: the sampling interval and the worktree sampler. */
+export type ProgressGuardOptions = { intervalMs?: number; sample?: (cwd: string) => Promise<string> };
+
+/** Samples the worktree on a timer and kills the run once progressVerdict says it stopped; a failed sample is unknown and keeps the last signature. */
+function startProgressGuard(child: ChildProcess, cwd: string, limits: ProgressLimits, output: () => string, onStop: (reason: string) => void, options: ProgressGuardOptions = {}): { stop: () => void } {
+  const sample = options.sample ?? gitStatusSignature;
+  const startedAt = Date.now(); let lastProgressAt = startedAt; let firstChangeAt: number | undefined;
+  let signature: string | undefined; let activity = 0; let busy = false; let stopped = false;
+  const tick = async () => {
+    if (busy || stopped) return; busy = true;
+    try {
+      const next = await sample(cwd).catch(() => undefined);
+      const { telemetry } = parseCodexTelemetry(output());
+      const done = Object.values(telemetry.itemCounts).reduce((a, b) => a + b, 0) + telemetry.turnCount;
+      const now = Date.now();
+      if (done > activity) { activity = done; lastProgressAt = now; }
+      if (next !== undefined) {
+        if (signature !== undefined && next !== signature) { firstChangeAt ??= now; lastProgressAt = now; }
+        signature = next;
+      }
+      const verdict = progressVerdict({ startedAt, now, ...(firstChangeAt !== undefined ? { firstChangeAt } : {}), lastProgressAt }, limits);
+      if (verdict !== "ok" && !stopped) { stopped = true; onStop(verdict === "no_first_edit" ? `no file change in ${Math.round(limits.firstEditMs / 60_000)} minutes` : `no file change or command in ${Math.round(limits.idleMs / 60_000)} minutes`); killProcessTree(child); }
+    } finally { busy = false; }
+  };
+  void tick();
+  const timer = setInterval(() => void tick(), options.intervalMs ?? 30_000);
+  return { stop: () => { stopped = true; clearInterval(timer); } };
+}
+
 export class CliProvider implements AgentProvider {
-  constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs?: number) {}
+  constructor(readonly id: "claude" | "codex" | "gemini", private readonly defaultTimeoutMs?: number, private readonly guardOptions?: ProgressGuardOptions) {}
   async run(input: StageInput): Promise<StageOutput> {
     const spec = specs[this.id]; const started = Date.now(); const timeoutMs = input.providerTimeoutMs ?? this.defaultTimeoutMs ?? defaultProviderTimeoutMs(input.stage);
     const rtk = this.id === "codex" && input.stage === "implement"
@@ -236,12 +270,17 @@ export class CliProvider implements AgentProvider {
       let lastOutputAt = Date.now(); let stalled = false;
       const stallMs = this.id === "codex" ? stallLimitMs(input.stage) : 0;
       const stallTimer = stallMs > 0 ? setInterval(() => { if (Date.now() - lastOutputAt > stallMs) { stalled = true; killProcessTree(child); } }, Math.min(30_000, stallMs)) : undefined;
+      // Codex implement with a progress budget: a run with no first file change, or idle after it, is too big or lost; stop it with a "no progress" error the failure class reads as size.
+      let noProgress: string | undefined;
+      const guarded = this.id === "codex" && input.stage === "implement" ? input.progress : undefined;
+      const progressGuard = guarded ? startProgressGuard(child, input.projectRoot, { firstEditMs: guarded.firstEditMinutes * 60_000, idleMs: guarded.idleMinutes * 60_000 }, () => Buffer.concat(stdout).toString("utf8"), reason => { noProgress = reason; }, this.guardOptions) : undefined;
       child.stdout.on("data", (b: Buffer) => { lastOutputAt = Date.now(); size += b.length; if (size < 1_000_000) stdout.push(b); });
       child.stderr.on("data", (b: Buffer) => { if (Buffer.concat(stderr).length < 64_000) stderr.push(b); });
-      child.on("error", (e) => { clearTimeout(timer); clearInterval(stallTimer); stopKill(); reject(e); });
+      child.on("error", (e) => { clearTimeout(timer); clearInterval(stallTimer); progressGuard?.stop(); stopKill(); reject(e); });
       child.on("close", (code) => {
-        clearTimeout(timer); clearInterval(stallTimer); stopKill();
+        clearTimeout(timer); clearInterval(stallTimer); progressGuard?.stop(); stopKill();
         if (signal?.aborted) return reject(new Error(`${this.id} cancelled: process killed`)); const out = Buffer.concat(stdout).toString("utf8").trim();
+        if (noProgress) return reject(new Error(`${this.id} no progress: ${noProgress}${killedActivity(this.id, out)}`));
         if (timedOut) return reject(new Error(`${this.id} timed out after ${timeoutMs}ms${killedActivity(this.id, out)}`));
         if (stalled) return reject(new Error(`${this.id} stalled: no output for ${Math.round(stallMs / 60_000)} minutes, process killed${killedActivity(this.id, out)}`));
         // Codex reports a usage limit or a dropped connection as an event on stdout, with little or nothing on stderr; the message is what the pause detection reads.

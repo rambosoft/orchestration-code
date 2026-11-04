@@ -1,0 +1,103 @@
+// The no-progress guard: a pure verdict over the clock, and its wiring into the Codex implement run (fake child, fake timers, injected git sampler).
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const MIN = 60_000;
+const kills: unknown[] = [];
+const fakeChildren: FakeChild[] = [];
+class FakeChild extends EventEmitter {
+  stdout = new EventEmitter(); stderr = new EventEmitter(); pid = 4242; exitCode: number | null = null;
+  stdin = { end: (_text: string) => undefined };
+  emitEvent(event: object) { this.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`)); }
+}
+vi.mock("node:child_process", async (original) => ({ ...(await original<typeof import("node:child_process")>()), spawn: vi.fn(() => { const child = new FakeChild(); fakeChildren.push(child); return child; }) }));
+vi.mock("../src/process-control.js", async (original) => ({ ...(await original<typeof import("../src/process-control.js")>()), killProcessTree: (child: FakeChild) => { kills.push(child); child.exitCode = 1; child.emit("close", 1); } }));
+vi.mock("../src/rtk.js", () => ({ isRtkInstalled: async () => false, resolveRtkStatus: async () => ({ active: false, reason: "test" }) }));
+
+const { progressVerdict } = await import("../src/progress-guard.js");
+const { CliProvider } = await import("../src/providers.js");
+type StageInput = import("../src/contracts.js").StageInput;
+
+describe("progressVerdict", () => {
+  const limits = { firstEditMs: 15 * MIN, idleMs: 10 * MIN };
+  it("is ok before either limit", () => {
+    expect(progressVerdict({ startedAt: 0, now: 14 * MIN, lastProgressAt: 0 }, limits)).toBe("ok");
+    expect(progressVerdict({ startedAt: 0, now: 12 * MIN, firstChangeAt: 3 * MIN, lastProgressAt: 3 * MIN }, limits)).toBe("ok");
+  });
+  it("is no_first_edit when nothing changed by the first-edit limit, however busy the commands were", () => {
+    expect(progressVerdict({ startedAt: 0, now: 15 * MIN, lastProgressAt: 14 * MIN }, limits)).toBe("no_first_edit");
+  });
+  it("is idle once the quiet time after the first edit reaches the idle limit", () => {
+    expect(progressVerdict({ startedAt: 0, now: 13 * MIN, firstChangeAt: 3 * MIN, lastProgressAt: 3 * MIN }, limits)).toBe("idle");
+    expect(progressVerdict({ startedAt: 0, now: 14 * MIN, firstChangeAt: 3 * MIN, lastProgressAt: 3 * MIN }, limits)).toBe("idle");
+  });
+  it("counts command activity as progress", () => {
+    expect(progressVerdict({ startedAt: 0, now: 14 * MIN, firstChangeAt: 3 * MIN, lastProgressAt: 8 * MIN }, limits)).toBe("ok");
+  });
+  it("never reports no_first_edit after a change", () => {
+    expect(progressVerdict({ startedAt: 0, now: 60 * MIN, firstChangeAt: MIN, lastProgressAt: 59 * MIN }, limits)).toBe("ok");
+  });
+});
+
+describe("CliProvider no-progress guard", () => {
+  beforeEach(() => { vi.useFakeTimers(); kills.length = 0; fakeChildren.length = 0; });
+  afterEach(() => { vi.useRealTimers(); });
+  const input = (progress?: { firstEditMinutes: number; idleMinutes: number }, stage = "implement"): StageInput => ({ stage, prompt: "do it", projectRoot: "/repo", plugins: [], ...(progress ? { progress } : {}) } as unknown as StageInput);
+  const start = async (provider: InstanceType<typeof CliProvider>, i: StageInput) => {
+    const result = provider.run(i).then(value => ({ value }), (error: Error) => ({ error }));
+    await vi.advanceTimersByTimeAsync(0);
+    return { result, child: fakeChildren[fakeChildren.length - 1]! };
+  };
+  const guard = (sample: () => Promise<string>) => ({ intervalMs: 30_000, sample });
+  const itemDone = { type: "item.completed", item: { type: "command_execution" } };
+
+  it("kills the child and rejects with the reason and the activity when nothing changes", async () => {
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => "")), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    child.emitEvent(itemDone);
+    await vi.advanceTimersByTimeAsync(15 * MIN + 30_000);
+    const settled = await result;
+    expect(kills).toEqual([child]);
+    expect((settled as { error: Error }).error.message).toMatch(/^codex no progress: no file change in 15 minutes \(activity before the kill: 1 command_execution; 0 turn\(s\)\)/);
+  });
+
+  it("kills a run that edited once and then went quiet, with the idle reason", async () => {
+    let signature = "";
+    const { result } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => signature)), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(3 * MIN);
+    signature = " M a.ts";
+    await vi.advanceTimersByTimeAsync(11 * MIN);
+    expect(((await result) as { error: Error }).error.message).toMatch(/^codex no progress: no file change or command in 10 minutes/);
+  });
+
+  it("does not kill a run that keeps working: a change, then steady commands and no further file change", async () => {
+    let signature = "";
+    const provider = new CliProvider("codex", 10 * 60 * MIN, guard(async () => signature));
+    const { result, child } = await start(provider, input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(MIN);
+    signature = " M a.ts";
+    for (let i = 0; i < 40; i++) { child.emitEvent(itemDone); await vi.advanceTimersByTimeAsync(MIN); }
+    expect(kills).toEqual([]);
+    child.exitCode = 0; child.emitEvent({ type: "item.completed", item: { type: "agent_message", text: "done" } }); child.emit("close", 0);
+    expect(((await result) as { value: { ok: boolean } }).value.ok).toBe(true);
+  });
+
+  it("is not active without input.progress, for other stages or for other providers", async () => {
+    const samples = vi.fn(async () => "");
+    for (const [id, i] of [["codex", input()], ["codex", input({ firstEditMinutes: 1, idleMinutes: 1 }, "plan")], ["claude", input({ firstEditMinutes: 1, idleMinutes: 1 })]] as const) {
+      const { result, child } = await start(new CliProvider(id, 10 * 60 * MIN, guard(samples)), i);
+      await vi.advanceTimersByTimeAsync(14 * MIN);
+      expect(kills).toEqual([]);
+      child.exitCode = 0; child.emit("close", 0); await result;
+    }
+    expect(samples).not.toHaveBeenCalled();
+  });
+
+  it("treats a failing git sample as unknown and never kills because of it", async () => {
+    let calls = 0;
+    const { result, child } = await start(new CliProvider("codex", 10 * 60 * MIN, guard(async () => { calls++; throw new Error("git is gone"); })), input({ firstEditMinutes: 15, idleMinutes: 10 }));
+    await vi.advanceTimersByTimeAsync(10 * MIN);
+    expect(calls).toBeGreaterThan(5);
+    expect(kills).toEqual([]);
+    child.exitCode = 0; child.emit("close", 0); await result;
+  });
+});
