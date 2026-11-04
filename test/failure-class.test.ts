@@ -40,6 +40,14 @@ describe("classifyFailure", () => {
     expect(classifyFailure({ message: "strange" })).toMatchObject({ kind: "unknown", action: "escalate" });
     expect(classifyFailure({})).toMatchObject({ kind: "unknown", action: "escalate" });
   });
+  it("classifies an implement no-progress or implement timeout as size (escalate, never resumed) and keeps other timeouts transient", () => {
+    for (const message of ["implement: codex no progress: no file change for 10 minutes (activity before the kill: 3 command_execution; 2 turn(s))", "implement: codex timed out after 2700000ms", "implement: codex stalled: no output for 600000ms", "SizeSuspected: task too large"]) {
+      const failure = classifyFailure({ message });
+      expect(failure, message).toMatchObject({ kind: "size", action: "escalate" });
+      expect(isResumable(failure), message).toBe(false);
+    }
+    for (const message of ["review: codex timed out after 2700000ms", "codex timed out after 2700000ms", "review: codex stalled: no output for 600000ms"]) expect(classifyFailure({ message }), message).toMatchObject({ kind: "transient", action: "resume" });
+  });
   it("resumes only the transient and healable kinds, at most once per run", () => {
     expect(isResumable(classifyFailure({ message: "ETIMEDOUT" }))).toBe(true);
     expect(isResumable(classifyFailure({ message: "Filename too long" }))).toBe(true);

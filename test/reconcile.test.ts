@@ -224,6 +224,14 @@ describe("automatic resume of a failed run", () => {
       expect(resumed).toEqual([]);
     }
   });
+  it("never resumes a size-suspected implement failure, it is reported for a person", async () => {
+    for (const message of ["implement: codex no progress: no file change for 10 minutes", "implement: codex timed out after 2700000ms"]) {
+      const { deps, resumed } = setup(failed(message, "implement_activity_failed"));
+      expect(autoResumeDecision(wf, failed(message, "implement_activity_failed"), closed, now)).toMatchObject({ resume: false, failure: { kind: "size" } });
+      expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0], message).toMatchObject({ action: "reported" });
+      expect(resumed).toEqual([]);
+    }
+  });
   it("resumes a run only once: a failed resume is reported, not resumed again", async () => {
     const { deps, resumed } = setup(failed("ETIMEDOUT", "implement_activity_failed"), `${wf}-resume1`);
     expect((await reconcile(deps, { apply: true, autoResume: true, now }))[0]).toMatchObject({ action: "reported" });

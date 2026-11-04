@@ -7,6 +7,7 @@ export type FailureKind =
   | "model" // the model's answer could not be used or review findings remain after the last round
   | "external" // needs a person: an approval, a missing credential, a question
   | "budget" // a token budget was exceeded
+  | "size" // the implement stage made no progress or timed out: the task is probably too big for one pass; a person splits it, a resume would pay for it again
   | "unknown";
 export type FailureAction = "heal-and-resume" | "resume" | "repair" | "escalate";
 export type FailureClass = { kind: FailureKind; action: FailureAction; reason: string };
@@ -28,6 +29,9 @@ const TRANSIENT: RegExp[] = [
   /network pause exceeded|stalled: no output/i,
 ];
 const EXTERNAL: RegExp[] = [/external prerequisite|operator action|approval/i, /needs_info/i, /\b(?:401|403)\b|unauthori[sz]ed|authentication|not logged in/i];
+const SIZE_ANY = /\bno progress\b|SizeSuspected/i;
+const SIZE_TIMEOUT = /timed out after|stalled: no output/i;
+const IMPLEMENT_STAGE = /\bimplement:/i; // the implement activity prefixes its errors with the stage name; a timeout of any other stage (or without a stage) stays transient
 const BUDGET = /TokenBudgetExceeded|token budget/i;
 const GATE: RegExp[] = [/quality check failed|quality gate failed|deterministic checks failed/i, /acceptance criteria without a test|acceptance-trace/i, /unity (?:test|build)|EditMode|PlayMode|exit \d+/i];
 
@@ -49,6 +53,7 @@ export function classifyFailure(input: { message?: string; stopReason?: string; 
   if (EXTERNAL.some(pattern => pattern.test(text)) && !/quality check failed/i.test(text)) return { kind: "external", action: "escalate", reason: "a person has to supply an approval, a credential or an answer" };
   // A recorded gate stop reason is about the code: output that merely mentions a timeout or a 503 (a failing test about them) must not turn it into a transient failure.
   const gateStop = /quality_gate_failed|quality_check_failed|deterministic_checks_failed/.test(stop);
+  if (!gateStop && (SIZE_ANY.test(text) || (SIZE_TIMEOUT.test(text) && IMPLEMENT_STAGE.test(text)))) return { kind: "size", action: "escalate", reason: "the implement stage made no progress or timed out; the task is probably too big for one pass, so split it instead of resuming it" };
   if (!gateStop && first(TRANSIENT, text)) return { kind: "transient", action: "resume", reason: "a timeout or network problem; the stages that already succeeded are reused on resume" };
   if (gateStop || first(GATE, text)) return { kind: "gate", action: "repair", reason: "a deterministic check failed because of the code; one bounded repair pass can fix it" };
   if (/_activity_failed/.test(stop)) return { kind: "transient", action: "resume", reason: "an activity failed after its bounded retries without a code cause" };
