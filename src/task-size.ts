@@ -1,0 +1,42 @@
+// Task size estimate (task-size gate): how many files and areas a task touches decides small, normal or large, against per-tier limits. Pure and workflow-safe (no clock, no I/O); callers supply the file list,
+// measured from a diff or read from the task text (filesNamedIn). An empty list is "unknown": the estimate stays normal rather than guessing.
+import type { SizeHint, Tier } from "./lanes.js";
+
+export type SizeLimits = { smallMaxFiles: number; largeMinFiles: number; maxAreas: number };
+/** Production is the operator's 3 to 10 files and 1 to 2 areas; mvp and prototype values are a judgement call, tunable per project. */
+export const DEFAULT_SIZE_LIMITS: Record<Tier, SizeLimits> = {
+  throwaway: { smallMaxFiles: 3, largeMinFiles: 40, maxAreas: 6 },
+  prototype: { smallMaxFiles: 3, largeMinFiles: 40, maxAreas: 6 },
+  mvp: { smallMaxFiles: 2, largeMinFiles: 12, maxAreas: 3 },
+  production: { smallMaxFiles: 2, largeMinFiles: 10, maxAreas: 2 },
+};
+export type SizeEstimate = { hint: SizeHint; files: number; areas: number; basis: "measured" | "text" | "unknown"; reasons: string[] };
+
+const norm = (file: string): string => file.replace(/\\/g, "/").replace(/^\.\//, "");
+const SOURCE_ROOTS = new Set(["src", "app"]);
+
+/** The area of a file: the first directory under `src/` or `app/`, the package under `packages/`, else the first segment. */
+export function areaOf(file: string): string {
+  const parts = norm(file).split("/").filter(Boolean);
+  const dirs = parts.slice(0, -1);
+  if (dirs.length === 0) return parts[0] ?? "";
+  if (SOURCE_ROOTS.has(dirs[0]!) || dirs[0] === "packages") return dirs.slice(0, 2).join("/");
+  return dirs[0]!;
+}
+
+export function estimateSize(input: { files: string[]; basis?: "measured" | "text" }, limits: SizeLimits): SizeEstimate {
+  const files = [...new Set(input.files.map(norm).filter(Boolean))];
+  if (files.length === 0) return { hint: "normal", files: 0, areas: 0, basis: "unknown", reasons: [] };
+  const areas = new Set(files.map(areaOf)).size;
+  const reasons: string[] = [];
+  if (files.length >= limits.largeMinFiles) reasons.push(`${files.length} files (large from ${limits.largeMinFiles})`);
+  if (areas > limits.maxAreas) reasons.push(`${areas} areas (limit ${limits.maxAreas})`);
+  const hint: SizeHint = reasons.length > 0 ? "large" : files.length <= limits.smallMaxFiles && areas === 1 ? "small" : "normal";
+  return { hint, files: files.length, areas, basis: input.basis ?? "text", reasons };
+}
+
+const NAMED_FILE = /(?<![\w./:@~-])(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:tsx|ts|jsx|js|mjs|cjs|json|css|scss|html|vue|py|cs|go|rs|java|kt|swift)\b/g;
+/** Relative paths with a known source extension named in task text, normalized to forward slashes and de-duplicated; URLs and absolute paths are skipped. */
+export function filesNamedIn(text: string): string[] {
+  return [...new Set((text.match(NAMED_FILE) ?? []).map(norm))];
+}
