@@ -7,7 +7,7 @@ export type Parent = { issueId: string; branch: string; headSha: string; prUrl: 
 /** `parent` starts the chain on an already published branch instead of the target branch. */
 export type E2eSpec = { projectId: string; parent?: Parent; tasks: E2eTask[] };
 export type StageSummary = { stage: string; provider: string; ok: boolean; seconds: number; inputTokens?: number; outputTokens?: number };
-export type TaskOutcome = { taskId: string; attempt: number; workflowId: string; status: RunResult["status"] | "error"; message: string; stopReason?: string; publish?: PublishResult; stages: StageSummary[]; totalSeconds: number; /** Task-size gate tracking (B-184): the admission estimate, "size" when the run stopped as size suspected, and the changed-file count when known. */ estimate?: SizeEstimate; failureKind?: "size"; changedFiles?: number };
+export type TaskOutcome = { taskId: string; attempt: number; workflowId: string; status: RunResult["status"] | "error"; message: string; stopReason?: string; publish?: PublishResult; stages: StageSummary[]; totalSeconds: number; /** Task-size gate tracking (B-184): the admission estimate of every run (result metadata.sizeEstimate), "size" when the run stopped as size suspected, and the changed-file count when known. */ sizeEstimate?: SizeEstimate; failureKind?: "size"; changedFiles?: number };
 
 const num = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
@@ -60,9 +60,10 @@ export async function runChain(spec: E2eSpec, http: Http, options: { maxAttempts
       log(`${task.taskId} attempt ${attempt}: started ${workflowId}`);
       let state: { status?: string; progress?: { currentStage?: string }; result?: RunResult } = {};
       do { await sleep(options.pollMs ?? 15_000); state = (await http("GET", `/v1/runs/${encodeURIComponent(workflowId)}`)).json as typeof state; log(`${task.taskId}: ${state.status} ${state.progress?.currentStage ?? ""}`); } while (state.status === "RUNNING");
-      const result = state.result;
-      outcome = { taskId: task.taskId, attempt, workflowId, status: result?.status ?? "error", message: result?.message ?? `workflow ended as ${state.status}`, ...(result?.metadata?.review.stopReason ? { stopReason: result.metadata.review.stopReason } : {}), ...(result?.publish ? { publish: result.publish } : {}), stages: result ? summarizeStages(result) : [], totalSeconds: Math.round((Date.now() - started) / 1000), ...(result?.metadata?.size?.estimate ? { estimate: result.metadata.size.estimate } : {}), ...(result?.metadata?.size?.kind === "size_suspected" ? { failureKind: "size" as const } : {}) };
-      if (outcome.status === "completed") break;
+      const result = state.result; const sizeEstimate = result?.metadata?.sizeEstimate ?? result?.metadata?.size?.estimate;
+      outcome = { taskId: task.taskId, attempt, workflowId, status: result?.status ?? "error", message: result?.message ?? `workflow ended as ${state.status}`, ...(result?.metadata?.review.stopReason ? { stopReason: result.metadata.review.stopReason } : {}), ...(result?.publish ? { publish: result.publish } : {}), stages: result ? summarizeStages(result) : [], totalSeconds: Math.round((Date.now() - started) / 1000), ...(sizeEstimate ? { sizeEstimate } : {}), ...(result?.metadata?.size?.kind === "size_suspected" ? { failureKind: "size" as const } : {}) };
+      // A size-suspected failure would stall again on a retry: the task needs a split, not another attempt.
+      if (outcome.status === "completed" || outcome.failureKind === "size") break;
     }
     outcomes.push(outcome!);
     if (outcome!.status !== "completed" || !outcome!.publish) break;

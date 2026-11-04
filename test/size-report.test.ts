@@ -36,6 +36,11 @@ describe("runRecords", () => {
     expect(rows).toEqual([{ status: "failed", attempts: 2, estimate: est("large"), failureKind: "size", changedFiles: 4 }, { status: "completed" }]);
     for (const odd of [null, 3, "x", [], { outcomes: "no" }, { schema_version: 1, scenario: "dino" }]) expect(runRecords(odd)).toEqual([]);
   });
+  it("reads sizeEstimate (recorded for every outcome) before the older estimate field, so completed runs land in their band", () => {
+    const rows = runRecords({ outcomes: [{ status: "completed", sizeEstimate: est("large") }, { status: "failed", sizeEstimate: est("small"), estimate: est("large"), failureKind: "size" }] });
+    expect(rows).toEqual([{ status: "completed", estimate: est("large") }, { status: "failed", estimate: est("small"), failureKind: "size" }]);
+    expect(sizeReport(rows).bands.large).toEqual({ runs: 1, failed: 0, sizeSuspected: 0 });
+  });
 });
 
 describe("needs-split section", () => {

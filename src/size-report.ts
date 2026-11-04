@@ -37,7 +37,9 @@ export function runRecords(json: unknown): SizeRecord[] {
   if (!isObject(json) || !Array.isArray(json.outcomes)) return [];
   return json.outcomes.flatMap((item): SizeRecord[] => {
     if (!isObject(item) || typeof item.status !== "string") return [];
-    const estimate = isObject(item.estimate) && BANDS.includes(item.estimate.hint as SizeHint) ? item.estimate as unknown as SizeEstimate : undefined;
+    // sizeEstimate is recorded for every outcome; estimate is the older field (size failures only) of records written before it.
+    const recorded = isObject(item.sizeEstimate) ? item.sizeEstimate : item.estimate;
+    const estimate = isObject(recorded) && BANDS.includes(recorded.hint as SizeHint) ? recorded as unknown as SizeEstimate : undefined;
     return [{ status: item.status, ...(typeof item.attempt === "number" ? { attempts: item.attempt } : {}), ...(estimate ? { estimate } : {}), ...(typeof item.failureKind === "string" ? { failureKind: item.failureKind } : {}), ...(typeof item.changedFiles === "number" ? { changedFiles: item.changedFiles } : {}) }];
   });
 }
